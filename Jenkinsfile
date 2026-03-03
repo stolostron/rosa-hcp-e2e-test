@@ -46,6 +46,8 @@ pipeline {
     options {
         // This rotates the logs every month
         buildDiscarder(logRotator(daysToKeepStr: '30'))
+        // This stops the automatic, failing checkout
+        skipDefaultCheckout()
     }
     agent {
         kubernetes {
@@ -76,6 +78,29 @@ pipeline {
         booleanParam(name:'CLEANUP_AFTER_TEST', defaultValue: true, description: 'Delete cluster after successful provisioning (E2E test)')
     }
     stages {
+        stage('Clone the ROSA HCP E2E Test Repository') {
+            steps {
+                retry(count: 3) {
+                    script{
+                        def repo = "stolostron/rosa-hcp-e2e-test.git"
+                        def git_branch = params.TEST_GIT_BRANCH
+                        withCredentials([string(credentialsId: 'vincent-github-token', variable: 'GITHUB_TOKEN')]) {
+                            sh '''
+                                rm -rf rosa-hcp-e2e-test
+
+                                # Configure Git to use the token for this command only via a secure header.
+                                git -c http.https://github.com/.extraheader="AUTHORIZATION: basic $(echo -n x-oauth-basic:${GITHUB_TOKEN} | base64)" \
+                                    -c http.sslVerify=false \
+                                    clone \
+                                    -b "''' + git_branch + '''" \
+                                    "https://github.com/''' + repo + '''" \
+                                    rosa-hcp-e2e-test/
+                            '''
+                        }
+                    }
+                }
+            }
+        }
         stage ('Verify OCP Credentials') {
             when {
                 expression {
@@ -104,6 +129,7 @@ pipeline {
                             string(credentialsId: 'CAPI_OCM_CLIENT_SECRET', variable: 'OCM_CLIENT_SECRET')
                         ]) {
                             sh '''
+                                cd rosa-hcp-e2e-test
                                 # Execute the CAPI/CAPA configuration test suite (RHACM4K-61722) with maximum verbosity
                                 # Pass all credentials and cluster info as Ansible extra vars (UPPERCASE names match playbook expectations)
                                 ./run-test-suite.py 10-configure-mce-environment --format junit -vvv \
@@ -119,7 +145,7 @@ pipeline {
                             '''
                         }
                         // Archive results from both old and new test systems
-                        archiveArtifacts artifacts: 'results/**/*.xml, test-results/**/*.xml', allowEmptyArchive: true, followSymlinks: false, fingerprint: true
+                        archiveArtifacts artifacts: 'rosa-hcp-e2e-test/results/**/*.xml, rosa-hcp-e2e-test/test-results/**/*.xml', allowEmptyArchive: true, followSymlinks: false, fingerprint: true
                     }
                     catch (ex) {
                         echo 'CAPI Configuration Tests failed ... Marking build as FAILURE'
@@ -150,6 +176,7 @@ pipeline {
                             string(credentialsId: 'CAPI_OCM_CLIENT_SECRET', variable: 'OCM_CLIENT_SECRET')
                         ]) {
                             sh '''
+                                cd rosa-hcp-e2e-test
                                 # Execute the ROSA HCP provisioning test suite with maximum verbosity
                                 # Pass Jenkins parameters and credentials as Ansible extra vars
                                 ./run-test-suite.py 20-rosa-hcp-provision --format junit -vvv \
@@ -162,11 +189,12 @@ pipeline {
                                   -e AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID}" \
                                   -e AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY}" \
                                   -e AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID}" \
+                                  -e AWS_REGION="us-west-2" \
                                   -e name_prefix="${NAME_PREFIX}"
                             '''
                         }
                         // Archive provisioning test results
-                        archiveArtifacts artifacts: 'test-results/**/*.xml, test-results/**/*.html, test-results/**/*.json', allowEmptyArchive: true, followSymlinks: false, fingerprint: true
+                        archiveArtifacts artifacts: 'rosa-hcp-e2e-test/test-results/**/*.xml, rosa-hcp-e2e-test/test-results/**/*.html, rosa-hcp-e2e-test/test-results/**/*.json', allowEmptyArchive: true, followSymlinks: false, fingerprint: true
                     }
                     catch (ex) {
                         echo 'ROSA HCP Provisioning Tests failed'
@@ -200,6 +228,7 @@ pipeline {
                             // Add timeout for deletion (can take 30-50 minutes)
                             timeout(time: 60, unit: 'MINUTES') {
                                 sh '''
+                                    cd rosa-hcp-e2e-test
                                     # Execute the ROSA HCP deletion test suite
                                     # Pass all required credentials and parameters (same as provisioning)
                                     ./run-test-suite.py 30-rosa-hcp-delete --format junit -vvv \
@@ -209,6 +238,7 @@ pipeline {
                                       -e MCE_NAMESPACE="${MCE_NAMESPACE}" \
                                       -e AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID}" \
                                       -e AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY}" \
+                                      -e AWS_REGION="us-west-2" \
                                       -e OCM_CLIENT_ID="${OCM_CLIENT_ID}" \
                                       -e OCM_CLIENT_SECRET="${OCM_CLIENT_SECRET}" \
                                       -e name_prefix="${NAME_PREFIX}"
@@ -216,7 +246,7 @@ pipeline {
                             }
                         }
                         // Archive deletion test results
-                        archiveArtifacts artifacts: 'test-results/**/*', allowEmptyArchive: true, followSymlinks: false, fingerprint: true
+                        archiveArtifacts artifacts: 'rosa-hcp-e2e-test/test-results/**/*', allowEmptyArchive: true, followSymlinks: false, fingerprint: true
                     }
                     catch (ex) {
                         echo 'ROSA HCP Deletion Tests failed or timed out'
@@ -230,10 +260,10 @@ pipeline {
             steps {
                 script {
                    // Archive artifacts from both old (results/) and new (test-results/) systems
-                   archiveArtifacts artifacts: 'results/**/*.xml, test-results/**/*.xml', allowEmptyArchive: true, followSymlinks: false
+                   archiveArtifacts artifacts: 'rosa-hcp-e2e-test/results/**/*.xml, rosa-hcp-e2e-test/test-results/**/*.xml', allowEmptyArchive: true, followSymlinks: false
 
                    // Publish JUnit test results from both systems
-                   junit allowEmptyResults: true, testResults: 'results/**/*.xml, test-results/**/*.xml'
+                   junit allowEmptyResults: true, testResults: 'rosa-hcp-e2e-test/results/**/*.xml, rosa-hcp-e2e-test/test-results/**/*.xml'
                 }
             }
         }
