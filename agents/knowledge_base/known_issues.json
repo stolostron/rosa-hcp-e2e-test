@@ -88,6 +88,25 @@
       ]
     },
     {
+      "type": "vpc_deletion_failure",
+      "pattern": ".*vpc.*(has dependencies|cannot be deleted|delete.*fail|DELETE_FAILED).*",
+      "severity": "high",
+      "auto_fix": true,
+      "description": "VPC deletion failure due to orphaned dependencies",
+      "symptoms": [
+        "VPC has dependencies and cannot be deleted",
+        "CloudFormation DELETE_FAILED for VPC resource",
+        "Orphaned ENIs or security groups",
+        "ROSANetwork stuck waiting for VPC deletion"
+      ],
+      "common_causes": [
+        "Orphaned ENIs attached to VPC",
+        "Security groups with dependencies",
+        "Resources created outside CloudFormation",
+        "Lambda functions with VPC attachments"
+      ]
+    },
+    {
       "type": "networking_configuration_error",
       "pattern": ".*(subnet|vpc|network).*(invalid|not found|error).*",
       "severity": "high",

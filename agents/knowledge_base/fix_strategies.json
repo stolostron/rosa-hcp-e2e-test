@@ -1,6 +1,32 @@
 {
   "version": "1.0.0",
   "description": "Fix strategies for known ROSA HCP test automation issues",
+  "vpc_deletion_failure": {
+    "name": "VPC Cleanup - Remove Orphaned Dependencies",
+    "strategy": "cleanup_vpc_dependencies",
+    "automated": true,
+    "steps": [
+      "Identify VPC dependencies blocking deletion",
+      "Find and detach orphaned ENIs",
+      "Delete security groups with no dependencies",
+      "Retry VPC/stack deletion"
+    ],
+    "commands": [
+      "aws ec2 describe-network-interfaces --region {region} --filters Name=vpc-id,Values={vpc_id}",
+      "aws ec2 describe-security-groups --region {region} --filters Name=vpc-id,Values={vpc_id}",
+      "aws ec2 detach-network-interface --region {region} --attachment-id {attachment_id}",
+      "aws ec2 delete-network-interface --region {region} --network-interface-id {eni_id}",
+      "aws ec2 delete-security-group --region {region} --group-id {sg_id}"
+    ],
+    "prerequisites": [
+      "AWS CLI access",
+      "AWS credentials with EC2 permissions",
+      "VPC ID from CloudFormation stack"
+    ],
+    "success_criteria": "VPC has no dependencies and can be deleted",
+    "rollback": "ENIs and security groups can be recreated if needed",
+    "notes": "Common blockers: Lambda ENIs, orphaned security groups, leftover network interfaces. Agent will identify and clean these automatically."
+  },
   "cloudformation_deletion_failure": {
     "name": "CloudFormation Stack Manual Cleanup",
     "strategy": "manual_cloudformation_cleanup",
