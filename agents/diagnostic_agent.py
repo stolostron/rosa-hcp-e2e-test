@@ -13,9 +13,10 @@ Created: March 3, 2026
 """
 
 import json
+import re
 import subprocess
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from .base_agent import BaseAgent
 
@@ -69,11 +70,11 @@ class DiagnosticAgent(BaseAgent):
         """Diagnose ROSANetwork stuck in deletion state."""
         self.log("Analyzing ROSANetwork deletion issue...", "debug")
 
-        cluster_name = self._extract_cluster_name(context)
-        namespace = context.get("namespace", "default")
+        # Use improved extraction that parses actual resource names from context
+        resource_name, namespace = self._extract_resource_info(context)
 
         # Get ROSANetwork resource status
-        resource_info = self._get_resource_info("rosanetwork", cluster_name, namespace)
+        resource_info = self._get_resource_info("rosanetwork", resource_name, namespace)
 
         diagnosis = {
             "issue_type": "rosanetwork_stuck_deletion",
@@ -84,7 +85,7 @@ class DiagnosticAgent(BaseAgent):
             "recommended_fix": "remove_finalizers",
             "fix_parameters": {
                 "resource_type": "rosanetwork",
-                "resource_name": cluster_name,
+                "resource_name": resource_name,
                 "namespace": namespace,
             }
         }
@@ -106,6 +107,11 @@ class DiagnosticAgent(BaseAgent):
             for condition in conditions:
                 if "delete" in condition.get("type", "").lower():
                     diagnosis["evidence"].append(f"Status: {condition.get('type')} - {condition.get('message', 'N/A')}")
+        else:
+            # Could not get resource info - lower confidence
+            diagnosis["confidence"] = 0.7
+            diagnosis["evidence"].append(f"Could not retrieve resource info for {resource_name} in namespace {namespace}")
+            self.log(f"WARNING: Could not get resource info for rosanetwork/{resource_name} in {namespace}", "warning")
 
         self.log(f"Diagnosis complete. Confidence: {diagnosis['confidence']}", "info")
         return diagnosis
@@ -239,25 +245,98 @@ class DiagnosticAgent(BaseAgent):
         except:
             return False
 
-    def _extract_cluster_name(self, context: Dict) -> str:
-        """Extract cluster name from context."""
-        # Try to extract from current task
-        current_task = context.get("current_task", "")
-        if current_task:
-            # Parse cluster name from task description if possible
-            # This is a simplified extraction - enhance based on actual patterns
-            pass
+    def _extract_resource_info(self, context: Dict) -> Tuple[str, str]:
+        """
+        Extract resource name and namespace from context.
 
-        # Try to extract from buffer
+        This method parses the actual resource name and namespace from:
+        1. Explicit context fields (if provided)
+        2. Current task name
+        3. Command output in the buffer (oc/kubectl commands and output)
+
+        Returns:
+            Tuple of (resource_name, namespace)
+
+        Example context parsing:
+            - Task: "Wait for ROSANetwork pop-rosa-hcp-network deletion"
+            - Command: "oc get rosanetwork pop-rosa-hcp-network -n ns-rosa-hcp"
+            - Output: "NAME                   AGE\\npop-rosa-hcp-network   76m"
+        """
+        resource_name = "unknown-cluster"
+        namespace = "default"
+
+        # First, check if explicitly provided in context
+        if "resource_name" in context:
+            resource_name = context["resource_name"]
+        if "namespace" in context:
+            namespace = context["namespace"]
+
+        # If not explicit, try to extract from current task
+        current_task = context.get("current_task", "")
+        if current_task and resource_name == "unknown-cluster":
+            # Pattern: "Wait for ROSANetwork <name> deletion"
+            task_match = re.search(r'ROSANetwork\s+(\S+)', current_task, re.IGNORECASE)
+            if task_match:
+                resource_name = task_match.group(1)
+                self.log(f"Extracted from task: {resource_name}", "debug")
+
+        # Try to extract from buffer (command output)
         buffer = context.get("buffer", [])
         for line in buffer:
-            if "cluster" in line.lower():
-                # Extract cluster name from line
-                # Simplified - enhance based on actual patterns
-                pass
+            # Pattern: "oc get rosanetwork <name> -n <namespace>"
+            oc_match = re.search(r'oc\s+get\s+rosanetwork\s+(\S+)\s+-n\s+(\S+)', line, re.IGNORECASE)
+            if oc_match:
+                resource_name = oc_match.group(1)
+                namespace = oc_match.group(2)
+                self.log(f"Extracted from oc command: {resource_name} in namespace {namespace}", "debug")
+                break
 
-        # Default to looking for common patterns
-        return context.get("cluster_name", "unknown-cluster")
+            # Pattern: "kubectl get rosanetwork <name> -n <namespace>"
+            kubectl_match = re.search(r'kubectl\s+get\s+rosanetwork\s+(\S+)\s+-n\s+(\S+)', line, re.IGNORECASE)
+            if kubectl_match:
+                resource_name = kubectl_match.group(1)
+                namespace = kubectl_match.group(2)
+                self.log(f"Extracted from kubectl command: {resource_name} in namespace {namespace}", "debug")
+                break
+
+            # Pattern: Output table "NAME                   AGE\\npop-rosa-hcp-network   76m"
+            if "NAME" in line and "AGE" in line:
+                buffer_idx = buffer.index(line)
+                if buffer_idx + 1 < len(buffer):
+                    next_line = buffer[buffer_idx + 1].strip()
+                    parts = next_line.split()
+                    if parts and resource_name == "unknown-cluster":
+                        resource_name = parts[0]
+                        self.log(f"Extracted from output table: {resource_name}", "debug")
+
+        # Log what we found
+        if resource_name == "unknown-cluster":
+            self.log("WARNING: Could not extract resource name from context, using default 'unknown-cluster'", "warning")
+            self.log(f"Context available: task='{current_task}', buffer_lines={len(buffer)}", "debug")
+        else:
+            self.log(f"Successfully extracted resource: {resource_name} in namespace: {namespace}", "info")
+
+        return resource_name, namespace
+
+    def _extract_cluster_name(self, context: Dict) -> str:
+        """
+        Extract cluster/resource name from context.
+
+        This method now uses the improved _extract_resource_info method.
+        Kept for backward compatibility.
+        """
+        resource_name, _ = self._extract_resource_info(context)
+        return resource_name
+
+    def _extract_namespace(self, context: Dict) -> str:
+        """
+        Extract namespace from context.
+
+        Returns:
+            Namespace string (defaults to "default" if not found)
+        """
+        _, namespace = self._extract_resource_info(context)
+        return namespace
 
     def get_diagnosis_summary(self) -> Optional[str]:
         """Get human-readable summary of current diagnosis."""
