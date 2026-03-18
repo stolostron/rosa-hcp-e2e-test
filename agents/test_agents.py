@@ -206,7 +206,7 @@ def test_no_hardcoded_patterns():
 
 
 def test_structured_context_cleared_on_new_task():
-    """Test that structured context from one task doesn't leak into the next"""
+    """Test that structured context is preserved for one TASK then cleared"""
     print("\n=== Test 12: Structured context cleared on new TASK ===")
     monitor = MonitoringAgent(Path("."), enabled=True, verbose=True)
 
@@ -214,10 +214,15 @@ def test_structured_context_cleared_on_new_task():
     monitor.process_line("#AGENT_CONTEXT: resource_name=cluster-a namespace=ns-a")
     assert monitor._structured_context.get("resource_name") == "cluster-a"
 
-    # New task starts — context should be cleared
+    # First new task — context should be PRESERVED (meant for the next task)
+    monitor.process_line("TASK [Wait for cluster-a deletion] ******")
+    assert monitor._structured_context.get("resource_name") == "cluster-a", \
+        f"Context should survive one TASK transition: {monitor._structured_context}"
+
+    # Second new task — NOW context should be cleared
     monitor.process_line("TASK [Deploy cluster B] ******")
     assert monitor._structured_context.get("resource_name") is None, \
-        f"Structured context leaked: {monitor._structured_context}"
+        f"Structured context leaked past second TASK: {monitor._structured_context}"
     print("PASSED")
 
 
