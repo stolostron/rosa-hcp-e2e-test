@@ -74,7 +74,6 @@ class MonitoringAgent(BaseAgent):
         # State tracking
         self.current_task = None
         self.waiting_for_resource = None
-        self.timeout_warnings = 0
 
         # Per-resource issue tracking (replaces simple debounce)
         # Key: "{issue_type}:{resource_key}", Value: TrackedIssue
@@ -223,9 +222,12 @@ class MonitoringAgent(BaseAgent):
     def _update_execution_context(self, line: str):
         """Extract execution context from output line."""
         if "TASK [" in line:
-            task_match = line.split("TASK [")[1].split("]")[0] if "TASK [" in line else None
+            task_match = line.split("TASK [")[1].split("]")[0]
             if task_match:
                 self.current_task = task_match
+                # Clear structured context from previous task so stale
+                # values don't leak into a new task's issue handling
+                self._structured_context.clear()
                 self.update_context("current_task", task_match)
                 self.log(f"Current task: {task_match}", "debug")
 
@@ -258,7 +260,6 @@ class MonitoringAgent(BaseAgent):
         return {
             "patterns_detected": len(self.patterns_detected),
             "interventions_performed": len(self.interventions),
-            "timeout_warnings": self.timeout_warnings,
             "current_task": self.current_task,
             "waiting_for": self.waiting_for_resource,
             "tracked_issues": tracked_summary,
@@ -270,7 +271,6 @@ class MonitoringAgent(BaseAgent):
         self.patterns_detected.clear()
         self.current_task = None
         self.waiting_for_resource = None
-        self.timeout_warnings = 0
         self._tracked_issues.clear()
         self._structured_context.clear()
         self.log("Monitoring state reset", "debug")

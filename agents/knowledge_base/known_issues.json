@@ -127,7 +127,7 @@
     },
     {
       "type": "networking_configuration_error",
-      "pattern": ".*(subnet|vpc|network).*(invalid|not found|error).*",
+      "pattern": "(?i)(?:subnet|vpc).*(?:invalid|not found|does not exist|no route|unreachable)",
       "severity": "high",
       "auto_fix": false,
       "description": "Network configuration error",
@@ -161,7 +161,7 @@
     },
     {
       "type": "iam_permission_error",
-      "pattern": ".*(iam|permission|access denied|not authorized).*",
+      "pattern": "(?i)(?:access denied|not authorized|AccessDenied|UnauthorizedAccess|iam.*(?:error|fail|denied))",
       "severity": "high",
       "auto_fix": false,
       "description": "IAM permission or role error",

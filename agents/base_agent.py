@@ -43,9 +43,8 @@ class BaseAgent:
         self.kb_dir = base_dir / "agents" / "knowledge_base"
         self.kb_dir.mkdir(parents=True, exist_ok=True)
 
-        # Lazy-loaded knowledge base caches
+        # Lazy-loaded knowledge base cache
         self._known_issues: Optional[Dict] = None
-        self._fix_strategies: Optional[Dict] = None
 
         self.log(f"{name} agent initialized (enabled={enabled})")
 
@@ -55,13 +54,6 @@ class BaseAgent:
         if self._known_issues is None:
             self._known_issues = self._load_knowledge("known_issues.json")
         return self._known_issues
-
-    @property
-    def fix_strategies(self) -> Dict:
-        """Lazy-load fix strategies only when needed (used by RemediationAgent)."""
-        if self._fix_strategies is None:
-            self._fix_strategies = self._load_knowledge("fix_strategies.json")
-        return self._fix_strategies
 
     def log(self, message: str, level: str = "info"):
         """Log a message with the agent's context."""
@@ -127,7 +119,3 @@ class BaseAgent:
     def should_intervene(self, issue: Dict) -> bool:
         """Determine if agent should intervene based on issue auto_fix flag."""
         return self.enabled and issue.get("auto_fix", False)
-
-    def get_fix_strategy(self, issue_type: str) -> Optional[Dict]:
-        """Get fix strategy for a specific issue type."""
-        return self.fix_strategies.get(issue_type)

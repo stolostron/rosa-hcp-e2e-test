@@ -205,6 +205,57 @@ def test_no_hardcoded_patterns():
     print("PASSED")
 
 
+def test_structured_context_cleared_on_new_task():
+    """Test that structured context from one task doesn't leak into the next"""
+    print("\n=== Test 12: Structured context cleared on new TASK ===")
+    monitor = MonitoringAgent(Path("."), enabled=True, verbose=True)
+
+    # Task A emits structured context
+    monitor.process_line("#AGENT_CONTEXT: resource_name=cluster-a namespace=ns-a")
+    assert monitor._structured_context.get("resource_name") == "cluster-a"
+
+    # New task starts — context should be cleared
+    monitor.process_line("TASK [Deploy cluster B] ******")
+    assert monitor._structured_context.get("resource_name") is None, \
+        f"Structured context leaked: {monitor._structured_context}"
+    print("PASSED")
+
+
+def test_extract_resource_type_parameter():
+    """Test that _extract_resource_info works with different resource types"""
+    print("\n=== Test 13: Resource type parameter ===")
+    agent = DiagnosticAgent(Path("."), enabled=True, verbose=True)
+
+    context = {"buffer": ["oc get rosacontrolplane my-cp -n cp-namespace"]}
+    name, ns = agent._extract_resource_info(context, resource_type="rosacontrolplane")
+    assert name == "my-cp", f"Expected 'my-cp', got '{name}'"
+    assert ns == "cp-namespace", f"Expected 'cp-namespace', got '{ns}'"
+
+    # Default resource_type=rosanetwork should NOT match rosacontrolplane
+    name2, _ = agent._extract_resource_info(context, resource_type="rosanetwork")
+    assert name2 == "unknown-cluster", f"Expected 'unknown-cluster' for wrong type, got '{name2}'"
+    print("PASSED")
+
+
+def test_remediation_no_crash_on_success():
+    """Test that remediation doesn't crash (learn_from_success was removed)"""
+    print("\n=== Test 14: Remediation dry run doesn't crash ===")
+    from agents.remediation_agent import RemediationAgent
+    agent = RemediationAgent(Path("."), enabled=True, verbose=True, dry_run=True)
+    diagnosis = {
+        "issue_type": "rosanetwork_stuck_deletion",
+        "recommended_fix": "remove_finalizers",
+        "fix_parameters": {
+            "resource_type": "rosanetwork",
+            "resource_name": "test-cluster",
+            "namespace": "test-ns",
+        }
+    }
+    success, message = agent.remediate(diagnosis)
+    assert success, f"Dry run should succeed, got: {message}"
+    print("PASSED")
+
+
 def main():
     """Run all tests"""
     print("=" * 70)
@@ -223,6 +274,9 @@ def main():
         test_state_machine_max_attempts,
         test_structured_context_marker,
         test_no_hardcoded_patterns,
+        test_structured_context_cleared_on_new_task,
+        test_extract_resource_type_parameter,
+        test_remediation_no_crash_on_success,
     ]
 
     passed = 0

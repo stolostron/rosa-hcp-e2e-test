@@ -15,7 +15,7 @@ Created: March 3, 2026
 """
 
 from .base_agent import BaseAgent
-from .monitoring_agent import MonitoringAgent
+from .monitoring_agent import MonitoringAgent, IssueState
 from .diagnostic_agent import DiagnosticAgent
 from .remediation_agent import RemediationAgent
 
@@ -24,6 +24,7 @@ __all__ = [
     'MonitoringAgent',
     'DiagnosticAgent',
     'RemediationAgent',
+    'IssueState',
 ]
 
 __version__ = '0.1.0'

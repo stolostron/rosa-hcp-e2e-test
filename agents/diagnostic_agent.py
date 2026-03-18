@@ -228,7 +228,7 @@ class DiagnosticAgent(BaseAgent):
         except Exception:
             return False
 
-    def _extract_resource_info(self, context: Dict) -> Tuple[str, str]:
+    def _extract_resource_info(self, context: Dict, resource_type: str = "rosanetwork") -> Tuple[str, str]:
         """
         Extract resource name and namespace from context.
 
@@ -238,6 +238,10 @@ class DiagnosticAgent(BaseAgent):
         3. Buffer parsing (oc/kubectl commands)
         4. Buffer parsing (output tables)
         5. Task name parsing (least reliable)
+
+        Args:
+            context: Context dictionary from monitoring agent
+            resource_type: Kubernetes resource type to match in oc/kubectl commands
 
         Returns:
             Tuple of (resource_name, namespace)
@@ -260,7 +264,7 @@ class DiagnosticAgent(BaseAgent):
         buffer = context.get("buffer", [])
         for line in buffer:
             oc_match = re.search(
-                r'(?:oc|kubectl)\s+(?:get|patch|delete)\s+rosanetwork\s+(\S+)\s+-n\s+(\S+)',
+                rf'(?:oc|kubectl)\s+(?:get|patch|delete)\s+{re.escape(resource_type)}\s+(\S+)\s+-n\s+(\S+)',
                 line, re.IGNORECASE
             )
             if oc_match:
@@ -281,10 +285,12 @@ class DiagnosticAgent(BaseAgent):
                         return resource_name, namespace
 
         # 4. Fallback: task name (least reliable)
+        # Build a regex for the resource type (e.g., ROSANetwork, ROSAControlPlane)
+        type_pattern = resource_type.replace("rosa", "ROSA", 1) if resource_type.startswith("rosa") else resource_type
         current_task = context.get("current_task", "")
         skip_words = {"deletion", "delete", "complete", "stuck", "if", "to", "for", "the", "in"}
         if current_task:
-            task_match = re.search(r'ROSANetwork\s+(\S+)', current_task, re.IGNORECASE)
+            task_match = re.search(rf'{type_pattern}\s+(\S+)', current_task, re.IGNORECASE)
             if task_match:
                 candidate = task_match.group(1)
                 if candidate.lower() not in skip_words and '-' in candidate:

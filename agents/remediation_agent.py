@@ -28,7 +28,6 @@ class RemediationAgent(BaseAgent):
         super().__init__("Remediation", base_dir, enabled, verbose)
 
         self.dry_run = dry_run
-        self.fixes_applied = []
         self.fix_success_rate = {}
 
     def remediate(self, diagnosis: Dict) -> Tuple[bool, str]:
@@ -85,7 +84,6 @@ class RemediationAgent(BaseAgent):
 
                 if success:
                     self.fix_success_rate[recommended_fix]["successes"] += 1
-                    self.learn_from_success(issue_type, recommended_fix)
                     self.log(f"Fix applied successfully: {message}", "success")
                 else:
                     self.fix_success_rate[recommended_fix]["failures"] += 1
@@ -377,13 +375,3 @@ class RemediationAgent(BaseAgent):
                 }
             return all_stats
 
-    def get_fixes_summary(self) -> str:
-        """Get human-readable summary of fixes applied."""
-        if not self.fixes_applied:
-            return "No fixes applied yet"
-
-        summary = f"Fixes Applied: {len(self.fixes_applied)}\n"
-        for fix in self.fixes_applied[-10:]:  # Last 10 fixes
-            summary += f"  - {fix.get('type')}: {fix.get('message')}\n"
-
-        return summary
