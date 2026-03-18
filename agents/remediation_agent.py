@@ -138,16 +138,15 @@ class RemediationAgent(BaseAgent):
         return False, "OCM token refresh requires manual intervention - credentials need to be updated"
 
     def _fix_backoff_retry(self, params: Dict) -> Tuple[bool, str]:
-        """Implement backoff and retry strategy."""
+        """Recommend backoff for rate limiting (advisory, non-blocking)."""
         backoff_seconds = params.get("backoff_seconds", 60)
         max_retries = params.get("max_retries", 3)
 
-        self.log(f"Applying backoff: waiting {backoff_seconds}s before retry", "info")
+        self.log(f"Rate limit detected: recommend {backoff_seconds}s backoff before retry", "info")
 
-        # Sleep for backoff period
-        time.sleep(backoff_seconds)
-
-        return True, f"Backoff applied ({backoff_seconds}s). Ready for retry."
+        # Advisory only — don't block the output stream, which would
+        # cause Jenkins to think the process is hung.
+        return True, f"Rate limit advisory: wait {backoff_seconds}s before retrying (max {max_retries} retries)"
 
     def _fix_cleanup_vpc_dependencies(self, params: Dict) -> Tuple[bool, str]:
         """

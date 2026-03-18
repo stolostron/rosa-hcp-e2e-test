@@ -37,7 +37,7 @@
       ]
     },
     {
-      "type": "capi_controller_not_running",
+      "type": "capi_not_installed",
       "pattern": ".*(capi|cluster.*api).*(not found|does not exist|no.*running).*",
       "severity": "high",
       "auto_fix": false,
@@ -140,6 +140,23 @@
         "Incorrect VPC ID",
         "Subnets in wrong AZs",
         "Missing route tables"
+      ]
+    },
+    {
+      "type": "repeated_timeouts",
+      "pattern": "^(?!.*(?:Pattern matched|Issue detected|RETRYING)).*(?:timed?.out|timeout.*(?:waiting|exceeded|expired)).*",
+      "severity": "medium",
+      "auto_fix": false,
+      "description": "Operation timing out repeatedly",
+      "symptoms": [
+        "Timeout exceeded messages",
+        "Timed out waiting for resource",
+        "Operation timeout expired"
+      ],
+      "common_causes": [
+        "Resource stuck in provisioning",
+        "Infrastructure slowness",
+        "Dependent resource not ready"
       ]
     },
     {

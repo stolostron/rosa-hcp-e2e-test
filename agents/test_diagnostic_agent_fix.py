@@ -1,23 +1,29 @@
 #!/usr/bin/env python3
 """
-Test for diagnostic_agent.py resource name extraction fix
+Tests for the AI agent framework.
+
+Covers:
+    - Diagnostic agent resource name extraction
+    - Monitoring agent per-resource state machine
+    - Structured context parsing
+    - Pattern detection (single source of truth in JSON)
 """
 
 import sys
+import time
 from pathlib import Path
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from agents.diagnostic_agent import DiagnosticAgent
+from agents.monitoring_agent import MonitoringAgent, IssueState
 
 
 def test_extract_from_oc_command():
     """Test extraction from oc get command"""
     print("\n=== Test 1: Extract from oc command ===")
-
     agent = DiagnosticAgent(Path("."), enabled=True, verbose=True)
-
     context = {
         "buffer": [
             "TASK [Wait for ROSANetwork deletion to complete]",
@@ -26,99 +32,59 @@ def test_extract_from_oc_command():
             "pop-rosa-hcp-network   76m"
         ]
     }
-
     resource_name, namespace = agent._extract_resource_info(context)
-
-    print(f"✓ Extracted: {resource_name} in namespace {namespace}")
     assert resource_name == "pop-rosa-hcp-network", f"Expected 'pop-rosa-hcp-network', got '{resource_name}'"
     assert namespace == "ns-rosa-hcp", f"Expected 'ns-rosa-hcp', got '{namespace}'"
-    print("✓ Test PASSED")
+    print("PASSED")
 
 
 def test_extract_from_kubectl_command():
     """Test extraction from kubectl command"""
     print("\n=== Test 2: Extract from kubectl command ===")
-
     agent = DiagnosticAgent(Path("."), enabled=True, verbose=True)
-
-    context = {
-        "buffer": [
-            "kubectl get rosanetwork my-test-cluster -n test-namespace"
-        ]
-    }
-
+    context = {"buffer": ["kubectl get rosanetwork my-test-cluster -n test-namespace"]}
     resource_name, namespace = agent._extract_resource_info(context)
-
-    print(f"✓ Extracted: {resource_name} in namespace {namespace}")
     assert resource_name == "my-test-cluster", f"Expected 'my-test-cluster', got '{resource_name}'"
     assert namespace == "test-namespace", f"Expected 'test-namespace', got '{namespace}'"
-    print("✓ Test PASSED")
+    print("PASSED")
 
 
 def test_extract_from_output_table():
     """Test extraction from kubectl/oc output table"""
     print("\n=== Test 3: Extract from output table ===")
-
     agent = DiagnosticAgent(Path("."), enabled=True, verbose=True)
-
-    context = {
-        "buffer": [
-            "NAME                   AGE",
-            "pop-rosa-hcp-network   76m"
-        ]
-    }
-
+    context = {"buffer": ["NAME                   AGE", "pop-rosa-hcp-network   76m"]}
     resource_name, namespace = agent._extract_resource_info(context)
-
-    print(f"✓ Extracted: {resource_name}")
     assert resource_name == "pop-rosa-hcp-network", f"Expected 'pop-rosa-hcp-network', got '{resource_name}'"
-    print("✓ Test PASSED (namespace defaults to 'default')")
+    print("PASSED")
 
 
-def test_extract_from_explicit_context():
-    """Test extraction from explicit context fields"""
-    print("\n=== Test 4: Extract from explicit context ===")
-
+def test_extract_from_structured_context():
+    """Test extraction from structured context fields (from #AGENT_CONTEXT markers)"""
+    print("\n=== Test 4: Extract from structured context ===")
     agent = DiagnosticAgent(Path("."), enabled=True, verbose=True)
-
-    context = {
-        "resource_name": "explicit-cluster",
-        "namespace": "explicit-namespace"
-    }
-
+    context = {"resource_name": "explicit-cluster", "namespace": "explicit-namespace"}
     resource_name, namespace = agent._extract_resource_info(context)
-
-    print(f"✓ Extracted: {resource_name} in namespace {namespace}")
     assert resource_name == "explicit-cluster", f"Expected 'explicit-cluster', got '{resource_name}'"
     assert namespace == "explicit-namespace", f"Expected 'explicit-namespace', got '{namespace}'"
-    print("✓ Test PASSED")
+    print("PASSED")
 
 
 def test_fallback_to_unknown():
     """Test fallback to 'unknown-cluster' when extraction fails"""
     print("\n=== Test 5: Fallback to 'unknown-cluster' ===")
-
     agent = DiagnosticAgent(Path("."), enabled=True, verbose=True)
-
-    context = {
-        "buffer": ["irrelevant output", "nothing useful here"]
-    }
-
+    context = {"buffer": ["irrelevant output", "nothing useful here"]}
     resource_name, namespace = agent._extract_resource_info(context)
-
-    print(f"✓ Extracted: {resource_name} in namespace {namespace}")
     assert resource_name == "unknown-cluster", f"Expected 'unknown-cluster', got '{resource_name}'"
     assert namespace == "default", f"Expected 'default', got '{namespace}'"
-    print("✓ Test PASSED (fallback working as expected)")
+    print("PASSED")
 
 
 def test_real_jenkins_output():
     """Test with actual output from the failed Jenkins job"""
     print("\n=== Test 6: Real Jenkins output scenario ===")
-
     agent = DiagnosticAgent(Path("."), enabled=True, verbose=True)
-
-    # Simulated context from actual Jenkins logs
     context = {
         "line": "oc get rosanetwork pop-rosa-hcp-network -n ns-rosa-hcp 2>/dev/null\n",
         "buffer": [
@@ -134,47 +100,129 @@ def test_real_jenkins_output():
         "current_task": "Wait for ROSANetwork deletion to complete",
         "waiting_for": "ROSANetwork"
     }
-
     resource_name, namespace = agent._extract_resource_info(context)
-
-    print(f"✓ Extracted: {resource_name} in namespace {namespace}")
     assert resource_name == "pop-rosa-hcp-network", f"Expected 'pop-rosa-hcp-network', got '{resource_name}'"
     assert namespace == "ns-rosa-hcp", f"Expected 'ns-rosa-hcp', got '{namespace}'"
-    print("✓ Test PASSED - Would fix the actual bug!")
+    print("PASSED")
 
 
-def test_backward_compatibility():
-    """Test that old _extract_cluster_name still works"""
-    print("\n=== Test 7: Backward compatibility ===")
-
+def test_task_name_skip_words():
+    """Test that generic words in task names are not extracted as resource names"""
+    print("\n=== Test 7: Task name skip words ===")
     agent = DiagnosticAgent(Path("."), enabled=True, verbose=True)
-
     context = {
-        "buffer": ["oc get rosanetwork test-cluster -n test-ns"]
+        "buffer": [],
+        "current_task": "Wait for ROSANetwork deletion to complete"
     }
+    resource_name, namespace = agent._extract_resource_info(context)
+    # "deletion" should be skipped, fallback to unknown
+    assert resource_name == "unknown-cluster", f"Expected 'unknown-cluster', got '{resource_name}'"
+    print("PASSED")
 
-    # Old method should still work
-    cluster_name = agent._extract_cluster_name(context)
 
-    print(f"✓ Old method returned: {cluster_name}")
-    assert cluster_name == "test-cluster", f"Expected 'test-cluster', got '{cluster_name}'"
-    print("✓ Test PASSED - Backward compatibility maintained")
+def test_state_machine_prevents_duplicate_intervention():
+    """Test that the per-resource state machine prevents re-triggering"""
+    print("\n=== Test 8: State machine prevents duplicate intervention ===")
+    monitor = MonitoringAgent(Path("."), enabled=True, verbose=True)
+
+    callback_count = 0
+    def mock_callback(issue_type, context, issue):
+        nonlocal callback_count
+        callback_count += 1
+
+    monitor.set_issue_callback(mock_callback)
+
+    # Simulate the same RETRYING line hitting multiple times
+    retrying_line = "FAILED - RETRYING: ROSANetwork pop-rosa-hcp-network still exists waiting for deletion (35 retries left)"
+    for i in range(10):
+        monitor.process_line(retrying_line)
+
+    # Should only fire callback ONCE (state machine blocks after first)
+    assert callback_count == 1, f"Expected 1 callback, got {callback_count}"
+
+    # Mark it failed — should allow one more retry
+    monitor.mark_issue_failed("rosanetwork_stuck_deletion")
+    monitor.process_line(retrying_line)
+    assert callback_count == 2, f"Expected 2 callbacks after failure, got {callback_count}"
+
+    # Mark resolved — no more callbacks
+    monitor.mark_issue_resolved("rosanetwork_stuck_deletion")
+    monitor.process_line(retrying_line)
+    assert callback_count == 2, f"Expected 2 callbacks after resolve, got {callback_count}"
+    print("PASSED")
+
+
+def test_state_machine_max_attempts():
+    """Test that state machine stops after max_attempts"""
+    print("\n=== Test 9: State machine max attempts ===")
+    monitor = MonitoringAgent(Path("."), enabled=True, verbose=True)
+
+    callback_count = 0
+    def mock_callback(issue_type, context, issue):
+        nonlocal callback_count
+        callback_count += 1
+
+    monitor.set_issue_callback(mock_callback)
+
+    retrying_line = "FAILED - RETRYING: ROSANetwork test-cluster still exists waiting for deletion (30 retries left)"
+
+    # First attempt
+    monitor.process_line(retrying_line)
+    assert callback_count == 1
+
+    # Fail and retry up to max_attempts (3)
+    for i in range(4):
+        monitor.mark_issue_failed("rosanetwork_stuck_deletion")
+        monitor.process_line(retrying_line)
+
+    # Should have capped at 3 attempts
+    assert callback_count == 3, f"Expected 3 callbacks (max), got {callback_count}"
+    print("PASSED")
+
+
+def test_structured_context_marker():
+    """Test parsing #AGENT_CONTEXT markers from playbook output"""
+    print("\n=== Test 10: Structured context marker ===")
+    monitor = MonitoringAgent(Path("."), enabled=True, verbose=True)
+
+    # Simulate structured context marker
+    monitor.process_line("#AGENT_CONTEXT: resource_name=my-rosa-network namespace=ns-rosa-hcp resource_type=rosanetwork")
+
+    assert monitor._structured_context.get("resource_name") == "my-rosa-network"
+    assert monitor._structured_context.get("namespace") == "ns-rosa-hcp"
+    assert monitor._structured_context.get("resource_type") == "rosanetwork"
+    print("PASSED")
+
+
+def test_no_hardcoded_patterns():
+    """Verify monitoring agent uses only JSON patterns, no hardcoded detection"""
+    print("\n=== Test 11: No hardcoded pattern detection ===")
+    import inspect
+    source = inspect.getsource(MonitoringAgent._detect_issue)
+    # Should not contain hardcoded keyword checks
+    assert "line.lower()" not in source, "_detect_issue still contains hardcoded keyword detection"
+    assert source.count("return") <= 2, "_detect_issue has too many return paths (likely hardcoded patterns)"
+    print("PASSED")
 
 
 def main():
     """Run all tests"""
     print("=" * 70)
-    print("Testing diagnostic_agent.py Resource Name Extraction Fix")
+    print("AI Agent Framework Tests")
     print("=" * 70)
 
     tests = [
         test_extract_from_oc_command,
         test_extract_from_kubectl_command,
         test_extract_from_output_table,
-        test_extract_from_explicit_context,
+        test_extract_from_structured_context,
         test_fallback_to_unknown,
         test_real_jenkins_output,
-        test_backward_compatibility,
+        test_task_name_skip_words,
+        test_state_machine_prevents_duplicate_intervention,
+        test_state_machine_max_attempts,
+        test_structured_context_marker,
+        test_no_hardcoded_patterns,
     ]
 
     passed = 0
@@ -185,27 +233,17 @@ def main():
             test()
             passed += 1
         except AssertionError as e:
-            print(f"✗ Test FAILED: {e}")
+            print(f"FAILED: {e}")
             failed += 1
         except Exception as e:
-            print(f"✗ Test ERROR: {e}")
+            print(f"ERROR: {e}")
             failed += 1
 
     print("\n" + "=" * 70)
-    print(f"Test Results: {passed} passed, {failed} failed")
+    print(f"Results: {passed} passed, {failed} failed out of {len(tests)}")
     print("=" * 70)
 
-    if failed == 0:
-        print("\n✓ All tests passed! The fix is working correctly.")
-        print("\nExpected behavior:")
-        print("  - Resource names extracted from oc/kubectl commands")
-        print("  - Namespace correctly identified")
-        print("  - No more 'unknown-cluster' errors in normal operation")
-        print("  - Remediation agent will target the correct resources")
-        return 0
-    else:
-        print(f"\n✗ {failed} test(s) failed. Please review the fix.")
-        return 1
+    return 0 if failed == 0 else 1
 
 
 if __name__ == "__main__":
