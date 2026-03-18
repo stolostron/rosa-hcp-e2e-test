@@ -284,6 +284,132 @@ def test_callback_receives_resource_key():
     print("PASSED")
 
 
+def test_rosanetwork_pattern_no_false_positive_during_creation():
+    """Test that rosanetwork_stuck_deletion does NOT match during creation/provisioning"""
+    print("\n=== Test 16: No false positive during ROSANetwork creation ===")
+    monitor = MonitoringAgent(Path("."), enabled=True, verbose=True)
+
+    callback_count = 0
+    def mock_callback(issue_type, context, issue):
+        nonlocal callback_count
+        callback_count += 1
+
+    monitor.set_issue_callback(mock_callback)
+
+    # Simulate the creation scenario that caused the false positive
+    creation_lines = [
+        "TASK [Wait for ROSANetwork to be fully ready] ******",
+        "FAILED - RETRYING: [localhost]: Wait for ROSANetwork to be fully ready (40 retries left).Result was: {",
+        "FAILED - RETRYING: [localhost]: Wait for ROSANetwork to be fully ready (39 retries left).Result was: {",
+        "FAILED - RETRYING: [localhost]: Wait for ROSANetwork to be fully ready (38 retries left).Result was: {",
+    ]
+    for line in creation_lines:
+        monitor.process_line(line)
+
+    assert callback_count == 0, f"Expected 0 callbacks during creation, got {callback_count} (false positive!)"
+    print("PASSED")
+
+
+def test_rosanetwork_pattern_matches_deletion():
+    """Test that rosanetwork_stuck_deletion DOES match during actual deletion"""
+    print("\n=== Test 17: Pattern matches during ROSANetwork deletion ===")
+    monitor = MonitoringAgent(Path("."), enabled=True, verbose=True)
+
+    callback_count = 0
+    detected_types = []
+    def mock_callback(issue_type, context, issue):
+        nonlocal callback_count
+        callback_count += 1
+        detected_types.append(issue_type)
+
+    monitor.set_issue_callback(mock_callback)
+
+    # Actual deletion lines that SHOULD match
+    monitor.process_line("FAILED - RETRYING: ROSANetwork pop-rosa-hcp-network still exists waiting for deletion (35 retries left)")
+
+    assert callback_count == 1, f"Expected 1 callback during deletion, got {callback_count}"
+    assert "rosanetwork_stuck_deletion" in detected_types, f"Expected rosanetwork_stuck_deletion, got {detected_types}"
+    print("PASSED")
+
+
+def test_rosanetwork_deletion_task_retrying_matches():
+    """Test that RETRYING lines for deletion tasks match the pattern"""
+    print("\n=== Test 18: Deletion task RETRYING lines match ===")
+    monitor = MonitoringAgent(Path("."), enabled=True, verbose=True)
+
+    callback_count = 0
+    def mock_callback(issue_type, context, issue):
+        nonlocal callback_count
+        callback_count += 1
+
+    monitor.set_issue_callback(mock_callback)
+
+    monitor.process_line("TASK [Wait for ROSANetwork deletion to complete] ******")
+    monitor.process_line("FAILED - RETRYING: [localhost]: Wait for ROSANetwork deletion to complete (35 retries left)")
+
+    assert callback_count == 1, f"Expected 1 callback for deletion RETRYING, got {callback_count}"
+    print("PASSED")
+
+
+def test_extract_resource_from_retrying_line():
+    """Test resource name extraction from RETRYING lines with explicit resource names"""
+    print("\n=== Test 19: Extract resource from RETRYING line ===")
+    agent = DiagnosticAgent(Path("."), enabled=True, verbose=True)
+    context = {
+        "buffer": [
+            "FAILED - RETRYING: ROSANetwork pop-rosa-hcp-network still exists waiting for deletion (35 retries left)"
+        ]
+    }
+    resource_name, namespace = agent._extract_resource_info(context)
+    assert resource_name == "pop-rosa-hcp-network", f"Expected 'pop-rosa-hcp-network', got '{resource_name}'"
+    print("PASSED")
+
+
+def test_no_false_positive_on_display_banner():
+    """Test that the deletion display banner does NOT trigger detection"""
+    print("\n=== Test 20: No false positive on display banner ===")
+    monitor = MonitoringAgent(Path("."), enabled=True, verbose=True)
+
+    callback_count = 0
+    def mock_callback(issue_type, context, issue):
+        nonlocal callback_count
+        callback_count += 1
+
+    monitor.set_issue_callback(mock_callback)
+
+    # This is the banner message that caused the original false positive
+    banner = (
+        "Deletion Configuration:\n"
+        "- Cluster Name: pop-rosa-hcp\n"
+        "- Namespace: ns-rosa-hcp\n"
+        "Resources to Delete:\n"
+        "- ROSAControlPlane: Yes\n"
+        "- ROSANetwork: Yes\n"
+        "- ROSARoleConfig: Yes\n"
+    )
+    for line in banner.split("\n"):
+        monitor.process_line(line)
+
+    assert callback_count == 0, f"Expected 0 callbacks on display banner, got {callback_count} (false positive!)"
+    print("PASSED")
+
+
+def test_extract_resource_from_ansible_json_cmd():
+    """Test resource extraction from Ansible JSON cmd output in buffer"""
+    print("\n=== Test 21: Extract resource from Ansible JSON cmd ===")
+    agent = DiagnosticAgent(Path("."), enabled=True, verbose=True)
+    context = {
+        "buffer": [
+            '    "cmd": "oc get rosanetwork pop-rosa-hcp-network -n ns-rosa-hcp 2>/dev/null\\n",',
+            '    "_raw_params": "oc get rosanetwork pop-rosa-hcp-network -n ns-rosa-hcp 2>/dev/null\\n",',
+        ]
+    }
+    resource_name, namespace = agent._extract_resource_info(context)
+    assert resource_name == "pop-rosa-hcp-network", f"Expected 'pop-rosa-hcp-network', got '{resource_name}'"
+    assert namespace == "ns-rosa-hcp", f"Expected 'ns-rosa-hcp', got '{namespace}'"
+    print("PASSED")
+
+
 def main():
     """Run all tests"""
     print("=" * 70)
@@ -306,6 +432,12 @@ def main():
         test_extract_resource_type_parameter,
         test_remediation_no_crash_on_success,
         test_callback_receives_resource_key,
+        test_rosanetwork_pattern_no_false_positive_during_creation,
+        test_rosanetwork_pattern_matches_deletion,
+        test_rosanetwork_deletion_task_retrying_matches,
+        test_extract_resource_from_retrying_line,
+        test_no_false_positive_on_display_banner,
+        test_extract_resource_from_ansible_json_cmd,
     ]
 
     passed = 0

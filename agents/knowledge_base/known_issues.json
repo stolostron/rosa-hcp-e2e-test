@@ -89,7 +89,7 @@
     },
     {
       "type": "rosanetwork_stuck_deletion",
-      "pattern": ".*(rosanetwork|ROSANetwork).*(RETRYING|retries left|still exists|waiting.*delet|deletion.*timeout|stuck.*delet|fail.*delet).*",
+      "pattern": "FAILED - RETRYING.*(?:rosanetwork|ROSANetwork).*(?:delet|still exists)|FAILED - RETRYING.*(?:delet).*(?:rosanetwork|ROSANetwork)",
       "severity": "high",
       "auto_fix": true,
       "description": "ROSANetwork stuck in deletion state due to finalizers or VPC dependencies",

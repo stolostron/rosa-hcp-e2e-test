@@ -85,6 +85,13 @@
     msg: "ℹ️  No matching resources found to delete"
   when: resources_to_delete | length == 0
 
+- name: Emit agent context for ROSAControlPlane deletion wait
+  debug:
+    msg: "#AGENT_CONTEXT: resource_name={{ cluster_name }} namespace={{ capi_namespace }} resource_type=rosacontrolplane"
+  when:
+    - wait_for_deletion | bool
+    - "'not-found' not in rcp_exists.stdout"
+
 - name: Wait for ROSAControlPlane deletion to complete
   shell: |
     oc get rosacontrolplane {{ cluster_name }} -n {{ capi_namespace }} 2>/dev/null
@@ -136,6 +143,14 @@
   ignore_errors: true
   when: true
 
+- name: Emit agent context for ROSANetwork deletion wait
+  debug:
+    msg: "#AGENT_CONTEXT: resource_name={{ rosa_network_name }} namespace={{ capi_namespace }} resource_type=rosanetwork"
+  when:
+    - wait_for_deletion | bool
+    - delete_network | bool
+    - "'not-found' not in rn_exists.stdout"
+
 - name: Wait for ROSANetwork deletion to complete
   shell: |
     oc get rosanetwork {{ rosa_network_name }} -n {{ capi_namespace }} 2>/dev/null
@@ -162,6 +177,14 @@
     - wait_for_deletion | bool
     - delete_network | bool
     - "'not-found' not in rn_exists.stdout"
+
+- name: Emit agent context for ROSARoleConfig deletion wait
+  debug:
+    msg: "#AGENT_CONTEXT: resource_name={{ rosa_role_config_name }} namespace={{ capi_namespace }} resource_type=rosaroleconfig"
+  when:
+    - wait_for_deletion | bool
+    - delete_roles | bool
+    - "'not-found' not in rrc_exists.stdout"
 
 - name: Wait for ROSARoleConfig deletion to complete
   shell: |

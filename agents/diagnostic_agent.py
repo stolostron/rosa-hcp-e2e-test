@@ -261,10 +261,13 @@ class DiagnosticAgent(BaseAgent):
             return resource_name, namespace
 
         # 2. Parse buffer for oc/kubectl commands
+        #    Commands may appear bare or inside Ansible JSON output like:
+        #    "cmd": "oc get rosanetwork pop-rosa-hcp-network -n ns-rosa-hcp 2>/dev/null\n"
+        #    "_raw_params": "oc get rosanetwork pop-rosa-hcp-network -n ns-rosa-hcp 2>/dev/null\n"
         buffer = context.get("buffer", [])
         for line in buffer:
             oc_match = re.search(
-                rf'(?:oc|kubectl)\s+(?:get|patch|delete)\s+{re.escape(resource_type)}\s+(\S+)\s+-n\s+(\S+)',
+                rf'(?:oc|kubectl)\s+(?:get|patch|delete)\s+{re.escape(resource_type)}\s+([\w][\w.-]+)\s+-n\s+([\w-]+)',
                 line, re.IGNORECASE
             )
             if oc_match:
@@ -284,7 +287,23 @@ class DiagnosticAgent(BaseAgent):
                         self.log(f"Extracted from output table: {resource_name}", "debug")
                         return resource_name, namespace
 
-        # 4. Fallback: task name (least reliable)
+        # 4. Parse buffer for RETRYING lines that mention the resource explicitly
+        # e.g. "FAILED - RETRYING: ROSANetwork pop-rosa-hcp-network still exists ..."
+        type_pattern_retry = resource_type.replace("rosa", "ROSA", 1) if resource_type.startswith("rosa") else resource_type
+        for line in buffer:
+            retry_match = re.search(
+                rf'(?:RETRYING|retrying).*{type_pattern_retry}\s+(\S+)',
+                line, re.IGNORECASE
+            )
+            if retry_match:
+                candidate = retry_match.group(1)
+                # Filter out generic words that aren't resource names
+                if candidate.lower() not in {"deletion", "delete", "complete", "stuck", "if", "to", "for", "the", "in", "still"} and len(candidate) > 2:
+                    resource_name = candidate
+                    self.log(f"Extracted from RETRYING line: {resource_name}", "debug")
+                    return resource_name, namespace
+
+        # 5. Fallback: task name (least reliable)
         # Build a regex for the resource type (e.g., ROSANetwork, ROSAControlPlane)
         type_pattern = resource_type.replace("rosa", "ROSA", 1) if resource_type.startswith("rosa") else resource_type
         current_task = context.get("current_task", "")
