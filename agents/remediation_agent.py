@@ -28,7 +28,6 @@ class RemediationAgent(BaseAgent):
         super().__init__("Remediation", base_dir, enabled, verbose)
 
         self.dry_run = dry_run
-        self.fixes_applied = []
         self.fix_success_rate = {}
 
     def remediate(self, diagnosis: Dict) -> Tuple[bool, str]:
@@ -85,7 +84,6 @@ class RemediationAgent(BaseAgent):
 
                 if success:
                     self.fix_success_rate[recommended_fix]["successes"] += 1
-                    self.learn_from_success(issue_type, recommended_fix)
                     self.log(f"Fix applied successfully: {message}", "success")
                 else:
                     self.fix_success_rate[recommended_fix]["failures"] += 1
@@ -138,16 +136,15 @@ class RemediationAgent(BaseAgent):
         return False, "OCM token refresh requires manual intervention - credentials need to be updated"
 
     def _fix_backoff_retry(self, params: Dict) -> Tuple[bool, str]:
-        """Implement backoff and retry strategy."""
+        """Recommend backoff for rate limiting (advisory, non-blocking)."""
         backoff_seconds = params.get("backoff_seconds", 60)
         max_retries = params.get("max_retries", 3)
 
-        self.log(f"Applying backoff: waiting {backoff_seconds}s before retry", "info")
+        self.log(f"Rate limit detected: recommend {backoff_seconds}s backoff before retry", "info")
 
-        # Sleep for backoff period
-        time.sleep(backoff_seconds)
-
-        return True, f"Backoff applied ({backoff_seconds}s). Ready for retry."
+        # Advisory only — don't block the output stream, which would
+        # cause Jenkins to think the process is hung.
+        return True, f"Rate limit advisory: wait {backoff_seconds}s before retrying (max {max_retries} retries)"
 
     def _fix_cleanup_vpc_dependencies(self, params: Dict) -> Tuple[bool, str]:
         """
@@ -217,7 +214,7 @@ class RemediationAgent(BaseAgent):
                             ]
                             detach_result = subprocess.run(detach_cmd, capture_output=True, text=True, timeout=30)
                             if detach_result.returncode == 0:
-                                outputs.append(f"  ✓ Detached ENI {eni_id}")
+                                outputs.append(f"  Detached ENI {eni_id}")
                                 time.sleep(2)  # Wait for detachment
 
                         # Delete ENI if available
@@ -229,10 +226,10 @@ class RemediationAgent(BaseAgent):
                             ]
                             delete_result = subprocess.run(delete_cmd, capture_output=True, text=True, timeout=30)
                             if delete_result.returncode == 0:
-                                outputs.append(f"  ✓ Deleted ENI {eni_id}")
+                                outputs.append(f"  Deleted ENI {eni_id}")
                                 cleanup_count += 1
                             else:
-                                outputs.append(f"  ✗ Failed to delete ENI {eni_id}: {delete_result.stderr}")
+                                outputs.append(f"  FAILED to delete ENI {eni_id}: {delete_result.stderr}")
             else:
                 outputs.append("No orphaned ENIs found")
 
@@ -275,15 +272,15 @@ class RemediationAgent(BaseAgent):
 
                         delete_sg_result = subprocess.run(delete_sg_cmd, capture_output=True, text=True, timeout=30)
                         if delete_sg_result.returncode == 0:
-                            outputs.append(f"  ✓ Deleted security group {sg_id} ({sg_name})")
+                            outputs.append(f"  Deleted security group {sg_id} ({sg_name})")
                             sg_cleanup_count += 1
                         else:
                             # Security group might have dependencies, log but continue
                             error_msg = delete_sg_result.stderr.strip()
                             if "DependencyViolation" in error_msg:
-                                outputs.append(f"  ⚠ Security group {sg_id} ({sg_name}) has dependencies, will be cleaned by CloudFormation")
+                                outputs.append(f"  SKIPPED security group {sg_id} ({sg_name}) has dependencies, will be cleaned by CloudFormation")
                             else:
-                                outputs.append(f"  ✗ Failed to delete security group {sg_id}: {error_msg}")
+                                outputs.append(f"  FAILED to delete security group {sg_id}: {error_msg}")
                 else:
                     outputs.append("No security groups found matching criteria")
             else:
@@ -308,7 +305,7 @@ class RemediationAgent(BaseAgent):
         message = params.get("message", "CloudFormation stack requires manual inspection")
 
         # Log the issue prominently for operator attention
-        self.log(f"⚠️  MANUAL INTERVENTION REQUIRED: {message}", "warning")
+        self.log(f"MANUAL INTERVENTION REQUIRED: {message}", "warning")
 
         # Continue test execution but flag for review
         return True, f"Logged for manual review: {message}"
@@ -378,13 +375,3 @@ class RemediationAgent(BaseAgent):
                 }
             return all_stats
 
-    def get_fixes_summary(self) -> str:
-        """Get human-readable summary of fixes applied."""
-        if not self.fixes_applied:
-            return "No fixes applied yet"
-
-        summary = f"Fixes Applied: {len(self.fixes_applied)}\n"
-        for fix in self.fixes_applied[-10:]:  # Last 10 fixes
-            summary += f"  - {fix.get('type')}: {fix.get('message')}\n"
-
-        return summary

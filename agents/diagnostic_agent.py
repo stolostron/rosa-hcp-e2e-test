@@ -26,10 +26,7 @@ class DiagnosticAgent(BaseAgent):
 
     def __init__(self, base_dir: Path, enabled: bool = True, verbose: bool = False):
         super().__init__("Diagnostic", base_dir, enabled, verbose)
-
-        # Diagnostic state
         self.current_diagnosis = None
-        self.resource_states = {}
 
     def diagnose(self, issue_type: str, context: Dict) -> Optional[Dict]:
         """
@@ -37,7 +34,7 @@ class DiagnosticAgent(BaseAgent):
 
         Args:
             issue_type: Type of issue detected
-            context: Context from monitoring agent
+            context: Context from monitoring agent (may include structured fields)
 
         Returns:
             Diagnosis dictionary with recommended fix
@@ -47,7 +44,6 @@ class DiagnosticAgent(BaseAgent):
 
         self.log(f"Diagnosing: {issue_type}", "info")
 
-        # Route to specific diagnostic method
         diagnosis_methods = {
             "rosanetwork_stuck_deletion": self._diagnose_stuck_rosanetwork,
             "cloudformation_deletion_failure": self._diagnose_cloudformation_failure,
@@ -63,17 +59,13 @@ class DiagnosticAgent(BaseAgent):
             self.current_diagnosis = diagnosis
             return diagnosis
 
-        # Generic diagnosis for unknown issues
         return self._diagnose_generic(issue_type, context)
 
     def _diagnose_stuck_rosanetwork(self, context: Dict) -> Dict:
         """Diagnose ROSANetwork stuck in deletion state."""
         self.log("Analyzing ROSANetwork deletion issue...", "debug")
 
-        # Use improved extraction that parses actual resource names from context
         resource_name, namespace = self._extract_resource_info(context)
-
-        # Get ROSANetwork resource status
         resource_info = self._get_resource_info("rosanetwork", resource_name, namespace)
 
         diagnosis = {
@@ -91,24 +83,20 @@ class DiagnosticAgent(BaseAgent):
         }
 
         if resource_info:
-            # Check for deletionTimestamp
             if resource_info.get("metadata", {}).get("deletionTimestamp"):
                 diagnosis["evidence"].append("Resource has deletionTimestamp set")
                 diagnosis["confidence"] = 0.95
 
-            # Check for finalizers
             finalizers = resource_info.get("metadata", {}).get("finalizers", [])
             if finalizers:
                 diagnosis["evidence"].append(f"Resource has {len(finalizers)} finalizer(s): {', '.join(finalizers)}")
                 diagnosis["confidence"] = 1.0
 
-            # Check status conditions
             conditions = resource_info.get("status", {}).get("conditions", [])
             for condition in conditions:
                 if "delete" in condition.get("type", "").lower():
                     diagnosis["evidence"].append(f"Status: {condition.get('type')} - {condition.get('message', 'N/A')}")
         else:
-            # Could not get resource info - lower confidence
             diagnosis["confidence"] = 0.7
             diagnosis["evidence"].append(f"Could not retrieve resource info for {resource_name} in namespace {namespace}")
             self.log(f"WARNING: Could not get resource info for rosanetwork/{resource_name} in {namespace}", "warning")
@@ -119,7 +107,6 @@ class DiagnosticAgent(BaseAgent):
     def _diagnose_cloudformation_failure(self, context: Dict) -> Dict:
         """Diagnose CloudFormation stack deletion failure."""
         self.log("Analyzing CloudFormation failure...", "debug")
-
         return {
             "issue_type": "cloudformation_deletion_failure",
             "root_cause": "CloudFormation stack failed to delete, likely due to orphaned resources",
@@ -136,7 +123,6 @@ class DiagnosticAgent(BaseAgent):
     def _diagnose_ocm_auth(self, context: Dict) -> Dict:
         """Diagnose OCM authentication failure."""
         self.log("Analyzing OCM authentication issue...", "debug")
-
         return {
             "issue_type": "ocm_auth_failure",
             "root_cause": "OCM credentials expired or invalid",
@@ -153,7 +139,6 @@ class DiagnosticAgent(BaseAgent):
         """Diagnose CAPI/CAPA not installed or running."""
         self.log("Checking CAPI/CAPA installation...", "debug")
 
-        # Check if CAPI controllers are running
         capi_running = self._check_deployment("capi-controller-manager", "capi-system")
         capa_running = self._check_deployment("capa-controller-manager", "capa-system")
 
@@ -222,13 +207,11 @@ class DiagnosticAgent(BaseAgent):
         try:
             cmd = ["oc", "get", resource_type, resource_name, "-n", namespace, "-o", "json"]
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
-
             if result.returncode == 0:
                 return json.loads(result.stdout)
             else:
                 self.log(f"Failed to get {resource_type}/{resource_name}: {result.stderr}", "debug")
                 return None
-
         except subprocess.TimeoutExpired:
             self.log(f"Timeout getting {resource_type}/{resource_name}", "warning")
             return None
@@ -242,101 +225,84 @@ class DiagnosticAgent(BaseAgent):
             cmd = ["oc", "get", "deployment", deployment_name, "-n", namespace]
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
             return result.returncode == 0
-        except:
+        except Exception:
             return False
 
-    def _extract_resource_info(self, context: Dict) -> Tuple[str, str]:
+    def _extract_resource_info(self, context: Dict, resource_type: str = "rosanetwork") -> Tuple[str, str]:
         """
         Extract resource name and namespace from context.
 
-        This method parses the actual resource name and namespace from:
-        1. Explicit context fields (if provided)
-        2. Current task name
-        3. Command output in the buffer (oc/kubectl commands and output)
+        Priority order:
+        1. Structured context fields (from #AGENT_CONTEXT markers)
+        2. Explicit context fields (resource_name, namespace)
+        3. Buffer parsing (oc/kubectl commands)
+        4. Buffer parsing (output tables)
+        5. Task name parsing (least reliable)
+
+        Args:
+            context: Context dictionary from monitoring agent
+            resource_type: Kubernetes resource type to match in oc/kubectl commands
 
         Returns:
             Tuple of (resource_name, namespace)
-
-        Example context parsing:
-            - Task: "Wait for ROSANetwork pop-rosa-hcp-network deletion"
-            - Command: "oc get rosanetwork pop-rosa-hcp-network -n ns-rosa-hcp"
-            - Output: "NAME                   AGE\\npop-rosa-hcp-network   76m"
         """
         resource_name = "unknown-cluster"
         namespace = "default"
 
-        # First, check if explicitly provided in context
+        # 1. Check structured context from playbook markers (most reliable)
         if "resource_name" in context:
             resource_name = context["resource_name"]
         if "namespace" in context:
             namespace = context["namespace"]
 
-        # If not explicit, try to extract from current task
-        current_task = context.get("current_task", "")
-        if current_task and resource_name == "unknown-cluster":
-            # Pattern: "Wait for ROSANetwork <name> deletion"
-            task_match = re.search(r'ROSANetwork\s+(\S+)', current_task, re.IGNORECASE)
-            if task_match:
-                resource_name = task_match.group(1)
-                self.log(f"Extracted from task: {resource_name}", "debug")
+        # If structured context gave us a real name, use it
+        if resource_name != "unknown-cluster":
+            self.log(f"Extracted from structured context: {resource_name} in {namespace}", "debug")
+            return resource_name, namespace
 
-        # Try to extract from buffer (command output)
+        # 2. Parse buffer for oc/kubectl commands
         buffer = context.get("buffer", [])
         for line in buffer:
-            # Pattern: "oc get rosanetwork <name> -n <namespace>"
-            oc_match = re.search(r'oc\s+get\s+rosanetwork\s+(\S+)\s+-n\s+(\S+)', line, re.IGNORECASE)
+            oc_match = re.search(
+                rf'(?:oc|kubectl)\s+(?:get|patch|delete)\s+{re.escape(resource_type)}\s+(\S+)\s+-n\s+(\S+)',
+                line, re.IGNORECASE
+            )
             if oc_match:
                 resource_name = oc_match.group(1)
                 namespace = oc_match.group(2)
                 self.log(f"Extracted from oc command: {resource_name} in namespace {namespace}", "debug")
-                break
+                return resource_name, namespace
 
-            # Pattern: "kubectl get rosanetwork <name> -n <namespace>"
-            kubectl_match = re.search(r'kubectl\s+get\s+rosanetwork\s+(\S+)\s+-n\s+(\S+)', line, re.IGNORECASE)
-            if kubectl_match:
-                resource_name = kubectl_match.group(1)
-                namespace = kubectl_match.group(2)
-                self.log(f"Extracted from kubectl command: {resource_name} in namespace {namespace}", "debug")
-                break
-
-            # Pattern: Output table "NAME                   AGE\\npop-rosa-hcp-network   76m"
+        # 3. Parse buffer for output tables
+        for i, line in enumerate(buffer):
             if "NAME" in line and "AGE" in line:
-                buffer_idx = buffer.index(line)
-                if buffer_idx + 1 < len(buffer):
-                    next_line = buffer[buffer_idx + 1].strip()
+                if i + 1 < len(buffer):
+                    next_line = buffer[i + 1].strip()
                     parts = next_line.split()
-                    if parts and resource_name == "unknown-cluster":
+                    if parts:
                         resource_name = parts[0]
                         self.log(f"Extracted from output table: {resource_name}", "debug")
+                        return resource_name, namespace
 
-        # Log what we found
+        # 4. Fallback: task name (least reliable)
+        # Build a regex for the resource type (e.g., ROSANetwork, ROSAControlPlane)
+        type_pattern = resource_type.replace("rosa", "ROSA", 1) if resource_type.startswith("rosa") else resource_type
+        current_task = context.get("current_task", "")
+        skip_words = {"deletion", "delete", "complete", "stuck", "if", "to", "for", "the", "in"}
+        if current_task:
+            task_match = re.search(rf'{type_pattern}\s+(\S+)', current_task, re.IGNORECASE)
+            if task_match:
+                candidate = task_match.group(1)
+                if candidate.lower() not in skip_words and '-' in candidate:
+                    resource_name = candidate
+                    self.log(f"Extracted from task: {resource_name}", "debug")
+                    return resource_name, namespace
+
         if resource_name == "unknown-cluster":
-            self.log("WARNING: Could not extract resource name from context, using default 'unknown-cluster'", "warning")
+            self.log("WARNING: Could not extract resource name from context", "warning")
             self.log(f"Context available: task='{current_task}', buffer_lines={len(buffer)}", "debug")
-        else:
-            self.log(f"Successfully extracted resource: {resource_name} in namespace: {namespace}", "info")
 
         return resource_name, namespace
-
-    def _extract_cluster_name(self, context: Dict) -> str:
-        """
-        Extract cluster/resource name from context.
-
-        This method now uses the improved _extract_resource_info method.
-        Kept for backward compatibility.
-        """
-        resource_name, _ = self._extract_resource_info(context)
-        return resource_name
-
-    def _extract_namespace(self, context: Dict) -> str:
-        """
-        Extract namespace from context.
-
-        Returns:
-            Namespace string (defaults to "default" if not found)
-        """
-        _, namespace = self._extract_resource_info(context)
-        return namespace
 
     def get_diagnosis_summary(self) -> Optional[str]:
         """Get human-readable summary of current diagnosis."""
@@ -344,14 +310,13 @@ class DiagnosticAgent(BaseAgent):
             return None
 
         diag = self.current_diagnosis
-        summary = f"""
-Diagnosis Summary:
-  Issue: {diag['issue_type']}
-  Root Cause: {diag['root_cause']}
-  Severity: {diag['severity']}
-  Confidence: {diag['confidence'] * 100:.0f}%
-  Recommended Fix: {diag['recommended_fix']}
-  Evidence:
-    {chr(10).join(f'    - {e}' for e in diag['evidence'])}
-"""
-        return summary
+        evidence_lines = '\n'.join(f'    - {e}' for e in diag['evidence'])
+        return (
+            f"Diagnosis Summary:\n"
+            f"  Issue: {diag['issue_type']}\n"
+            f"  Root Cause: {diag['root_cause']}\n"
+            f"  Severity: {diag['severity']}\n"
+            f"  Confidence: {diag['confidence'] * 100:.0f}%\n"
+            f"  Recommended Fix: {diag['recommended_fix']}\n"
+            f"  Evidence:\n{evidence_lines}\n"
+        )

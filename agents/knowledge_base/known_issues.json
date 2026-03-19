@@ -37,7 +37,7 @@
       ]
     },
     {
-      "type": "capi_controller_not_running",
+      "type": "capi_not_installed",
       "pattern": ".*(capi|cluster.*api).*(not found|does not exist|no.*running).*",
       "severity": "high",
       "auto_fix": false,
@@ -55,7 +55,7 @@
     },
     {
       "type": "api_rate_limit",
-      "pattern": "^(?!.*(?:Pattern matched|Issue detected|Fix applied|Monitor|Remediation)).*(?:HTTP.*429|rate.limit.exceed|throttl.*request|too.many.requests.*api).*",
+      "pattern": "^(?!.*(?:Pattern matched|Issue detected|Fix applied|Monitor|Remediation|RETRYING|retries left)).*(?:HTTP.*429|rate.limit.exceed|throttl.*request|too.many.requests.*api).*",
       "severity": "low",
       "auto_fix": true,
       "description": "API rate limiting encountered",
@@ -89,7 +89,7 @@
     },
     {
       "type": "rosanetwork_stuck_deletion",
-      "pattern": ".*(rosanetwork|ROSANetwork).*(RETRYING|retries left|still exists|waiting.*delet|deletion.*timeout|stuck.*delet|fail.*delet).*",
+      "pattern": "FAILED - RETRYING.*(?:rosanetwork|ROSANetwork).*(?:delet|still exists)|FAILED - RETRYING.*(?:delet).*(?:rosanetwork|ROSANetwork)",
       "severity": "high",
       "auto_fix": true,
       "description": "ROSANetwork stuck in deletion state due to finalizers or VPC dependencies",
@@ -127,7 +127,7 @@
     },
     {
       "type": "networking_configuration_error",
-      "pattern": ".*(subnet|vpc|network).*(invalid|not found|error).*",
+      "pattern": "(?i)(?:subnet|vpc).*(?:invalid|not found|does not exist|no route|unreachable)",
       "severity": "high",
       "auto_fix": false,
       "description": "Network configuration error",
@@ -143,8 +143,25 @@
       ]
     },
     {
+      "type": "repeated_timeouts",
+      "pattern": "^(?!.*(?:Pattern matched|Issue detected|RETRYING)).*(?:timed?.out|timeout.*(?:waiting|exceeded|expired)).*",
+      "severity": "medium",
+      "auto_fix": false,
+      "description": "Operation timing out repeatedly",
+      "symptoms": [
+        "Timeout exceeded messages",
+        "Timed out waiting for resource",
+        "Operation timeout expired"
+      ],
+      "common_causes": [
+        "Resource stuck in provisioning",
+        "Infrastructure slowness",
+        "Dependent resource not ready"
+      ]
+    },
+    {
       "type": "iam_permission_error",
-      "pattern": ".*(iam|permission|access denied|not authorized).*",
+      "pattern": "(?i)(?:access denied|not authorized|AccessDenied|UnauthorizedAccess|iam.*(?:error|fail|denied))",
       "severity": "high",
       "auto_fix": false,
       "description": "IAM permission or role error",

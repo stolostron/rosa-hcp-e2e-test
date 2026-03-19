@@ -118,10 +118,15 @@ class TestSuiteRunner:
     def _ai_agent_issue_detected(self, issue_type: str, context: Dict, issue: Dict):
         """
         AI Agent callback - called when monitoring agent detects an issue.
-        Orchestrates the diagnostic and remediation chain.
+        Orchestrates the diagnostic and remediation chain, and feeds
+        results back to the monitor's per-resource state machine.
         """
+        # Capture resource_key now so we resolve the correct tracked issue
+        # even if structured context changes before we call back.
+        resource_key = context.get("resource_key")
+
         try:
-            print(f"\n{Colors.YELLOW}🤖 AI Agent detected issue: {issue_type}{Colors.ENDC}")
+            print(f"\n{Colors.YELLOW}AI Agent detected issue: {issue_type}{Colors.ENDC}")
 
             # Step 1: Diagnose the issue
             diagnosis = self.diagnostic_agent.diagnose(issue_type, context)
@@ -136,17 +141,22 @@ class TestSuiteRunner:
                     success, message = self.remediation_agent.remediate(diagnosis)
 
                     if success:
-                        print(f"{Colors.GREEN}   ✓ Fix applied: {message}{Colors.ENDC}\n")
+                        print(f"{Colors.GREEN}   Fix applied: {message}{Colors.ENDC}\n")
+                        self.monitor_agent.mark_issue_resolved(issue_type, resource_key)
                     else:
-                        print(f"{Colors.YELLOW}   ⚠ Fix result: {message}{Colors.ENDC}\n")
+                        print(f"{Colors.YELLOW}   Fix result: {message}{Colors.ENDC}\n")
+                        self.monitor_agent.mark_issue_failed(issue_type, resource_key)
                 else:
-                    print(f"{Colors.YELLOW}   ⚠ Confidence too low for auto-remediation{Colors.ENDC}\n")
+                    print(f"{Colors.YELLOW}   Confidence too low for auto-remediation{Colors.ENDC}\n")
+                    self.monitor_agent.mark_issue_failed(issue_type, resource_key)
             else:
-                print(f"{Colors.YELLOW}   ⚠ Unable to diagnose issue{Colors.ENDC}\n")
+                print(f"{Colors.YELLOW}   Unable to diagnose issue{Colors.ENDC}\n")
+                self.monitor_agent.mark_issue_failed(issue_type, resource_key)
 
         except Exception as e:
             # Don't let agent errors break execution
-            print(f"{Colors.YELLOW}   ⚠ AI Agent error: {str(e)}{Colors.ENDC}\n")
+            print(f"{Colors.YELLOW}   AI Agent error: {str(e)}{Colors.ENDC}\n")
+            self.monitor_agent.mark_issue_failed(issue_type, resource_key)
 
     def load_test_suite(self, suite_id: str) -> Optional[Dict]:
         """Load test suite JSON from file."""
