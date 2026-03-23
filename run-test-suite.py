@@ -82,7 +82,7 @@ class TestSuiteRunner:
             "failed": 0,
             "skipped": 0,
             "suites": [],
-            "ai_agent_statistics": None  # Will be populated if AI agents enabled
+            "ai_agent_statistics": None
         }
 
         # Create results directory if it doesn't exist
@@ -96,21 +96,19 @@ class TestSuiteRunner:
 
         if self.ai_agent_enabled:
             if not AI_AGENTS_AVAILABLE:
-                print(f"{Colors.YELLOW}⚠ AI agents requested but not available - install agents/ module{Colors.ENDC}")
+                print(f"{Colors.YELLOW}Warning: AI agents requested but not available - install agents/ module{Colors.ENDC}")
                 self.ai_agent_enabled = False
             else:
-                print(f"{Colors.CYAN}🤖 Initializing AI Agent Framework...{Colors.ENDC}")
+                print(f"{Colors.CYAN}Initializing AI Agent Framework...{Colors.ENDC}")
 
-                # Initialize agents
                 self.monitor_agent = MonitoringAgent(base_dir, enabled=True, verbose=(verbosity > 0))
                 self.diagnostic_agent = DiagnosticAgent(base_dir, enabled=True, verbose=(verbosity > 0))
                 self.remediation_agent = RemediationAgent(base_dir, enabled=True, verbose=(verbosity > 0), dry_run=ai_agent_dry_run)
 
-                # Connect the callback chain: Monitor → Diagnostic → Remediation
                 self.monitor_agent.set_issue_callback(self._ai_agent_issue_detected)
 
                 mode_text = "DRY RUN MODE" if ai_agent_dry_run else "LIVE MODE"
-                print(f"{Colors.GREEN}✓ AI Agent Framework initialized ({mode_text}){Colors.ENDC}")
+                print(f"{Colors.GREEN}AI Agent Framework initialized ({mode_text}){Colors.ENDC}")
                 print(f"{Colors.CYAN}  - Monitoring Agent: Real-time issue detection{Colors.ENDC}")
                 print(f"{Colors.CYAN}  - Diagnostic Agent: Root cause analysis{Colors.ENDC}")
                 print(f"{Colors.CYAN}  - Remediation Agent: Autonomous fixes{Colors.ENDC}\n")
@@ -120,33 +118,36 @@ class TestSuiteRunner:
         AI Agent callback - called when monitoring agent detects an issue.
         Orchestrates the diagnostic and remediation chain.
         """
-        try:
-            print(f"\n{Colors.YELLOW}🤖 AI Agent detected issue: {issue_type}{Colors.ENDC}")
+        resource_key = context.get("resource_key")
 
-            # Step 1: Diagnose the issue
+        try:
+            print(f"\n{Colors.YELLOW}AI Agent detected issue: {issue_type}{Colors.ENDC}")
+
             diagnosis = self.diagnostic_agent.diagnose(issue_type, context)
 
             if diagnosis:
                 print(f"{Colors.CYAN}   Root cause: {diagnosis.get('root_cause', 'Unknown')}{Colors.ENDC}")
-                print(f"{Colors.CYAN}   Confidence: {diagnosis.get('confidence', 0) * 100:.0f}%{Colors.ENDC}")
                 print(f"{Colors.CYAN}   Recommended fix: {diagnosis.get('recommended_fix', 'None')}{Colors.ENDC}")
 
-                # Step 2: Apply remediation if confidence is high enough
                 if diagnosis.get('confidence', 0) >= 0.7:
                     success, message = self.remediation_agent.remediate(diagnosis)
 
                     if success:
-                        print(f"{Colors.GREEN}   ✓ Fix applied: {message}{Colors.ENDC}\n")
+                        print(f"{Colors.GREEN}   Fix applied: {message}{Colors.ENDC}\n")
+                        self.monitor_agent.mark_issue_resolved(issue_type, resource_key)
                     else:
-                        print(f"{Colors.YELLOW}   ⚠ Fix result: {message}{Colors.ENDC}\n")
+                        print(f"{Colors.YELLOW}   Fix result: {message}{Colors.ENDC}\n")
+                        self.monitor_agent.mark_issue_failed(issue_type, resource_key)
                 else:
-                    print(f"{Colors.YELLOW}   ⚠ Confidence too low for auto-remediation{Colors.ENDC}\n")
+                    print(f"{Colors.YELLOW}   Confidence too low for auto-remediation{Colors.ENDC}\n")
+                    self.monitor_agent.mark_issue_failed(issue_type, resource_key)
             else:
-                print(f"{Colors.YELLOW}   ⚠ Unable to diagnose issue{Colors.ENDC}\n")
+                print(f"{Colors.YELLOW}   Unable to diagnose issue{Colors.ENDC}\n")
+                self.monitor_agent.mark_issue_failed(issue_type, resource_key)
 
         except Exception as e:
-            # Don't let agent errors break execution
-            print(f"{Colors.YELLOW}   ⚠ AI Agent error: {str(e)}{Colors.ENDC}\n")
+            print(f"{Colors.YELLOW}   AI Agent error: {str(e)}{Colors.ENDC}\n")
+            self.monitor_agent.mark_issue_failed(issue_type, resource_key)
 
     def load_test_suite(self, suite_id: str) -> Optional[Dict]:
         """Load test suite JSON from file."""
@@ -252,7 +253,6 @@ class TestSuiteRunner:
                         try:
                             self.monitor_agent.process_line(line)
                         except Exception as e:
-                            # Don't let agent errors break the test execution
                             if self.verbosity > 0:
                                 print(f"{Colors.YELLOW}AI Agent Warning: {str(e)}{Colors.ENDC}")
 
@@ -814,7 +814,7 @@ class TestSuiteRunner:
 
         # Print AI Agent statistics if enabled
         if self.ai_agent_enabled and self.monitor_agent:
-            print(f"\n{Colors.BOLD}🤖 AI AGENT STATISTICS:{Colors.ENDC}")
+            print(f"\n{Colors.BOLD}AI AGENT STATISTICS:{Colors.ENDC}")
 
             monitor_stats = self.monitor_agent.get_statistics()
             print(f"   Issues Detected: {monitor_stats.get('patterns_detected', 0)}")
@@ -827,7 +827,6 @@ class TestSuiteRunner:
                     for fix_name, stats in success_rates.items():
                         print(f"      {fix_name}: {stats['success_rate']} ({stats['successes']}/{stats['total_attempts']})")
 
-                # Store in results for JSON/HTML output
                 self.results['ai_agent_statistics'] = {
                     'monitor_stats': monitor_stats,
                     'fix_success_rates': success_rates
