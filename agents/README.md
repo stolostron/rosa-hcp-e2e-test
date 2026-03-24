@@ -2,50 +2,78 @@
 
 ## Overview
 
-The AI Agent Framework provides **autonomous issue detection and remediation** for ROSA HCP (Red Hat OpenShift Service on AWS - Hosted Control Plane) test automation. This self-healing test framework monitors test execution in real-time, diagnoses issues as they occur, and automatically applies fixes to keep tests running smoothly.
+The AI Agent Framework provides **autonomous issue detection and remediation** for ROSA HCP (Red Hat OpenShift Service on AWS - Hosted Control Plane) test automation. It monitors test execution output in real-time, diagnoses issues as they occur, and automatically applies fixes to keep tests running.
+
+This framework is designed as a **reference pattern** for adding self-healing capabilities to any Ansible-based test pipeline.
 
 ## Key Features
 
 - **Real-Time Monitoring**: Line-by-line analysis of test output as it streams
-- **Pattern-Based Detection**: 8+ predefined issue patterns with regex matching
-- **Root Cause Analysis**: Kubernetes resource introspection and log analysis
-- **Autonomous Remediation**: 7+ automated fix strategies
-- **Learning System**: Tracks success rates and learns from successful interventions
+- **Per-Resource State Machine**: `DETECTED -> DIAGNOSING -> REMEDIATING -> RESOLVED / FAILED` lifecycle prevents duplicate interventions
+- **Single Source of Truth**: All detection patterns defined in `known_issues.json` -- no hardcoded keyword matching
+- **Structured Context Markers**: `#AGENT_CONTEXT:` protocol for deterministic resource extraction from playbook output
+- **Non-Blocking Remediation**: Advisory backoff instead of `time.sleep()` that would freeze CI pipelines
+- **Confidence Scoring**: Only intervenes when diagnosis confidence >= 70%
 - **Dry-Run Mode**: Test agent behavior without applying fixes
-- **Confidence Scoring**: Only intervenes when diagnosis confidence ≥ 70%
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                     Test Suite Runner                        │
-│                   (run-test-suite.py)                        │
-└──────────────────────┬──────────────────────────────────────┘
-                       │ Line-by-line streaming
-                       ▼
-┌─────────────────────────────────────────────────────────────┐
-│                  Monitoring Agent                            │
-│  • Processes output in real-time                            │
-│  • Detects 8+ issue patterns                                │
-│  • Maintains 50-line context buffer                         │
-└──────────────────────┬──────────────────────────────────────┘
-                       │ Issue detected
-                       ▼
-┌─────────────────────────────────────────────────────────────┐
-│                 Diagnostic Agent                             │
-│  • Determines root cause                                    │
-│  • Queries Kubernetes resources (oc/kubectl)                │
-│  • Provides confidence score                                │
-└──────────────────────┬──────────────────────────────────────┘
-                       │ Diagnosis + recommended fix
-                       ▼
-┌─────────────────────────────────────────────────────────────┐
-│                Remediation Agent                             │
-│  • Executes autonomous fixes                                │
-│  • Tracks success rates                                     │
-│  • Records interventions for audit                          │
-└─────────────────────────────────────────────────────────────┘
++-------------------------------------------------------------+
+|                     Test Suite Runner                        |
+|                   (run-test-suite.py)                        |
++--------------------------+----------------------------------+
+                           | Line-by-line streaming
+                           v
++-------------------------------------------------------------+
+|                  Monitoring Agent                            |
+|  * Processes output in real-time                            |
+|  * Detects issues via JSON pattern matching                 |
+|  * Per-resource state machine (TrackedIssue)                |
+|  * Parses #AGENT_CONTEXT markers                            |
+|  * Clears context on TASK boundaries                        |
++--------------------------+----------------------------------+
+                           | Issue detected + resource_key
+                           v
++-------------------------------------------------------------+
+|                 Diagnostic Agent                             |
+|  * Determines root cause                                    |
+|  * Queries Kubernetes resources (oc/kubectl)                |
+|  * Provides confidence score                                |
+|  * Supports multiple resource types via resource_type param |
++--------------------------+----------------------------------+
+                           | Diagnosis + recommended fix
+                           v
++-------------------------------------------------------------+
+|                Remediation Agent                             |
+|  * Executes autonomous fixes                                |
+|  * Tracks success rates                                     |
+|  * Feeds result back to monitor state machine               |
++-------------------------------------------------------------+
 ```
+
+### State Machine
+
+Each detected issue is tracked per-resource through a lifecycle:
+
+```
+DETECTED --> DIAGNOSING --> REMEDIATING --> RESOLVED
+                                       \-> FAILED (can retry up to max_attempts)
+```
+
+This prevents the same issue from triggering multiple interventions while allowing retries after failure. The `resource_key` (e.g., `ns-rosa-hcp/my-cluster`) is captured at detection time and passed through the callback so the correct tracked issue is resolved.
+
+### Structured Context Markers
+
+Ansible playbooks can emit structured context for deterministic resource extraction:
+
+```yaml
+- name: Emit agent context
+  debug:
+    msg: "#AGENT_CONTEXT: resource_name={{ resource_name }} namespace={{ namespace }} resource_type=rosanetwork"
+```
+
+The monitoring agent parses these markers and clears them on each new `TASK [...]` boundary to prevent stale context from leaking between tasks.
 
 ## Quick Start
 
@@ -62,11 +90,18 @@ The AI Agent Framework provides **autonomous issue detection and remediation** f
 ./run-test-suite.py 20-rosa-hcp-provision --ai-agent -vv
 ```
 
+### Running Tests
+
+```bash
+# Run the agent framework tests
+python3 agents/test_agents.py
+```
+
 ### Example Output
 
 ```
-🤖 Initializing AI Agent Framework...
-✓ AI Agent Framework initialized (LIVE MODE)
+Initializing AI Agent Framework...
+AI Agent Framework initialized (LIVE MODE)
   - Monitoring Agent: Real-time issue detection
   - Diagnostic Agent: Root cause analysis
   - Remediation Agent: Autonomous fixes
@@ -77,22 +112,22 @@ CAPA Test Suite Runner
 
 [Test execution begins...]
 
-🤖 AI Agent detected issue: rosanetwork_stuck_deletion
+AI Agent detected issue: rosanetwork_stuck_deletion
    Root cause: ROSANetwork has finalizers preventing deletion
    Confidence: 95%
    Recommended fix: remove_finalizers
-   ✓ Fix applied: Successfully removed finalizers from rosanetwork/test-cluster
+   Fix applied: Successfully removed finalizers from rosanetwork/test-cluster
 
 [Test execution continues...]
 
 ================================================================================
-📊 FINAL RESULTS SUMMARY:
+FINAL RESULTS SUMMARY:
    Total Tests: 3
-   ✓ Passed: 3
-   ✗ Failed: 0
-   ⏱️  Total Duration: 15m 42s
+   Passed: 3
+   Failed: 0
+   Total Duration: 15m 42s
 
-🤖 AI AGENT STATISTICS:
+AI AGENT STATISTICS:
    Issues Detected: 2
    Interventions: 2
 
@@ -102,403 +137,162 @@ CAPA Test Suite Runner
 ================================================================================
 ```
 
-## Detected Issues
+## Detected Issue Patterns
 
-The AI Agent Framework can detect and remediate these issue types:
+All patterns are defined in `knowledge_base/known_issues.json` (single source of truth).
 
-### 1. ROSANetwork Stuck in Deletion
-- **Pattern**: `rosanetwork.*delete.*timeout`
-- **Auto-Fix**: ✅ Yes
-- **Fix Strategy**: Remove finalizers from stuck resource
-- **Success Rate**: High (95%+)
-
-### 2. CloudFormation Deletion Failure
-- **Pattern**: `cloudformation.*(delete.*fail|rollback)`
-- **Auto-Fix**: ❌ Manual intervention required
-- **Fix Strategy**: Log issue for operator review
-- **Notes**: Usually requires AWS console cleanup of orphaned resources
-
-### 3. OCM Authentication Failure
-- **Pattern**: `ocm.*(401|403|unauthorized)`
-- **Auto-Fix**: ⚠️ Partial (requires new credentials)
-- **Fix Strategy**: Alert operator to refresh OCM token
-- **Notes**: OCM tokens expire after 24 hours
-
-### 4. CAPI/CAPA Controller Not Running
-- **Pattern**: `capi.*(not found|does not exist)`
-- **Auto-Fix**: ❌ Manual intervention required
-- **Fix Strategy**: Guide user to run `10-configure-mce-environment`
-- **Notes**: Requires MCE configuration playbook
-
-### 5. API Rate Limiting
-- **Pattern**: `rate limit|429|too many requests`
-- **Auto-Fix**: ✅ Yes
-- **Fix Strategy**: Exponential backoff (60s, 120s, 240s)
-- **Success Rate**: High (90%+)
-
-### 6. Repeated Timeouts
-- **Pattern**: Multiple `timeout` occurrences in buffer
-- **Auto-Fix**: ⚠️ Partial
-- **Fix Strategy**: Recommend increasing timeout values
-- **Notes**: May indicate stuck resources requiring inspection
-
-### 7. Resource Quota Exceeded
-- **Pattern**: `quota.*exceed`
-- **Auto-Fix**: ❌ Manual intervention required
-- **Fix Strategy**: Alert operator to request quota increase or cleanup
-- **Notes**: Common quotas: VPCs (5), Elastic IPs (5), NAT Gateways (5)
-
-### 8. Networking Configuration Error
-- **Pattern**: `(subnet|vpc|network).*(invalid|not found)`
-- **Auto-Fix**: ❌ Manual intervention required
-- **Fix Strategy**: Verify VPC and subnet configurations
-- **Notes**: ROSA HCP requires specific network architecture
-
-## Remediation Strategies
-
-### Automated Fixes (No Manual Intervention)
-
-#### Remove Finalizers
-**Issue**: ROSANetwork stuck with `deletionTimestamp`
-**Action**: Patches resource to remove finalizers
-```bash
-oc patch rosanetwork <name> -n <namespace> --type=merge -p '{"metadata":{"finalizers":null}}'
-```
-**Safety**: Safe when CloudFormation deletion has failed or timed out
-
-#### Backoff and Retry
-**Issue**: API rate limiting
-**Action**: Exponential backoff sleep (60s → 120s → 240s)
-**Safety**: Safe, non-destructive delay
-
-### Manual Intervention Fixes (Logged for Review)
-
-#### CloudFormation Cleanup
-**Issue**: Stack deletion failed
-**Action**: Log issue prominently for operator attention
-**Next Steps**:
-1. Identify failing stack in AWS console
-2. Check stack events for specific failure reasons
-3. Manually delete orphaned resources (security groups, ENIs)
-4. Retry stack deletion
-
-#### OCM Token Refresh
-**Issue**: Authentication failure
-**Action**: Alert operator to refresh credentials
-**Next Steps**:
-```bash
-rosa login --token=<new_token>
-```
+| Issue Type | Auto-Fix | Severity | Description |
+|---|---|---|---|
+| `rosanetwork_stuck_deletion` | Yes | high | ROSANetwork stuck with finalizers preventing deletion |
+| `vpc_deletion_failure` | Yes | high | VPC deletion blocked by orphaned ENIs/security groups |
+| `api_rate_limit` | Yes | low | API rate limiting (429, throttle errors) |
+| `cloudformation_deletion_failure` | No | high | CloudFormation stack deletion failure |
+| `ocm_auth_failure` | Partial | medium | OCM authentication failure (expired token) |
+| `capi_not_installed` | No | high | CAPI/CAPA controllers not installed or running |
+| `repeated_timeouts` | No | medium | Operations timing out repeatedly |
+| `resource_quota_exceeded` | No | medium | AWS resource quota exceeded |
+| `networking_configuration_error` | No | high | Subnet/VPC configuration errors |
+| `iam_permission_error` | No | high | IAM permission or access denied errors |
 
 ## Knowledge Base
 
-The framework uses JSON-based knowledge bases for pattern definitions and fix strategies:
-
 ### `knowledge_base/known_issues.json`
-- Issue type definitions
-- Regex patterns for detection
-- Severity levels
-- Auto-fix capabilities
-- Common symptoms and causes
+
+The single source of truth for issue detection. Each pattern defines:
+- `type`: Issue identifier (must match diagnostic agent method names)
+- `pattern`: Regex for detection (with negative lookahead to avoid self-triggering)
+- `severity`: high / medium / low
+- `auto_fix`: Whether the framework can remediate automatically
+- `description`, `symptoms`, `common_causes`: Documentation
 
 ### `knowledge_base/fix_strategies.json`
-- Detailed remediation playbooks
-- Step-by-step procedures
-- Required commands
-- Prerequisites
-- Success criteria
-- Rollback procedures
-- Safety notes
+
+Operator runbook documentation for each issue type. Contains step-by-step procedures, required commands, prerequisites, success criteria, and rollback procedures. Referenced by operators when manual intervention is needed.
 
 ## Agent Components
 
 ### Base Agent (`base_agent.py`)
+
 Foundation class providing:
 - Color-coded logging (debug, info, warning, error, success)
-- Pattern matching with regex support
-- Intervention recording to JSON
-- Learning from successful fixes
-- Knowledge base loading/saving
+- Regex pattern matching against knowledge base
+- Intervention recording (in-memory)
+- Lazy-loaded knowledge base via `@property`
 - Execution context management
 
 ### Monitoring Agent (`monitoring_agent.py`)
-Real-time output monitoring:
-- Line-by-line processing
-- 50-line context buffer for multi-line patterns
-- Tracks current Ansible task and resource states
-- Dynamic issue detection
-- Intervention callback triggering
 
-**Key Methods**:
+Real-time output monitoring with per-resource state machine:
+- Line-by-line processing with 50-line context buffer
+- `TrackedIssue` class with `IssueState` enum for lifecycle management
+- `#AGENT_CONTEXT:` marker parsing with context isolation per TASK
+- All detection via JSON patterns only (no hardcoded keywords)
+
+**Callback signature:**
 ```python
-def process_line(self, line: str) -> bool:
-    """Process output line and detect issues"""
-
-def set_issue_callback(self, callback: Callable):
-    """Register callback for issue detection"""
+def issue_callback(issue_type: str, context: Dict, issue: Dict) -> None:
+    # context includes "resource_key" for feeding back to state machine
+    resource_key = context["resource_key"]
+    # ... diagnose and remediate ...
+    monitor.mark_issue_resolved(issue_type, resource_key)
 ```
 
 ### Diagnostic Agent (`diagnostic_agent.py`)
-Root cause analysis:
-- Kubernetes resource introspection via `oc`/`kubectl`
-- Log analysis and pattern correlation
-- Confidence scoring (0.0 - 1.0)
-- Evidence collection
-- Recommended fix determination
 
-**Key Methods**:
-```python
-def diagnose(self, issue_type: str, context: Dict) -> Optional[Dict]:
-    """Analyze issue and return diagnosis with recommended fix"""
+Root cause analysis with resource extraction priority:
+1. Structured context fields (from `#AGENT_CONTEXT` markers) -- most reliable
+2. Buffer parsing for `oc`/`kubectl` commands
+3. Buffer parsing for output tables (`NAME  AGE` format)
+4. Task name parsing with skip-word filtering -- least reliable
 
-def _get_resource_info(self, resource_type: str, resource_name: str, namespace: str) -> Optional[Dict]:
-    """Get Kubernetes resource information"""
-```
+Supports multiple resource types via `resource_type` parameter (default: `rosanetwork`).
 
 ### Remediation Agent (`remediation_agent.py`)
+
 Autonomous fix execution:
-- 7+ remediation strategies
+- Fix routing via method dispatch dictionary
 - Success rate tracking per fix type
+- Non-blocking backoff (advisory, not `time.sleep()`)
 - Dry-run mode support
-- Comprehensive error handling
-- Intervention auditing
-
-**Key Methods**:
-```python
-def remediate(self, diagnosis: Dict) -> Tuple[bool, str]:
-    """Execute remediation based on diagnosis"""
-
-def get_success_rate(self, fix_type: Optional[str] = None) -> Dict:
-    """Get fix success statistics"""
-```
+- All fix results fed back to monitor state machine
 
 ## Configuration
 
 ### Confidence Threshold
-The framework only applies automatic remediation when diagnostic confidence ≥ 70%. This threshold is configured in `run-test-suite.py`:
 
+Automatic remediation requires diagnosis confidence >= 70%:
 ```python
 if diagnosis.get('confidence', 0) >= 0.7:
     success, message = self.remediation_agent.remediate(diagnosis)
 ```
 
 ### Verbosity Levels
+
 - **Default**: Shows only issue detection and fix results
 - **-v**: Adds agent debug logging
-- **-vv**: Detailed agent operation logs
-- **-vvv**: Maximum verbosity with all agent details
-
-## Monitoring and Auditing
-
-### Intervention Logs
-All agent interventions are recorded in JSON format:
-
-```json
-{
-  "timestamp": "2026-03-03T14:23:45.123456",
-  "type": "remove_finalizers",
-  "details": {
-    "issue_type": "rosanetwork_stuck_deletion",
-    "success": true,
-    "message": "Successfully removed finalizers from rosanetwork/test-cluster",
-    "parameters": {
-      "resource_type": "rosanetwork",
-      "resource_name": "test-cluster",
-      "namespace": "default"
-    }
-  }
-}
-```
-
-### Success Rate Tracking
-Each fix type maintains statistics:
-```json
-{
-  "remove_finalizers": {
-    "successes": 15,
-    "failures": 1,
-    "total_attempts": 16,
-    "success_rate": "93.8%"
-  }
-}
-```
-
-### Learning Log
-Successful fixes are logged for continuous improvement:
-```json
-{
-  "timestamp": "2026-03-03T14:25:12.456789",
-  "issue_type": "rosanetwork_stuck_deletion",
-  "fix_applied": "remove_finalizers",
-  "success": true
-}
-```
+- **-vv+**: Detailed agent operation logs
 
 ## Safety Features
 
-### Non-Invasive by Default
-- Agents are **disabled by default**
-- Must explicitly enable with `--ai-agent` flag
-- Dry-run mode available for testing
-
-### Fail-Safe Error Handling
-- Agent errors never break test execution
-- Exceptions caught and logged
-- Test suite continues even if agents fail
-
-### Confidence-Based Intervention
-- Only acts on high-confidence diagnoses (≥70%)
-- Low-confidence issues are logged but not remediated
-- Human review recommended for complex issues
-
-### Audit Trail
-- All interventions recorded with timestamps
-- Success/failure tracking
-- Full parameter logging for reproducibility
-
-## Troubleshooting
-
-### AI Agents Not Working
-
-**Problem**: Agents requested but not available
-**Solution**: Verify `agents/` module exists in rosa-hcp-e2e-test directory
-
-**Problem**: No issues detected during test
-**Solution**: Check that test actually has issues or increase verbosity with `-v`
-
-**Problem**: Issues detected but not remediated
-**Solution**: Check confidence scores - may be below 70% threshold
-
-### Debugging Agent Behavior
-
-Enable verbose mode to see detailed agent logging:
-```bash
-./run-test-suite.py 20-rosa-hcp-provision --ai-agent -vv
-```
-
-Check intervention logs:
-```bash
-ls -la logs/interventions_*.json
-```
-
-Review learning logs:
-```bash
-ls -la logs/learning_log.json
-```
+- **Disabled by default** -- must explicitly enable with `--ai-agent`
+- **Fail-safe error handling** -- agent errors never break test execution
+- **Per-resource state machine** -- prevents duplicate interventions
+- **Max attempts** -- stops retrying after 3 failed attempts per issue
+- **Confidence threshold** -- only acts on high-confidence diagnoses
+- **Audit trail** -- all interventions recorded with timestamps and parameters
 
 ## Extending the Framework
 
-### Adding New Issue Patterns
+### Adding a New Issue Pattern
 
 1. Add pattern to `knowledge_base/known_issues.json`:
 ```json
 {
   "type": "new_issue_type",
-  "pattern": ".*your.*regex.*pattern.*",
+  "pattern": "your-regex-here",
   "severity": "high",
   "auto_fix": true,
-  "description": "Description of the issue",
-  "symptoms": ["Symptom 1", "Symptom 2"],
-  "common_causes": ["Cause 1", "Cause 2"]
+  "description": "Description of the issue"
 }
 ```
 
 2. Add diagnostic method to `diagnostic_agent.py`:
 ```python
 def _diagnose_new_issue(self, context: Dict) -> Dict:
-    """Diagnose new issue type"""
     return {
         "issue_type": "new_issue_type",
         "root_cause": "Root cause description",
         "severity": "high",
         "confidence": 0.9,
-        "evidence": ["Evidence 1", "Evidence 2"],
+        "evidence": [],
         "recommended_fix": "new_fix_strategy",
         "fix_parameters": {}
     }
 ```
 
-3. Add remediation method to `remediation_agent.py`:
-```python
-def _fix_new_strategy(self, params: Dict) -> Tuple[bool, str]:
-    """Implement new fix strategy"""
-    # Your fix logic here
-    return True, "Fix successfully applied"
-```
+3. Register it in the `diagnosis_methods` dict in `diagnose()`.
 
-4. Register the new fix method in the routing dictionary:
-```python
-fix_methods = {
-    "new_fix_strategy": self._fix_new_strategy,
-    # ... existing methods
-}
-```
+4. Add remediation method to `remediation_agent.py` and register it in `fix_methods`.
 
-## Performance Impact
+5. Add operator runbook to `knowledge_base/fix_strategies.json`.
 
-### Overhead
-- **CPU**: Minimal (<1% additional CPU usage)
-- **Memory**: ~10-20MB for agent framework
-- **Latency**: <1ms per line processed
-- **I/O**: Minimal (only when querying Kubernetes resources)
+6. Add tests to `test_agents.py`.
 
-### Scalability
-- Handles 1000+ lines/second of output
-- Buffer limited to 50 lines for memory efficiency
-- Asynchronous operation doesn't block test execution
+## Using as a Reference Pattern
 
-## Security Considerations
+To adapt this framework for other test automation:
 
-### Credentials
-- Agents use existing `oc`/`kubectl` authentication
-- No credentials stored in agent code
-- All resource queries use current user context
+1. **Replace patterns**: Update `known_issues.json` with your domain-specific error patterns
+2. **Add diagnostics**: Write `_diagnose_*` methods that inspect your infrastructure
+3. **Add remediations**: Write `_fix_*` methods for your automated fixes
+4. **Hook into your runner**: Call `monitor.process_line(line)` on each output line
+5. **Wire the callback**: Connect monitor -> diagnostic -> remediation chain
+6. **Feed back results**: Pass `resource_key` to `mark_issue_resolved`/`mark_issue_failed`
 
-### Permissions
-- Requires Kubernetes API access for resource queries
-- Needs `patch` permission for finalizer removal
-- Standard user permissions sufficient for most operations
-
-### Audit Trail
-- All interventions logged with timestamps
-- Full parameter logging for security review
-- No sensitive data in agent logs
-
-## Future Enhancements
-
-### Planned Features
-- [ ] Ansible callback plugin for deeper integration
-- [ ] Machine learning for pattern adaptation
-- [ ] Cluster-wide issue correlation
-- [ ] Predictive issue detection
-- [ ] Integration with Prometheus/Grafana
-- [ ] Slack/email notifications for critical issues
-- [ ] Web dashboard for agent statistics
-
-### Contributing
-To contribute new issue patterns or fix strategies:
-1. Test your pattern/fix thoroughly
-2. Add documentation to knowledge base
-3. Include success rate data
-4. Submit PR with detailed description
-
-## References
-
-- **Main Documentation**: `/Users/tinafitzgerald/acm_dev/rosa-hcp-e2e-test/README.md`
-- **Test Runner**: `/Users/tinafitzgerald/acm_dev/rosa-hcp-e2e-test/run-test-suite.py`
-- **Issue Patterns**: `knowledge_base/known_issues.json`
-- **Fix Strategies**: `knowledge_base/fix_strategies.json`
-
-## Support
-
-For issues or questions:
-- File an issue in the repository
-- Check the main README troubleshooting section
-- Review agent logs in `logs/` directory
+The framework handles the rest: state machine, duplicate prevention, retry logic, context isolation, and audit trail.
 
 ---
 
 **Version**: 0.1.0
 **Author**: Tina Fitzgerald
 **Created**: March 3, 2026
-**License**: [Your License Here]
