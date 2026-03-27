@@ -30,8 +30,10 @@ Created: January 22, 2026
 
 import argparse
 import json
+import os
 import subprocess
 import sys
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -93,6 +95,7 @@ class TestSuiteRunner:
         self.monitor_agent = None
         self.diagnostic_agent = None
         self.remediation_agent = None
+        self._agent_lock = threading.Lock()  # Guards process_line from concurrent sidecar + stdout calls
 
         if self.ai_agent_enabled:
             if not AI_AGENTS_AVAILABLE:
@@ -238,6 +241,50 @@ class TestSuiteRunner:
                 cwd=self.base_dir
             )
 
+            # Start sidecar log file tailer for real-time agent monitoring.
+            # Ansible shell wait loops buffer stdout, but they also write to a
+            # sidecar log file via tee. This thread tails that file and feeds
+            # lines to the agent immediately (same pattern as ui/backend/app.py).
+            sidecar_stop = threading.Event()
+            sidecar_thread = None
+
+            if self.ai_agent_enabled and self.monitor_agent and "delete" in playbook_name.lower():
+                cluster_name = self.extra_vars.get("cluster_name", "")
+                if not cluster_name:
+                    # Derive from name_prefix (same as Ansible: name_prefix + "-rosa-hcp")
+                    name_prefix = self.extra_vars.get("name_prefix", "")
+                    if name_prefix:
+                        cluster_name = f"{name_prefix}-rosa-hcp"
+                if cluster_name:
+                    sidecar_logfile = f"/tmp/deletion-agent-{cluster_name}.log"
+
+                    def _tail_sidecar():
+                        """Tail the sidecar log file and feed lines to the AI agent in real-time."""
+                        last_pos = 0
+                        while not sidecar_stop.is_set():
+                            try:
+                                if os.path.exists(sidecar_logfile):
+                                    with open(sidecar_logfile, 'r') as f:
+                                        f.seek(last_pos)
+                                        new_lines = f.readlines()
+                                        if new_lines:
+                                            for line in new_lines:
+                                                line = line.strip()
+                                                if line:
+                                                    try:
+                                                        with self._agent_lock:
+                                                            self.monitor_agent.process_line(line)
+                                                    except Exception:
+                                                        pass
+                                        last_pos = f.tell()
+                            except Exception:
+                                pass
+                            sidecar_stop.wait(2)  # Poll every 2 seconds
+                    sidecar_thread = threading.Thread(target=_tail_sidecar, daemon=True)
+                    sidecar_thread.start()
+                    if self.verbosity > 0:
+                        print(f"{Colors.CYAN}AI Agent sidecar monitoring: {sidecar_logfile}{Colors.ENDC}")
+
             # Capture output while streaming it in real-time
             output_lines = []
             try:
@@ -251,7 +298,8 @@ class TestSuiteRunner:
                     # AI Agent Hook: Process line in real-time for issue detection
                     if self.ai_agent_enabled and self.monitor_agent:
                         try:
-                            self.monitor_agent.process_line(line)
+                            with self._agent_lock:
+                                self.monitor_agent.process_line(line)
                         except Exception as e:
                             if self.verbosity > 0:
                                 print(f"{Colors.YELLOW}AI Agent Warning: {str(e)}{Colors.ENDC}")
@@ -263,6 +311,11 @@ class TestSuiteRunner:
                 process.kill()
                 process.wait()
                 raise  # Re-raise to be caught by outer exception handler
+            finally:
+                # Stop the sidecar tailer thread
+                sidecar_stop.set()
+                if sidecar_thread is not None:
+                    sidecar_thread.join(timeout=5)
 
             duration = time.time() - start_time
             output = ''.join(output_lines)
