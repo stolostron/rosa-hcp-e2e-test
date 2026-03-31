@@ -38,5 +38,25 @@
     "root_cause": "CloudFormation stack failed to delete, likely due to orphaned resources",
     "resource_key": "ns-rosa-hcp/foo-rosa-hcp-network",
     "details": "Logged for manual review: CloudFormation stack requires manual inspection and cleanup"
+  },
+  {
+    "timestamp": "2026-03-31T17:34:28.650966",
+    "issue_type": "rosanetwork_stuck_deletion",
+    "recommended_fix": "retry_cloudformation_delete",
+    "success": true,
+    "confidence_used": 1.0,
+    "root_cause": "CloudFormation stack stuck in DELETE_IN_PROGRESS due to ROSA-created VPC dependencies",
+    "resource_key": "ns-rosa-hcp/hpe-rosa-hcp-network",
+    "details": "Cleaned up VPC dependencies for hpe-rosa-hcp-rosa-network-stack; Deleted 1 VPC endpoint(s); Deleted ENI eni-035bbe1d62b4d6d3e; Deleted ENI eni-04bd15aa5d32ed051; Deleted security group sg-099454d5c40a3876d (2pcuhd32ls5rmr9cndjg2900t2di6luc-vpce-private-router); Deleted subnet subnet-05b979f38afc76853; Deleted subnet subnet-01704de93d7fcf9d9"
+  },
+  {
+    "timestamp": "2026-03-31T17:36:13.372603",
+    "issue_type": "rosaroleconfig_stuck_deletion",
+    "recommended_fix": "remove_finalizers",
+    "success": true,
+    "confidence_used": 0.7,
+    "root_cause": "rosaroleconfig has finalizers preventing deletion",
+    "resource_key": "ns-rosa-hcp/hpe-rosa-hcp-roles",
+    "details": "Resource rosaroleconfig/hpe-rosa-hcp-roles already deleted (no finalizer removal needed)"
   }
 ]
