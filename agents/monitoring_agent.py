@@ -64,6 +64,17 @@ class TrackedIssue:
             if self.attempts < self.max_attempts and (time.time() - self.last_updated) >= 120:
                 return True
             return False
+        # Allow re-diagnosis after exhausting max_attempts if enough time has
+        # passed (2 min).  The underlying resource status may have changed
+        # (e.g., CF stack went from DELETE_IN_PROGRESS to DELETE_FAILED).
+        # Grant one more attempt so the diagnostic agent can re-check.
+        if (
+            self.state == IssueState.FAILED
+            and self.attempts >= self.max_attempts
+            and (time.time() - self.last_updated) >= 120
+        ):
+            self.max_attempts += 1
+            return True
         if not (self.state in (IssueState.DETECTED,) or self.can_retry()):
             return False
         # Throttle re-checks to at most once per 60 seconds
@@ -141,6 +152,20 @@ class MonitoringAgent(BaseAgent):
     def _handle_detected_issue(self, issue: Dict, line: str) -> bool:
         """Handle a detected issue through the state machine."""
         issue_type = issue.get("type", "unknown")
+
+        # Guard: skip stale issues that don't match the current structured
+        # context.  For example, if the sidecar log still contains old
+        # rosanetwork_stuck_deletion lines but the playbook has already
+        # moved on to rosaroleconfig, we must not re-trigger the old issue.
+        ctx_resource_type = self._structured_context.get("resource_type")
+        if ctx_resource_type and "_stuck_deletion" in issue_type:
+            expected_prefix = f"{ctx_resource_type}_stuck_deletion"
+            if issue_type != expected_prefix:
+                self.log(
+                    f"Skipping stale issue {issue_type} — structured context says resource_type={ctx_resource_type}",
+                    "debug",
+                )
+                return False
 
         # Build a resource key from structured context or fallback to issue type
         resource_key = self._build_resource_key()

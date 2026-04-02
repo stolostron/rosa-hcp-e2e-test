@@ -58,10 +58,45 @@ class DiagnosticAgent(BaseAgent):
         diagnostic_method = diagnosis_methods.get(issue_type)
         if diagnostic_method:
             diagnosis = diagnostic_method(context)
+            diagnosis = self._apply_learned_confidence(diagnosis)
             self.current_diagnosis = diagnosis
             return diagnosis
 
-        return self._diagnose_generic(issue_type, context)
+        diagnosis = self._diagnose_generic(issue_type, context)
+        diagnosis = self._apply_learned_confidence(diagnosis)
+        return diagnosis
+
+    def _apply_learned_confidence(self, diagnosis: Dict) -> Dict:
+        """Apply learned confidence adjustment from the knowledge base.
+
+        If the learning agent has recorded a learned_confidence for this
+        issue type, blend it with the diagnostic confidence. The learned
+        value acts as a nudge — it can boost or reduce confidence by up
+        to 0.1 from the diagnostic value, but never override it entirely.
+        """
+        issue_type = diagnosis.get("issue_type")
+        if not issue_type:
+            return diagnosis
+
+        patterns = self.known_issues.get("patterns", [])
+        for pattern in patterns:
+            if pattern.get("type") == issue_type and "learned_confidence" in pattern:
+                learned = pattern["learned_confidence"]
+                original = diagnosis.get("confidence", 0.5)
+
+                # Nudge toward learned value, capped at ±0.1
+                delta = max(-0.1, min(0.1, learned - original))
+                adjusted = max(0.0, min(1.0, round(original + delta, 2)))
+
+                if adjusted != original:
+                    diagnosis["confidence"] = adjusted
+                    diagnosis.setdefault("evidence", []).append(
+                        f"Confidence adjusted {original} -> {adjusted} (learned from {pattern.get('adjustment_reason', 'historical outcomes')})"
+                    )
+                    self.log(f"Learned confidence adjustment for {issue_type}: {original} -> {adjusted}", "debug")
+                break
+
+        return diagnosis
 
     def _diagnose_stuck_resource(self, context: Dict, resource_type: str, issue_type: str) -> Dict:
         """Generic diagnosis for a resource stuck in deletion state."""
@@ -116,10 +151,13 @@ class DiagnosticAgent(BaseAgent):
         resource_name, namespace = self._extract_resource_info(context, "rosanetwork")
         resource_info = self._get_resource_info("rosanetwork", resource_name, namespace)
 
-        # Determine the CloudFormation stack name from the resource spec
+        # Determine the CloudFormation stack name from the resource
+        # Priority: status.stackName > spec.stackName > naming convention
         stack_name = None
         if resource_info:
-            stack_name = resource_info.get("spec", {}).get("stackName")
+            stack_name = resource_info.get("status", {}).get("stackName")
+            if not stack_name:
+                stack_name = resource_info.get("spec", {}).get("stackName")
             if not stack_name:
                 # Convention: <cluster-name>-rosa-network-stack
                 stack_name = f"{resource_name.replace('-network', '')}-rosa-network-stack"
@@ -196,19 +234,50 @@ class DiagnosticAgent(BaseAgent):
             self.log(f"CloudFormation stack {stack_name} is gone — removing finalizers", "info")
             return self._diagnose_stuck_resource(context, "rosanetwork", "rosanetwork_stuck_deletion")
         else:
-            # Unknown or unexpected status — fall back to generic diagnosis
-            self.log(f"CloudFormation stack {stack_name} status: {cfn_status}", "warning")
-            return self._diagnose_stuck_resource(context, "rosanetwork", "rosanetwork_stuck_deletion")
+            # Do NOT fall back to remove_finalizers — removing the finalizer
+            # causes K8s to garbage-collect the ROSANetwork resource, which
+            # ends monitoring, even though the CloudFormation stack may be
+            # DELETE_FAILED with orphaned AWS resources (VPCs, SGs, NAT GWs).
+            # Instead, return low confidence so the agent waits and the CAPA
+            # controller has time to clean up CF properly.
+            self.log(
+                f"CloudFormation stack {stack_name} status: {cfn_status} — "
+                f"cannot confirm stack is gone, NOT removing finalizers", "warning"
+            )
+            return {
+                "issue_type": "rosanetwork_stuck_deletion",
+                "root_cause": f"CloudFormation stack status is {cfn_status} — cannot safely remove finalizers without confirming stack cleanup",
+                "severity": "medium",
+                "confidence": 0.4,
+                "evidence": [
+                    f"CloudFormation stack {stack_name} status: {cfn_status}",
+                    "aws CLI may not be available — cannot verify stack deletion status",
+                ],
+                "recommended_fix": "log_and_continue",
+                "fix_parameters": {}
+            }
 
     def _get_cloudformation_stack_status(self, stack_name: str, resource_info: Dict = None) -> str:
         """Check CloudFormation stack status.
 
+        Priority:
+        1. Read from ROSANetwork K8s resource .status.stackStatus (no AWS deps)
+        2. Fall back to aws CLI subprocess (if available)
+
         Returns one of: DELETE_IN_PROGRESS, DELETE_FAILED, DELETE_COMPLETE, GONE,
-        or the raw stack status string.
+        UNKNOWN, or the raw stack status string.
         """
         if not stack_name:
             return "UNKNOWN"
 
+        # 1. Try reading from K8s resource status (zero dependencies)
+        if resource_info:
+            k8s_stack_status = resource_info.get("status", {}).get("stackStatus")
+            if k8s_stack_status:
+                self.log(f"CloudFormation status from K8s resource: {k8s_stack_status}", "debug")
+                return k8s_stack_status
+
+        # 2. Fall back to aws CLI (may not be available in Jenkins)
         region = "us-west-2"
         if resource_info:
             region = resource_info.get("spec", {}).get("region", region)

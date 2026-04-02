@@ -642,6 +642,55 @@ def test_resolved_issue_allows_reintervention():
     print("PASSED")
 
 
+def test_rediagnosis_after_max_attempts():
+    """Test 32: Agent re-diagnoses after exhausting max_attempts.
+
+    When an issue hits max_attempts (3) and stays in FAILED state, the agent
+    should grant one more attempt after 120s.  This catches status transitions
+    like CloudFormation DELETE_IN_PROGRESS -> DELETE_FAILED that happen after
+    the initial diagnosis window.
+    """
+    print("\n=== Test 32: Re-diagnosis after max attempts ===")
+    from agents.monitoring_agent import TrackedIssue, IssueState
+
+    tracked = TrackedIssue("rosanetwork_stuck_deletion", "ns/test-network", {})
+    tracked.state = IssueState.FAILED
+    tracked.attempts = 3  # max_attempts is 3
+
+    # Should NOT intervene immediately after exhausting attempts
+    tracked.last_updated = time.time()
+    assert not tracked.should_intervene(), \
+        "Should not re-diagnose immediately after max attempts"
+
+    # Should NOT intervene after only 60s
+    tracked.last_updated = time.time() - 60
+    assert not tracked.should_intervene(), \
+        "Should not re-diagnose after only 60s"
+
+    # SHOULD intervene after 120s — status may have changed
+    tracked.last_updated = time.time() - 130
+    assert tracked.should_intervene(), \
+        "Should re-diagnose after 120s to catch status transitions"
+    assert tracked.max_attempts == 4, \
+        "max_attempts should be incremented to 4"
+
+    # After the extra attempt, should NOT intervene again immediately
+    tracked.state = IssueState.FAILED
+    tracked.attempts = 4
+    tracked.last_updated = time.time()
+    assert not tracked.should_intervene(), \
+        "Should not re-diagnose immediately after extra attempt"
+
+    # Should get another chance after 120s again
+    tracked.last_updated = time.time() - 130
+    assert tracked.should_intervene(), \
+        "Should get another re-diagnosis after another 120s"
+    assert tracked.max_attempts == 5, \
+        "max_attempts should be incremented to 5"
+
+    print("PASSED")
+
+
 def test_shell_loop_output_matches_agent_patterns():
     """Test 28: Wait loop retry output matches agent detection patterns.
 
@@ -707,6 +756,53 @@ def test_shell_loop_no_false_positive_on_success():
     print("PASSED")
 
 
+def test_stale_line_not_misattributed():
+    """Test 31: Stale sidecar lines from a previous resource phase are not misattributed.
+
+    When the structured context switches to rosaroleconfig but the sidecar
+    still delivers old rosanetwork RETRYING lines, the agent should skip
+    the stale rosanetwork issue instead of tagging it with the rosaroleconfig
+    resource key.
+    """
+    print("\n=== Test 31: Stale sidecar lines not misattributed ===")
+    from agents.monitoring_agent import MonitoringAgent
+
+    monitor = MonitoringAgent(Path(__file__).parent.parent, enabled=True)
+
+    detected_issues = []
+    def callback(issue_type, context, issue):
+        detected_issues.append((issue_type, context.get("resource_key", "")))
+
+    monitor.set_issue_callback(callback)
+
+    # Phase 1: context is rosanetwork, rosanetwork line triggers correctly
+    monitor.process_line("#AGENT_CONTEXT: resource_name=my-network namespace=ns-rosa-hcp resource_type=rosanetwork")
+    monitor.process_line("FAILED - RETRYING: [localhost]: Wait for rosanetwork my-network deletion to complete (50 retries left).")
+
+    assert len(detected_issues) == 1
+    assert detected_issues[0][0] == "rosanetwork_stuck_deletion"
+    assert "my-network" in detected_issues[0][1]
+
+    # Phase 2: context switches to rosaroleconfig
+    monitor.process_line("#AGENT_CONTEXT: resource_name=my-roles namespace=ns-rosa-hcp resource_type=rosaroleconfig")
+
+    # A stale rosanetwork RETRYING line arrives (sidecar race) — should be SKIPPED
+    monitor.process_line("FAILED - RETRYING: [localhost]: Wait for rosanetwork my-network deletion to complete (49 retries left).")
+
+    # Should still be just 1 issue — the stale line was skipped
+    assert len(detected_issues) == 1, \
+        f"Expected 1 issue (stale line should be skipped), got {len(detected_issues)}: {detected_issues}"
+
+    # A rosaroleconfig RETRYING line arrives — should be detected correctly
+    monitor.process_line("FAILED - RETRYING: [localhost]: Wait for rosaroleconfig my-roles deletion to complete (30 retries left).")
+
+    assert len(detected_issues) == 2
+    assert detected_issues[1][0] == "rosaroleconfig_stuck_deletion"
+    assert "my-roles" in detected_issues[1][1]
+
+    print("PASSED")
+
+
 def test_shell_loop_task_file_has_streaming_output():
     """Test 30: Deletion task file uses shell loops with echo for real-time streaming.
 
@@ -739,6 +835,490 @@ def test_shell_loop_task_file_has_streaming_output():
             f"{wait_task_name} should echo FAILED - RETRYING for agent detection"
         assert resource.lower() in shell_cmd.lower(), \
             f"{wait_task_name} should include resource type in echo for pattern matching"
+
+    print("PASSED")
+
+
+# ============================================================================
+# Learning Agent Tests
+# ============================================================================
+
+def test_learning_agent_record_outcome():
+    """Test 33: LearningAgent records outcomes in session"""
+    print("\n=== Test 33: LearningAgent records outcomes ===")
+    import tempfile
+    from agents.learning_agent import LearningAgent
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        base_dir = Path(tmpdir)
+        (base_dir / "agents" / "knowledge_base").mkdir(parents=True)
+        agent = LearningAgent(base_dir, enabled=True, verbose=False)
+
+        diagnosis = {"confidence": 0.85, "root_cause": "CF stack stuck"}
+        agent.record_outcome("rosanetwork_stuck_deletion", diagnosis,
+                             "retry_cloudformation_delete", True, "ns/my-cluster", "Stack deleted")
+
+        assert len(agent.session_outcomes) == 1
+        outcome = agent.session_outcomes[0]
+        assert outcome["issue_type"] == "rosanetwork_stuck_deletion"
+        assert outcome["success"] is True
+        assert outcome["confidence_used"] == 0.85
+        assert outcome["resource_key"] == "ns/my-cluster"
+
+    print("PASSED")
+
+
+def test_learning_agent_disabled_noop():
+    """Test 34: Disabled LearningAgent does nothing"""
+    print("\n=== Test 34: Disabled LearningAgent is a no-op ===")
+    import tempfile
+    from agents.learning_agent import LearningAgent
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        base_dir = Path(tmpdir)
+        (base_dir / "agents" / "knowledge_base").mkdir(parents=True)
+        agent = LearningAgent(base_dir, enabled=False, verbose=False)
+
+        agent.record_outcome("test_issue", {}, "some_fix", True)
+        assert len(agent.session_outcomes) == 0
+
+        agent.suggest_new_pattern("some log line", {"issue_type": "new"}, "fix", True)
+        assert not agent.pending_file.exists()
+
+    print("PASSED")
+
+
+def test_learning_agent_end_of_run_persists_outcomes():
+    """Test 35: end_of_run_summary persists outcomes to disk"""
+    print("\n=== Test 35: end_of_run_summary persists outcomes ===")
+    import tempfile
+    from agents.learning_agent import LearningAgent
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        base_dir = Path(tmpdir)
+        (base_dir / "agents" / "knowledge_base").mkdir(parents=True)
+        agent = LearningAgent(base_dir, enabled=True, verbose=False)
+
+        # Record a few outcomes
+        for i in range(3):
+            agent.record_outcome("rosanetwork_stuck_deletion",
+                                 {"confidence": 0.9, "root_cause": "test"},
+                                 "retry_cloudformation_delete", True, f"ns/cluster-{i}")
+
+        summary = agent.end_of_run_summary()
+
+        # Outcomes should be persisted
+        assert agent.outcomes_file.exists(), "Outcomes file should be created"
+        import json
+        with open(agent.outcomes_file) as f:
+            persisted = json.load(f)
+        assert len(persisted) == 3, f"Expected 3 persisted outcomes, got {len(persisted)}"
+
+        # Summary should have stats
+        assert summary["session_outcomes"] == 3
+        key = "rosanetwork_stuck_deletion:retry_cloudformation_delete"
+        assert summary["fix_stats"][key]["successes"] == 3
+
+    print("PASSED")
+
+
+def test_learning_agent_confidence_boost():
+    """Test 36: 3+ consecutive successes boosts confidence by 0.05"""
+    print("\n=== Test 36: Confidence boost after consecutive successes ===")
+    import tempfile, json
+    from agents.learning_agent import LearningAgent
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        base_dir = Path(tmpdir)
+        kb_dir = base_dir / "agents" / "knowledge_base"
+        kb_dir.mkdir(parents=True)
+
+        # Create a known_issues.json with a pattern
+        known_issues = {
+            "patterns": [
+                {"type": "rosanetwork_stuck_deletion", "pattern": "test",
+                 "learned_confidence": 0.85}
+            ]
+        }
+        with open(kb_dir / "known_issues.json", 'w') as f:
+            json.dump(known_issues, f)
+
+        agent = LearningAgent(base_dir, enabled=True, verbose=False)
+
+        # Record 3 successes
+        for i in range(3):
+            agent.record_outcome("rosanetwork_stuck_deletion",
+                                 {"confidence": 0.9}, "retry_cloudformation_delete",
+                                 True, f"ns/c-{i}")
+
+        summary = agent.end_of_run_summary()
+
+        # Should have a boost adjustment
+        assert len(summary["adjustments"]) == 1
+        assert summary["adjustments"][0]["action"] == "boost"
+        assert summary["adjustments"][0]["delta"] == 0.05
+
+        # known_issues.json should be updated
+        with open(kb_dir / "known_issues.json") as f:
+            updated = json.load(f)
+        pattern = updated["patterns"][0]
+        assert pattern["learned_confidence"] == 0.9, \
+            f"Expected 0.9 (0.85 + 0.05), got {pattern['learned_confidence']}"
+
+    print("PASSED")
+
+
+def test_learning_agent_confidence_reduce():
+    """Test 37: 2+ consecutive failures reduces confidence by 0.1"""
+    print("\n=== Test 37: Confidence reduction after consecutive failures ===")
+    import tempfile, json
+    from agents.learning_agent import LearningAgent
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        base_dir = Path(tmpdir)
+        kb_dir = base_dir / "agents" / "knowledge_base"
+        kb_dir.mkdir(parents=True)
+
+        known_issues = {
+            "patterns": [
+                {"type": "rosanetwork_stuck_deletion", "pattern": "test",
+                 "learned_confidence": 0.85}
+            ]
+        }
+        with open(kb_dir / "known_issues.json", 'w') as f:
+            json.dump(known_issues, f)
+
+        agent = LearningAgent(base_dir, enabled=True, verbose=False)
+
+        # Record 2 failures
+        for i in range(2):
+            agent.record_outcome("rosanetwork_stuck_deletion",
+                                 {"confidence": 0.9}, "retry_cloudformation_delete",
+                                 False, f"ns/c-{i}")
+
+        summary = agent.end_of_run_summary()
+
+        assert len(summary["adjustments"]) == 1
+        assert summary["adjustments"][0]["action"] == "reduce"
+        assert summary["adjustments"][0]["delta"] == -0.1
+
+        with open(kb_dir / "known_issues.json") as f:
+            updated = json.load(f)
+        pattern = updated["patterns"][0]
+        assert pattern["learned_confidence"] == 0.75, \
+            f"Expected 0.75 (0.85 - 0.1), got {pattern['learned_confidence']}"
+
+    print("PASSED")
+
+
+def test_learning_agent_confidence_floor():
+    """Test 38: Confidence never drops below 0.3"""
+    print("\n=== Test 38: Confidence floor at 0.3 ===")
+    import tempfile, json
+    from agents.learning_agent import LearningAgent
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        base_dir = Path(tmpdir)
+        kb_dir = base_dir / "agents" / "knowledge_base"
+        kb_dir.mkdir(parents=True)
+
+        known_issues = {
+            "patterns": [
+                {"type": "rosanetwork_stuck_deletion", "pattern": "test",
+                 "learned_confidence": 0.35}
+            ]
+        }
+        with open(kb_dir / "known_issues.json", 'w') as f:
+            json.dump(known_issues, f)
+
+        agent = LearningAgent(base_dir, enabled=True, verbose=False)
+
+        # Record failures to push below floor
+        for i in range(3):
+            agent.record_outcome("rosanetwork_stuck_deletion",
+                                 {"confidence": 0.5}, "retry_cloudformation_delete",
+                                 False, f"ns/c-{i}")
+
+        agent.end_of_run_summary()
+
+        with open(kb_dir / "known_issues.json") as f:
+            updated = json.load(f)
+        pattern = updated["patterns"][0]
+        assert pattern["learned_confidence"] == 0.3, \
+            f"Expected 0.3 (floor), got {pattern['learned_confidence']}"
+
+    print("PASSED")
+
+
+def test_learning_agent_confidence_ceiling():
+    """Test 39: Confidence never exceeds 1.0"""
+    print("\n=== Test 39: Confidence ceiling at 1.0 ===")
+    import tempfile, json
+    from agents.learning_agent import LearningAgent
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        base_dir = Path(tmpdir)
+        kb_dir = base_dir / "agents" / "knowledge_base"
+        kb_dir.mkdir(parents=True)
+
+        known_issues = {
+            "patterns": [
+                {"type": "rosanetwork_stuck_deletion", "pattern": "test",
+                 "learned_confidence": 0.97}
+            ]
+        }
+        with open(kb_dir / "known_issues.json", 'w') as f:
+            json.dump(known_issues, f)
+
+        agent = LearningAgent(base_dir, enabled=True, verbose=False)
+
+        for i in range(4):
+            agent.record_outcome("rosanetwork_stuck_deletion",
+                                 {"confidence": 0.9}, "retry_cloudformation_delete",
+                                 True, f"ns/c-{i}")
+
+        agent.end_of_run_summary()
+
+        with open(kb_dir / "known_issues.json") as f:
+            updated = json.load(f)
+        pattern = updated["patterns"][0]
+        assert pattern["learned_confidence"] == 1.0, \
+            f"Expected 1.0 (ceiling), got {pattern['learned_confidence']}"
+
+    print("PASSED")
+
+
+def test_learning_agent_mixed_results_no_adjustment():
+    """Test 40: Mixed success/failure results in no confidence adjustment"""
+    print("\n=== Test 40: Mixed results -> no adjustment ===")
+    import tempfile, json
+    from agents.learning_agent import LearningAgent
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        base_dir = Path(tmpdir)
+        kb_dir = base_dir / "agents" / "knowledge_base"
+        kb_dir.mkdir(parents=True)
+
+        known_issues = {
+            "patterns": [
+                {"type": "rosanetwork_stuck_deletion", "pattern": "test",
+                 "learned_confidence": 0.85}
+            ]
+        }
+        with open(kb_dir / "known_issues.json", 'w') as f:
+            json.dump(known_issues, f)
+
+        agent = LearningAgent(base_dir, enabled=True, verbose=False)
+
+        # Mix of success and failure
+        agent.record_outcome("rosanetwork_stuck_deletion", {"confidence": 0.9},
+                             "retry_cloudformation_delete", True, "ns/c-1")
+        agent.record_outcome("rosanetwork_stuck_deletion", {"confidence": 0.9},
+                             "retry_cloudformation_delete", False, "ns/c-2")
+        agent.record_outcome("rosanetwork_stuck_deletion", {"confidence": 0.9},
+                             "retry_cloudformation_delete", True, "ns/c-3")
+
+        summary = agent.end_of_run_summary()
+        assert len(summary["adjustments"]) == 0, \
+            f"Expected no adjustments for mixed results, got {summary['adjustments']}"
+
+    print("PASSED")
+
+
+def test_learning_agent_suggest_new_pattern():
+    """Test 41: suggest_new_pattern writes to pending_learnings.json"""
+    print("\n=== Test 41: suggest_new_pattern writes pending learnings ===")
+    import tempfile, json
+    from agents.learning_agent import LearningAgent
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        base_dir = Path(tmpdir)
+        (base_dir / "agents" / "knowledge_base").mkdir(parents=True)
+        agent = LearningAgent(base_dir, enabled=True, verbose=False)
+
+        diagnosis = {
+            "issue_type": "new_vpc_issue",
+            "root_cause": "VPC endpoint leak",
+            "confidence": 0.65,
+            "evidence": ["Found orphaned endpoint"],
+            "recommended_fix": "delete_vpc_endpoints",
+            "severity": "high",
+        }
+        agent.suggest_new_pattern("ERROR: VPC endpoint still attached", diagnosis,
+                                  "delete_vpc_endpoints", True)
+
+        assert agent.pending_file.exists()
+        with open(agent.pending_file) as f:
+            pending = json.load(f)
+        assert len(pending) == 1
+        suggestion = pending[0]
+        assert suggestion["status"] == "pending_review"
+        assert suggestion["suggested_pattern"]["auto_fix"] is False, \
+            "New patterns must default to auto_fix=False for safety"
+        assert suggestion["suggested_pattern"]["suggested_fix"] == "delete_vpc_endpoints"
+        assert suggestion["diagnosis_details"]["confidence"] == 0.65
+
+    print("PASSED")
+
+
+def test_learning_agent_outcomes_capped_at_500():
+    """Test 42: Outcomes file is capped at 500 entries"""
+    print("\n=== Test 42: Outcomes capped at 500 ===")
+    import tempfile, json
+    from agents.learning_agent import LearningAgent
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        base_dir = Path(tmpdir)
+        kb_dir = base_dir / "agents" / "knowledge_base"
+        kb_dir.mkdir(parents=True)
+
+        # Pre-seed with 498 outcomes
+        existing = [{"issue_type": f"old-{i}", "success": True, "timestamp": f"2026-01-{i:02d}"}
+                    for i in range(1, 499)]
+        with open(kb_dir / "remediation_outcomes.json", 'w') as f:
+            json.dump(existing, f)
+
+        agent = LearningAgent(base_dir, enabled=True, verbose=False)
+
+        # Add 10 more (total would be 508)
+        for i in range(10):
+            agent.record_outcome("test_issue", {"confidence": 0.9}, "fix", True, f"ns/c-{i}")
+
+        agent.end_of_run_summary()
+
+        with open(kb_dir / "remediation_outcomes.json") as f:
+            persisted = json.load(f)
+        assert len(persisted) == 500, f"Expected 500 (capped), got {len(persisted)}"
+        # The newest entries should be kept (last 500)
+        assert persisted[-1]["issue_type"] == "test_issue", \
+            "Newest outcomes should be preserved when capping"
+
+    print("PASSED")
+
+
+def test_learning_agent_get_learning_stats():
+    """Test 43: get_learning_stats returns correct statistics"""
+    print("\n=== Test 43: get_learning_stats ===")
+    import tempfile, json
+    from agents.learning_agent import LearningAgent
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        base_dir = Path(tmpdir)
+        kb_dir = base_dir / "agents" / "knowledge_base"
+        kb_dir.mkdir(parents=True)
+
+        # Pre-seed outcomes
+        outcomes = [
+            {"issue_type": "a", "recommended_fix": "fix_a", "success": True, "timestamp": "t1"},
+            {"issue_type": "a", "recommended_fix": "fix_a", "success": True, "timestamp": "t2"},
+            {"issue_type": "a", "recommended_fix": "fix_a", "success": False, "timestamp": "t3"},
+            {"issue_type": "b", "recommended_fix": "fix_b", "success": False, "timestamp": "t4"},
+        ]
+        with open(kb_dir / "remediation_outcomes.json", 'w') as f:
+            json.dump(outcomes, f)
+
+        agent = LearningAgent(base_dir, enabled=True, verbose=False)
+        stats = agent.get_learning_stats()
+
+        assert stats["total_outcomes"] == 4
+        assert stats["fix_stats"]["fix_a"]["successes"] == 2
+        assert stats["fix_stats"]["fix_a"]["failures"] == 1
+        assert stats["fix_stats"]["fix_a"]["success_rate"] == "67%"
+        assert stats["fix_stats"]["fix_b"]["success_rate"] == "0%"
+
+    print("PASSED")
+
+
+def test_learning_agent_empty_run_no_side_effects():
+    """Test 44: end_of_run_summary with no outcomes has no side effects"""
+    print("\n=== Test 44: Empty run has no side effects ===")
+    import tempfile
+    from agents.learning_agent import LearningAgent
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        base_dir = Path(tmpdir)
+        (base_dir / "agents" / "knowledge_base").mkdir(parents=True)
+        agent = LearningAgent(base_dir, enabled=True, verbose=False)
+
+        summary = agent.end_of_run_summary()
+
+        assert summary == {"adjustments": [], "pending_reviews": []}
+        assert not agent.outcomes_file.exists(), "No outcomes file should be created for empty run"
+
+    print("PASSED")
+
+
+def test_diagnostic_applies_learned_confidence():
+    """Test 45: DiagnosticAgent applies learned_confidence from knowledge base"""
+    print("\n=== Test 45: Diagnostic applies learned confidence ===")
+    import tempfile, json
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        base_dir = Path(tmpdir)
+        kb_dir = base_dir / "agents" / "knowledge_base"
+        kb_dir.mkdir(parents=True)
+
+        # Set learned_confidence higher than what diagnosis would return
+        known_issues = {
+            "patterns": [
+                {"type": "rosanetwork_stuck_deletion", "pattern": "test",
+                 "learned_confidence": 1.0}
+            ]
+        }
+        with open(kb_dir / "known_issues.json", 'w') as f:
+            json.dump(known_issues, f)
+
+        agent = DiagnosticAgent(base_dir, enabled=True, verbose=False)
+
+        # Simulate a diagnosis with confidence 0.8
+        diagnosis = {
+            "issue_type": "rosanetwork_stuck_deletion",
+            "confidence": 0.8,
+            "evidence": [],
+        }
+        adjusted = agent._apply_learned_confidence(diagnosis)
+
+        # Should be nudged up by 0.1 (max delta), not jumped to 1.0
+        assert adjusted["confidence"] == 0.9, \
+            f"Expected 0.9 (0.8 + 0.1 cap), got {adjusted['confidence']}"
+        assert any("adjusted" in e.lower() for e in adjusted["evidence"]), \
+            "Evidence should note the confidence adjustment"
+
+    print("PASSED")
+
+
+def test_diagnostic_learned_confidence_no_change_when_equal():
+    """Test 46: No adjustment when learned_confidence equals diagnostic confidence"""
+    print("\n=== Test 46: No adjustment when learned equals diagnostic ===")
+    import tempfile, json
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        base_dir = Path(tmpdir)
+        kb_dir = base_dir / "agents" / "knowledge_base"
+        kb_dir.mkdir(parents=True)
+
+        known_issues = {
+            "patterns": [
+                {"type": "rosanetwork_stuck_deletion", "pattern": "test",
+                 "learned_confidence": 0.85}
+            ]
+        }
+        with open(kb_dir / "known_issues.json", 'w') as f:
+            json.dump(known_issues, f)
+
+        agent = DiagnosticAgent(base_dir, enabled=True, verbose=False)
+
+        diagnosis = {
+            "issue_type": "rosanetwork_stuck_deletion",
+            "confidence": 0.85,
+            "evidence": [],
+        }
+        adjusted = agent._apply_learned_confidence(diagnosis)
+
+        assert adjusted["confidence"] == 0.85, \
+            f"Expected no change (0.85), got {adjusted['confidence']}"
+        assert len(adjusted["evidence"]) == 0, \
+            "No evidence should be added when confidence unchanged"
 
     print("PASSED")
 
@@ -780,6 +1360,23 @@ def main():
         test_shell_loop_output_matches_agent_patterns,
         test_shell_loop_no_false_positive_on_success,
         test_shell_loop_task_file_has_streaming_output,
+        test_stale_line_not_misattributed,
+        test_rediagnosis_after_max_attempts,
+        # Learning Agent tests
+        test_learning_agent_record_outcome,
+        test_learning_agent_disabled_noop,
+        test_learning_agent_end_of_run_persists_outcomes,
+        test_learning_agent_confidence_boost,
+        test_learning_agent_confidence_reduce,
+        test_learning_agent_confidence_floor,
+        test_learning_agent_confidence_ceiling,
+        test_learning_agent_mixed_results_no_adjustment,
+        test_learning_agent_suggest_new_pattern,
+        test_learning_agent_outcomes_capped_at_500,
+        test_learning_agent_get_learning_stats,
+        test_learning_agent_empty_run_no_side_effects,
+        test_diagnostic_applies_learned_confidence,
+        test_diagnostic_learned_confidence_no_change_when_equal,
     ]
 
     passed = 0

@@ -101,6 +101,14 @@ pipeline {
                 }
             }
         }
+        stage('Install Python Dependencies') {
+            steps {
+                sh '''
+                    # Install boto3 for AI agent AWS remediation (CloudFormation cleanup)
+                    pip3 install --user boto3 2>/dev/null || pip install --user boto3 2>/dev/null || echo "WARNING: Could not install boto3 — agent AWS remediation will be limited"
+                '''
+            }
+        }
         stage ('Verify OCP Credentials') {
             when {
                 expression {

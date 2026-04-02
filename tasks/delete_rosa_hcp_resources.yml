@@ -305,6 +305,97 @@
       Check: aws cloudformation describe-stacks --stack-name {{ cluster_name }}-rosa-network-stack
   when: rosanetwork_deletion_failed | default(false) | bool
 
+# ================================================================
+# Post-deletion CloudFormation stack verification
+# ================================================================
+# After the K8s ROSANetwork resource is gone, the underlying AWS
+# CloudFormation stack may still be DELETE_IN_PROGRESS or DELETE_FAILED.
+# ROSA creates security groups (e.g. *-vpce-private-router) outside
+# CloudFormation, which block VPC deletion and cause DELETE_FAILED.
+# This step catches orphaned stacks that would otherwise cost money.
+# ================================================================
+
+- name: Emit agent context for CloudFormation verification
+  shell: |
+    echo "#AGENT_CONTEXT: resource_name={{ rosa_network_name }} namespace={{ capi_namespace }} resource_type=rosanetwork" | tee -a "{{ agent_monitor_log }}"
+  changed_when: false
+  when:
+    - wait_for_deletion | bool
+    - delete_network | bool
+    - "'not-found' not in rn_exists.stdout"
+
+- name: Verify CloudFormation stack cleanup after ROSANetwork deletion
+  environment:
+    AWS_ACCESS_KEY_ID: "{{ AWS_ACCESS_KEY_ID | default(omit) }}"
+    AWS_SECRET_ACCESS_KEY: "{{ AWS_SECRET_ACCESS_KEY | default(omit) }}"
+  shell: |
+    LOGFILE="{{ agent_monitor_log }}"
+    STACK_NAME="{{ cluster_name }}-rosa-network-stack"
+    REGION="{{ aws_region | default('us-west-2') }}"
+    NETWORK_NAME="{{ rosa_network_name }}"
+    NAMESPACE="{{ capi_namespace }}"
+    RETRIES=36
+    echo "Verifying CloudFormation stack $STACK_NAME cleanup..." | tee -a "$LOGFILE"
+    for i in $(seq 1 $RETRIES); do
+      # Try K8s resource status first (works without aws CLI)
+      K8S_STATUS=$(oc get rosanetwork "$NETWORK_NAME" -n "$NAMESPACE" -o jsonpath='{.status.stackStatus}' 2>/dev/null)
+      if [ -n "$K8S_STATUS" ]; then
+        STATUS="$K8S_STATUS"
+      else
+        # K8s resource gone — try aws CLI as fallback
+        STATUS=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --region "$REGION" --query 'Stacks[0].StackStatus' --output text 2>&1)
+        RC=$?
+        if [ $RC -ne 0 ]; then
+          if echo "$STATUS" | grep -qi "does not exist"; then
+            echo "CloudFormation stack $STACK_NAME confirmed deleted" | tee -a "$LOGFILE"
+            exit 0
+          fi
+          # aws CLI may not be available — skip verification
+          if echo "$STATUS" | grep -qi "command not found\|No such file"; then
+            echo "WARNING: aws CLI not available and K8s resource gone — cannot verify CloudFormation cleanup" | tee -a "$LOGFILE"
+            echo "Check manually: aws cloudformation describe-stacks --stack-name $STACK_NAME --region $REGION" | tee -a "$LOGFILE"
+            exit 1
+          fi
+          echo "WARNING: aws cloudformation check failed (rc=$RC): $STATUS" | tee -a "$LOGFILE"
+        fi
+      fi
+      if [ "$STATUS" = "DELETE_COMPLETE" ]; then
+        echo "CloudFormation stack $STACK_NAME confirmed deleted" | tee -a "$LOGFILE"
+        exit 0
+      fi
+      if [ "$STATUS" = "DELETE_FAILED" ]; then
+        echo "CloudFormation stack DELETE_FAILED: $STACK_NAME — orphaned AWS resources detected" | tee -a "$LOGFILE"
+        echo "FAILED - RETRYING: [localhost]: Wait for cloudformation $STACK_NAME deletion to complete ($((RETRIES - i)) retries left)." | tee -a "$LOGFILE"
+        sleep 10
+        continue
+      fi
+      echo "FAILED - RETRYING: [localhost]: Wait for cloudformation $STACK_NAME deletion to complete ($((RETRIES - i)) retries left). Status: $STATUS" | tee -a "$LOGFILE"
+      sleep 10
+    done
+    echo "WARNING: CloudFormation stack $STACK_NAME not confirmed deleted after verification" | tee -a "$LOGFILE"
+    exit 1
+  register: cfn_verify
+  failed_when: false
+  when:
+    - wait_for_deletion | bool
+    - delete_network | bool
+    - "'not-found' not in rn_exists.stdout"
+
+- name: Display CloudFormation verification result
+  debug:
+    msg: |
+      {% if cfn_verify.rc == 0 %}
+      ✅ CloudFormation stack {{ cluster_name }}-rosa-network-stack confirmed deleted
+      {% else %}
+      ⚠️  CloudFormation stack {{ cluster_name }}-rosa-network-stack may have orphaned resources
+      Check: aws cloudformation describe-stacks --stack-name {{ cluster_name }}-rosa-network-stack --region {{ aws_region | default('us-west-2') }}
+      {% endif %}
+  when:
+    - wait_for_deletion | bool
+    - delete_network | bool
+    - "'not-found' not in rn_exists.stdout"
+    - cfn_verify is defined
+
 - name: Emit agent context for ROSARoleConfig deletion wait
   shell: |
     echo "#AGENT_CONTEXT: resource_name={{ rosa_role_config_name }} namespace={{ capi_namespace }} resource_type=rosaroleconfig" | tee -a "{{ agent_monitor_log }}"
