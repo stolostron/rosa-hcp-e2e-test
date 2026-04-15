@@ -1,0 +1,21 @@
+apiVersion: capa-automation/v1
+kind: ClusterAutomationSpec
+metadata:
+  name: ha-production
+spec:
+  action: create
+  version: "4.20.11"
+  region: us-west-2
+  channel: stable
+  features:
+    private_network: true
+    availability_zones: "3"
+    instance_type: m5.4xlarge
+    disk_size: 500
+    default_autoscaling:
+      min: 3
+      max: 10
+    additional_tags:
+      automated: "true"
+      env: production
+      ha: "true"

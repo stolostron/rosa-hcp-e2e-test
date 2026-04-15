@@ -1,0 +1,14 @@
+# Auto-generated from feature-registry.yml
+# Feature: Additional Security Groups
+# Applies to: create, apply
+apiVersion: capa-automation/v1
+kind: ClusterAutomationSpec
+metadata:
+  name: security-groups
+spec:
+  action: apply
+  cluster: ''
+  namespace: ns-rosa-hcp
+  actions:
+  - feature: security_groups
+    value: []

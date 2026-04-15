@@ -1,0 +1,19 @@
+apiVersion: capa-automation/v1
+kind: ClusterAutomationSpec
+metadata:
+  name: private-encrypted
+spec:
+  action: create
+  version: "4.20.11"
+  region: us-west-2
+  channel: stable
+  features:
+    private_network: true
+    etcd_kms: ""  # Set via -e etcd_kms=arn:aws:kms:...
+    availability_zones: "3"
+    instance_type: m5.2xlarge
+    additional_tags:
+      automated: "true"
+      env: test
+      security: encrypted
+      network: private

@@ -1,0 +1,153 @@
+# ClusterAutomationSpec Schema
+# Defines the shape of a cluster specification file.
+#
+# A ClusterAutomationSpec is a declarative document that describes:
+#   - What cluster to create or act on
+#   - What features to enable
+#   - What actions to perform (with automatic dependency ordering)
+#
+# The engine reads a spec and produces an execution plan:
+#   1. Validates features against the registry
+#   2. Resolves dependencies (e.g., CP upgrade before MP upgrade)
+#   3. Maps features to playbook extra_vars or oc patch commands
+#   4. Executes steps in order, waiting for each to complete
+
+# Example specs:
+#
+#   # Create a new private cluster with KMS encryption
+#   apiVersion: capa-automation/v1
+#   kind: ClusterAutomationSpec
+#   metadata:
+#     name: my-secure-cluster
+#   spec:
+#     action: create
+#     name_prefix: sec1
+#     version: "4.20.11"
+#     region: us-west-2
+#     features:
+#       private_network: true
+#       etcd_kms: "arn:aws:kms:us-west-2:123:key/abc"
+#       availability_zones: "3"
+#
+#   # Upgrade an existing cluster
+#   apiVersion: capa-automation/v1
+#   kind: ClusterAutomationSpec
+#   metadata:
+#     name: upgrade-moo
+#   spec:
+#     action: upgrade
+#     cluster: moo-rosa-hcp
+#     namespace: ns-rosa-hcp
+#     version: "4.20.12"
+#
+#   # Run a sequence of Day2 actions
+#   apiVersion: capa-automation/v1
+#   kind: ClusterAutomationSpec
+#   metadata:
+#     name: day2-changes
+#   spec:
+#     action: apply
+#     cluster: moo-rosa-hcp
+#     namespace: ns-rosa-hcp
+#     actions:
+#       - feature: channel_group
+#         value: fast
+#       - feature: node_labels
+#         value:
+#           environment: staging
+#           team: qe
+
+schema:
+  apiVersion:
+    type: string
+    required: true
+    enum: ["capa-automation/v1"]
+
+  kind:
+    type: string
+    required: true
+    enum: ["ClusterAutomationSpec"]
+
+  metadata:
+    type: object
+    required: true
+    properties:
+      name:
+        type: string
+        required: true
+        description: Human-readable name for this spec
+      profile:
+        type: string
+        required: false
+        description: Base profile to inherit from (e.g., "default", "private-encrypted")
+
+  spec:
+    type: object
+    required: true
+    properties:
+      # What to do
+      action:
+        type: string
+        required: true
+        enum: ["create", "upgrade", "apply", "delete", "test"]
+        description: |
+          create   - Provision a new cluster with specified features
+          upgrade  - Upgrade control plane and/or machine pool
+          apply    - Apply Day2 feature changes to existing cluster
+          delete   - Delete cluster and clean up resources
+          test     - Run feature test suite against existing cluster
+
+      # Target cluster (required for upgrade/apply/delete/test)
+      cluster:
+        type: string
+        description: Name of existing cluster to act on
+
+      namespace:
+        type: string
+        default: ns-rosa-hcp
+        description: Kubernetes namespace
+
+      # Cluster creation settings
+      name_prefix:
+        type: string
+        description: "Prefix for cluster name (creates {prefix}-rosa-hcp)"
+
+      version:
+        type: string
+        description: "OpenShift version (e.g., 4.20.11)"
+
+      region:
+        type: string
+        default: us-west-2
+
+      channel:
+        type: string
+        default: stable
+        enum: ["stable", "fast", "candidate"]
+
+      # Feature flags (for create action)
+      features:
+        type: object
+        description: "Feature ID -> value mapping"
+
+      # Explicit action list (for apply action)
+      actions:
+        type: array
+        items:
+          type: object
+          properties:
+            feature:
+              type: string
+              required: true
+            value:
+              required: true
+            wait:
+              type: boolean
+              default: true
+
+      # Test settings (for test action)
+      test_suites:
+        type: array
+        items:
+          type: string
+        description: "Suite IDs to test (e.g., ['version-lifecycle', 'node-config'])"

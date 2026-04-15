@@ -1,0 +1,8 @@
+apiVersion: capa-automation/v1
+kind: ClusterAutomationSpec
+metadata:
+  name: cluster-delete
+spec:
+  action: delete
+  cluster: ""       # Set via --cluster
+  namespace: ns-rosa-hcp

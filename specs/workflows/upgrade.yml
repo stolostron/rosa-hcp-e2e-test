@@ -1,0 +1,9 @@
+apiVersion: capa-automation/v1
+kind: ClusterAutomationSpec
+metadata:
+  name: full-upgrade
+spec:
+  action: upgrade
+  cluster: ""       # Set via --cluster or -e cluster=name
+  namespace: ns-rosa-hcp
+  version: ""       # Set via --version or -e version=4.20.12

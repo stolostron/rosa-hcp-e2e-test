@@ -1,0 +1,38 @@
+# Workflow: Full E2E (Provision + Delete)
+apiVersion: capa-automation/v1
+kind: Workflow
+metadata:
+  name: full-e2e
+  description: Complete end-to-end test - validate, provision, verify, then delete
+spec:
+  triggers:
+    - type: schedule
+      name: nightly-e2e
+      cron: "0 2 * * *"
+      timezone: "America/New_York"
+    - type: webhook
+      name: ci-trigger
+      secret: "${CAPA_WEBHOOK_SECRET}"
+  vars: {}
+  steps:
+    - name: Validate CAPA Environment
+      playbook: playbooks/validate-capa-environment.yml
+      on_failure: stop
+      timeout: 120
+      vars:
+        soft_verify: "true"
+
+    - name: Provision ROSA HCP Cluster
+      playbook: playbooks/create_rosa_hcp_cluster.yml
+      on_failure: stop
+      timeout: 2400
+
+    - name: Verify ROSA HCP Cluster
+      playbook: playbooks/verify_rosa_hcp_cluster.yml
+      on_failure: skip
+      timeout: 600
+
+    - name: Delete ROSA HCP Cluster
+      playbook: playbooks/delete_rosa_hcp_cluster.yml
+      on_failure: stop
+      timeout: 2400

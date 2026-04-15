@@ -1,0 +1,14 @@
+# Auto-generated from feature-registry.yml
+# Feature: Identity Provider
+# Applies to: create, apply
+apiVersion: capa-automation/v1
+kind: ClusterAutomationSpec
+metadata:
+  name: identity-provider
+spec:
+  action: apply
+  cluster: ''
+  namespace: ns-rosa-hcp
+  actions:
+  - feature: identity_provider
+    value: none

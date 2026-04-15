@@ -1,0 +1,16 @@
+apiVersion: capa-automation/v1
+kind: ClusterAutomationSpec
+metadata:
+  name: default
+spec:
+  action: create
+  version: "4.20.11"
+  region: us-west-2
+  channel: stable
+  features:
+    availability_zones: "1"
+    instance_type: m5.xlarge
+    additional_tags:
+      automated: "true"
+      env: test
+      purpose: rosa-hcp-automation-testing

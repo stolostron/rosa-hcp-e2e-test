@@ -1,0 +1,14 @@
+# Auto-generated from feature-registry.yml
+# Feature: Proxy Enabled
+# Applies to: create, apply
+apiVersion: capa-automation/v1
+kind: ClusterAutomationSpec
+metadata:
+  name: proxy-enabled
+spec:
+  action: apply
+  cluster: ''
+  namespace: ns-rosa-hcp
+  actions:
+  - feature: proxy_enabled
+    value: true

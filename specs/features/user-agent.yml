@@ -1,0 +1,13 @@
+# Auto-generated from feature-registry.yml
+# Feature: User Agent for ROSA CAPA
+# Applies to: create, apply
+apiVersion: capa-automation/v1
+kind: ClusterAutomationSpec
+metadata:
+  name: user-agent
+spec:
+  action: apply
+  cluster: ''
+  namespace: ns-rosa-hcp
+  actions:
+  - feature: user_agent

@@ -1,0 +1,41 @@
+# Workflow: Provision with Cleanup on Failure
+# Demonstrates conditional steps using the 'if' field
+apiVersion: capa-automation/v1
+kind: Workflow
+metadata:
+  name: provision-with-cleanup
+  description: Provision a cluster, verify it, and clean up on failure
+spec:
+  vars: {}
+  steps:
+    - name: Validate CAPA Environment
+      playbook: playbooks/validate-capa-environment.yml
+      on_failure: stop
+      timeout: 120
+      vars:
+        soft_verify: "true"
+
+    - name: Provision ROSA HCP Cluster
+      playbook: playbooks/create_rosa_hcp_cluster.yml
+      on_failure: skip
+      timeout: 2400
+
+    - name: Verify ROSA HCP Cluster
+      playbook: playbooks/verify_rosa_hcp_cluster.yml
+      if: "steps.1.status == 'completed'"
+      on_failure: skip
+      timeout: 600
+
+    - name: Cleanup Failed Cluster
+      playbook: playbooks/delete_rosa_hcp_cluster.yml
+      if: "steps.1.status == 'failed'"
+      on_failure: stop
+      timeout: 2400
+
+    - name: Report Results
+      playbook: playbooks/validate-capa-environment.yml
+      if: always
+      on_failure: skip
+      timeout: 120
+      vars:
+        soft_verify: "true"

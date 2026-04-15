@@ -1,0 +1,16 @@
+# Auto-generated from feature-registry.yml
+# Feature: Default MachinePool Auto Scaling
+# Applies to: create, apply
+apiVersion: capa-automation/v1
+kind: ClusterAutomationSpec
+metadata:
+  name: default-autoscaling
+spec:
+  action: apply
+  cluster: ''
+  namespace: ns-rosa-hcp
+  actions:
+  - feature: default_autoscaling
+    value:
+      min: 2
+      max: 4

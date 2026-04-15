@@ -1,0 +1,415 @@
+# CAPA Feature Registry
+# Single source of truth for all cluster features.
+# Used by: CLI (capa), UI (ClusterActions), test suites, Jenkinsfile
+#
+# Each feature maps to a K8s field on a CAPA resource and knows:
+#   - How to read its current value (k8s_field + resource)
+#   - How to change it (oc patch or playbook)
+#   - What it depends on (depends_on)
+#   - Whether it can be changed after creation (mutable)
+#   - Which spec actions it applies to (applies_to: [create, apply, upgrade, delete])
+
+version: "1.0"
+
+# Feature variable mapping: feature_id -> playbook extra_var name
+# Used when resolving a ClusterAutomationSpec into playbook arguments
+var_map:
+  # Maps feature_id -> playbook extra_var name for the provision playbook.
+  # Only features listed in sequences.provision.accepts_features need entries here.
+  # Day2 features (upgrades, patches, deletions) use K8s field patches, not playbook vars.
+  private_network: private
+  byon: byon_vpc
+  availability_zones: availability_zone_count
+  additional_tags: additional_tags
+  etcd_kms: etcd_encryption_kms_arn
+  domain_prefix: domain_prefix
+  channel_group: channel_group
+  instance_type: instance_type
+  disk_size: root_volume_size
+  no_cni: no_cni
+  proxy_enabled: http_proxy
+
+# Dependency rules: feature_id -> list of prerequisites
+# The engine resolves these into an execution graph
+dependencies:
+  machine_pool_upgrade:
+    - control_plane_upgrade    # MP version <= CP version
+  byon:
+    - private_network          # BYON implies private networking
+
+# Implicit action sequences: when a user requests a high-level action,
+# the engine expands it into ordered steps
+sequences:
+  upgrade:
+    description: "Full cluster upgrade (control plane then machine pool)"
+    steps:
+      - feature: control_plane_upgrade
+        wait: true
+      - feature: machine_pool_upgrade
+        wait: true
+
+  provision:
+    description: "Create a new ROSA HCP cluster"
+    playbook: playbooks/create_rosa_hcp_cluster.yml
+    accepts_features:
+      - private_network
+      - byon
+      - availability_zones
+      - additional_tags
+      - etcd_kms
+      - domain_prefix
+      - channel_group
+      - instance_type
+      - disk_size
+      - no_cni
+      - proxy_enabled
+
+  delete:
+    description: "Delete cluster and clean up AWS resources"
+    playbook: playbooks/delete_rosa_hcp_cluster.yml
+
+suites:
+  - id: cluster-config
+    name: Cluster Configuration
+    description: Core cluster provisioning features that are set at creation time
+    category: Infrastructure
+    phase: Day1
+    icon: server
+    features:
+      - id: private_network
+        name: Private Network
+        description: Enable private cluster networking (no public API endpoint)
+        type: boolean
+        mutable: false
+        applies_to: [create]
+        default: false
+        k8s_field: ".spec.endpointAccess"
+        resource: ROSAControlPlane
+
+      - id: byon
+        name: Bring Your Own Network (BYON)
+        description: Use pre-existing VPC and subnets instead of auto-created ones
+        type: boolean
+        mutable: false
+        applies_to: [create]
+        default: false
+        k8s_field: ".spec.network"
+        resource: ROSAControlPlane
+
+      - id: sts
+        name: STS Mode
+        description: Use AWS Security Token Service for authentication
+        type: boolean
+        mutable: false
+        applies_to: [create]
+        default: true
+        k8s_field: ".spec.sts"
+        resource: ROSAControlPlane
+
+      - id: availability_zones
+        name: Availability Zones
+        description: "Number of availability zones for HA (1-3)"
+        type: select
+        options: ["1", "2", "3"]
+        mutable: false
+        applies_to: [create]
+        default: "1"
+        k8s_field: ".spec.availabilityZones"
+        resource: ROSANetwork
+
+      - id: additional_tags
+        name: Additional Tags
+        description: Custom AWS tags applied to all cluster resources
+        type: key_value
+        mutable: true
+        applies_to: [create, apply]
+        default: {}
+        k8s_field: ".spec.additionalTags"
+        resource: ROSAControlPlane
+
+  - id: security-auth
+    name: Security & Authentication
+    description: Identity, encryption, and access control features
+    category: Security
+    phase: Day1
+    icon: shield
+    features:
+      - id: identity_provider
+        name: Identity Provider
+        description: "Configure cluster identity provider (LDAP, GitHub, etc.)"
+        type: select
+        options: ["none", "htpasswd", "ldap", "github", "google"]
+        mutable: true
+        applies_to: [create, apply]
+        default: none
+        k8s_field: ".spec.identityProviders"
+        resource: ROSAControlPlane
+
+      - id: external_oidc
+        name: External OIDC
+        description: Use external OIDC provider for cluster authentication
+        type: boolean
+        mutable: false
+        applies_to: [create]
+        default: false
+        k8s_field: ".spec.externalOIDC"
+        resource: ROSAControlPlane
+
+      - id: security_groups
+        name: Additional Security Groups
+        description: Attach extra AWS security groups to cluster nodes
+        type: list
+        mutable: true
+        applies_to: [create, apply]
+        default: []
+        k8s_field: ".spec.additionalSecurityGroups"
+        resource: ROSAControlPlane
+
+      - id: etcd_kms
+        name: ETCD KMS Encryption
+        description: Encrypt etcd data with AWS KMS key
+        type: string
+        mutable: false
+        applies_to: [create]
+        default: ""
+        k8s_field: ".spec.etcdEncryptionKMSARN"
+        resource: ROSAControlPlane
+        placeholder: "arn:aws:kms:..."
+
+  - id: machine-pool-scaling
+    name: Machine Pool & Auto-Scaling
+    description: Worker node pools, autoscaling, and upgrade strategies
+    category: Scaling
+    phase: Day1
+    icon: scale
+    features:
+      - id: default_autoscaling
+        name: Default MachinePool Auto Scaling
+        description: Enable autoscaling on the default machine pool
+        type: range
+        mutable: true
+        applies_to: [create, apply]
+        default: {min: 2, max: 4}
+        k8s_field: ".spec.autoscaling"
+        resource: ROSAMachinePool
+
+      - id: machine_pool_autoscaling
+        name: Additional Machine Pool
+        description: Create additional machine pool with autoscaling
+        type: range
+        mutable: true
+        applies_to: [create, apply]
+        default: {min: 1, max: 3}
+        k8s_field: ".spec.autoscaling"
+        resource: ROSAMachinePool
+
+      - id: parallel_upgrade
+        name: Parallel Node Upgrade
+        description: Upgrade multiple nodes simultaneously during rolling updates
+        type: number
+        mutable: true
+        applies_to: [create, apply]
+        default: 1
+        k8s_field: ".spec.strategy.rollingUpdate.maxSurge"
+        resource: ROSAMachinePool
+
+  - id: version-lifecycle
+    name: Version & Lifecycle
+    description: Cluster version management and upgrade operations
+    category: Operations
+    phase: Day2
+    icon: arrow-up
+    features:
+      - id: control_plane_upgrade
+        name: Control Plane Upgrade
+        description: Upgrade the ROSA HCP control plane version
+        type: version
+        mutable: true
+        applies_to: [apply, upgrade]
+        default: ""
+        k8s_field: ".spec.version"
+        resource: ROSAControlPlane
+        playbook: playbooks/upgrade_rosa_control_plane.yml
+        wait_resource: ROSAControlPlane
+        wait_field: ".status.ready"
+        wait_value: "true"
+        wait_timeout: 3600
+
+      - id: machine_pool_upgrade
+        name: Machine Pool Upgrade
+        description: "Upgrade worker node pool version (must match or trail control plane)"
+        type: version
+        mutable: true
+        applies_to: [apply, upgrade]
+        default: ""
+        k8s_field: ".spec.version"
+        resource: ROSAMachinePool
+        playbook: playbooks/upgrade_rosa_machine_pool.yml
+        wait_resource: ROSAMachinePool
+        wait_field: ".status.ready"
+        wait_value: "true"
+        wait_timeout: 3600
+        depends_on: control_plane_upgrade
+
+      - id: channel_group
+        name: Channel Group
+        description: "Update channel for version availability (stable, fast, candidate)"
+        type: select
+        options: ["stable", "fast", "candidate"]
+        mutable: true
+        applies_to: [create, apply, upgrade]
+        default: stable
+        k8s_field: ".spec.channelGroup"
+        resource: ROSAControlPlane
+
+  - id: node-config
+    name: Node Configuration
+    description: "Machine pool node types, disk sizes, taints, and labels"
+    category: Node Configuration
+    phase: Day1
+    icon: cpu
+    features:
+      - id: instance_type
+        name: Instance Type
+        description: AWS EC2 instance type for worker nodes
+        type: select
+        options: ["m5.xlarge", "m5.2xlarge", "m5.4xlarge", "m6i.xlarge", "m6i.2xlarge", "c5.xlarge", "r5.xlarge"]
+        mutable: false
+        applies_to: [create]
+        default: m5.xlarge
+        k8s_field: ".spec.instanceType"
+        resource: ROSAMachinePool
+
+      - id: disk_size
+        name: Root Disk Size (GiB)
+        description: Worker node root volume size
+        type: number
+        mutable: false
+        applies_to: [create]
+        default: 300
+        k8s_field: ".spec.rootVolume.size"
+        resource: ROSAMachinePool
+
+      - id: node_taints
+        name: Node Taints
+        description: Kubernetes taints applied to worker nodes
+        type: key_value
+        mutable: true
+        applies_to: [create, apply]
+        default: {}
+        k8s_field: ".spec.taints"
+        resource: ROSAMachinePool
+
+      - id: node_labels
+        name: Node Labels
+        description: Kubernetes labels applied to worker nodes
+        type: key_value
+        mutable: true
+        applies_to: [create, apply]
+        default: {}
+        k8s_field: ".spec.nodeLabels"
+        resource: ROSAMachinePool
+
+  - id: network-connectivity
+    name: Network & Connectivity
+    description: "CNI, proxy, and network configuration"
+    category: Networking
+    phase: Day1
+    icon: globe
+    features:
+      - id: no_cni
+        name: No CNI Plugin
+        description: Deploy cluster without default CNI (BYO CNI)
+        type: boolean
+        mutable: false
+        applies_to: [create]
+        default: false
+        k8s_field: ".spec.network.noCNI"
+        resource: ROSAControlPlane
+
+      - id: proxy_enabled
+        name: Proxy Enabled
+        description: Route cluster traffic through HTTP/HTTPS proxy
+        type: boolean
+        mutable: true
+        applies_to: [create, apply]
+        default: false
+        k8s_field: ".spec.proxy"
+        resource: ROSAControlPlane
+
+  - id: storage-registry
+    name: Storage & Registry
+    description: Image registry and storage volume configuration
+    category: Storage
+    phase: Day1
+    icon: database
+    features:
+      - id: image_registry
+        name: Image Registry Config
+        description: Configure cluster internal image registry
+        type: boolean
+        mutable: true
+        applies_to: [create, apply]
+        default: true
+        k8s_field: ".spec.imageRegistry"
+        resource: ROSAControlPlane
+      # Note: disk_volume_size was removed — use disk_size (in node-config suite) instead.
+      # Both mapped to the same k8s_field (.spec.rootVolume.size) on ROSAMachinePool.
+
+  - id: domain-useragent
+    name: Domain & User Agent
+    description: Domain prefix and ROSA CAPA user agent configuration
+    category: Configuration
+    phase: Day1
+    icon: tag
+    features:
+      - id: domain_prefix
+        name: Domain Prefix
+        description: "Custom domain prefix for cluster API URL (max 15 chars)"
+        type: string
+        mutable: false
+        applies_to: [create]
+        default: ""
+        k8s_field: ".spec.domainPrefix"
+        resource: ROSAControlPlane
+        placeholder: my-cluster
+        max_length: 15
+
+      - id: user_agent
+        name: User Agent for ROSA CAPA
+        description: Custom user agent string sent with ROSA API requests
+        type: string
+        mutable: true
+        applies_to: [create, apply]
+        default: ""
+        k8s_field: ".spec.userAgent"
+        resource: ROSAControlPlane
+
+  - id: day2-operations
+    name: Day2 Operations
+    description: Post-deployment cluster management and monitoring
+    category: Operations
+    phase: Day2
+    icon: wrench
+    features:
+      - id: cluster_delete
+        name: Cluster Deletion
+        description: Delete cluster and clean up all AWS resources
+        type: action
+        mutable: false
+        applies_to: [delete]
+        default: null
+        playbook: playbooks/delete_rosa_hcp_cluster.yml
+        wait_timeout: 2400
+        destructive: true
+
+      - id: audit_logging
+        name: Audit Log Forwarding
+        description: Forward cluster audit logs to CloudWatch or S3
+        type: select
+        options: ["disabled", "cloudwatch", "s3"]
+        mutable: true
+        applies_to: [apply]
+        default: disabled
+        k8s_field: ".spec.auditLogForwarding"
+        resource: ROSAControlPlane

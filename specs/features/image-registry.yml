@@ -1,0 +1,14 @@
+# Auto-generated from feature-registry.yml
+# Feature: Image Registry Config
+# Applies to: create, apply
+apiVersion: capa-automation/v1
+kind: ClusterAutomationSpec
+metadata:
+  name: image-registry
+spec:
+  action: apply
+  cluster: ''
+  namespace: ns-rosa-hcp
+  actions:
+  - feature: image_registry
+    value: true

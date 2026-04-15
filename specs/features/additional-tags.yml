@@ -1,0 +1,13 @@
+# Auto-generated from feature-registry.yml
+# Feature: Additional Tags
+# Applies to: create, apply
+apiVersion: capa-automation/v1
+kind: ClusterAutomationSpec
+metadata:
+  name: additional-tags
+spec:
+  action: apply
+  cluster: ''
+  namespace: ns-rosa-hcp
+  actions:
+  - feature: additional_tags

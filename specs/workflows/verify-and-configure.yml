@@ -1,0 +1,18 @@
+# Workflow: Verify and Configure MCE Environment
+apiVersion: capa-automation/v1
+kind: Workflow
+metadata:
+  name: verify-and-configure
+  description: Validate the CAPA environment and configure MCE for cluster provisioning
+spec:
+  vars: {}
+  steps:
+    - name: Verify MCE Environment
+      playbook: playbooks/verify_capi_environment.yaml
+      on_failure: stop
+      timeout: 120
+
+    - name: Configure MCE Environment
+      playbook: playbooks/configure_mce_environment.yml
+      on_failure: stop
+      timeout: 600

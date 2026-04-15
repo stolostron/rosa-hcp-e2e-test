@@ -1,0 +1,13 @@
+# Auto-generated from feature-registry.yml
+# Feature: Node Labels
+# Applies to: create, apply
+apiVersion: capa-automation/v1
+kind: ClusterAutomationSpec
+metadata:
+  name: node-labels
+spec:
+  action: apply
+  cluster: ''
+  namespace: ns-rosa-hcp
+  actions:
+  - feature: node_labels

@@ -1,0 +1,12 @@
+apiVersion: capa-automation/v1
+kind: ClusterAutomationSpec
+metadata:
+  name: machine-pool-upgrade
+spec:
+  action: apply
+  cluster: ""       # Set via --cluster
+  namespace: ns-rosa-hcp
+  actions:
+    - feature: machine_pool_upgrade
+      value: ""     # Set via -e version=4.20.12
+      wait: true

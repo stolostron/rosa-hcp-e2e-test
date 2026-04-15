@@ -1,0 +1,11 @@
+apiVersion: capa-automation/v1
+kind: ClusterAutomationSpec
+metadata:
+  name: audit-logging
+spec:
+  action: apply
+  cluster: ""       # Set via --cluster
+  namespace: ns-rosa-hcp
+  actions:
+    - feature: audit_logging
+      value: cloudwatch   # Options: disabled, cloudwatch, s3

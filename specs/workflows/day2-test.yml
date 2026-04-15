@@ -1,0 +1,19 @@
+apiVersion: capa-automation/v1
+kind: ClusterAutomationSpec
+metadata:
+  name: day2-feature-test
+spec:
+  action: apply
+  cluster: ""       # Set via --cluster
+  namespace: ns-rosa-hcp
+  actions:
+    - feature: channel_group
+      value: fast
+    - feature: control_plane_upgrade
+      value: ""     # Auto-picks latest available
+      wait: true
+    - feature: machine_pool_upgrade
+      value: ""     # Matches control plane version
+      wait: true
+    - feature: channel_group
+      value: stable

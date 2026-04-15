@@ -1,0 +1,15 @@
+apiVersion: capa-automation/v1
+kind: ClusterAutomationSpec
+metadata:
+  name: private-encrypted-custom
+  inherits: private-encrypted
+spec:
+  action: create
+  features:
+    instance_type: m5.4xlarge
+    disk_size: 500
+    additional_tags:
+      automated: "true"
+      env: staging
+      security: encrypted
+      custom: "true"

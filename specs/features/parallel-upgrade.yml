@@ -1,0 +1,14 @@
+# Auto-generated from feature-registry.yml
+# Feature: Parallel Node Upgrade
+# Applies to: create, apply
+apiVersion: capa-automation/v1
+kind: ClusterAutomationSpec
+metadata:
+  name: parallel-upgrade
+spec:
+  action: apply
+  cluster: ''
+  namespace: ns-rosa-hcp
+  actions:
+  - feature: parallel_upgrade
+    value: 1
