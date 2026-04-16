@@ -5,15 +5,22 @@
 // CAPI/CAPA Test Pipeline - E2E ROSA HCP Testing
 // ============================================================================
 // Pipeline Flow:
-//   1. Configure MCE Environment (suite 10) - Enable CAPI/CAPA
+//   1. Configure MCE Environment (suite 10) - Disable HyperShift, enable CAPI/CAPA
 //   2. Provision ROSA HCP Cluster (suite 20) - Only runs if configuration passes
 //   3. Delete ROSA HCP Cluster (suite 30) - Only runs if provisioning passes (optional)
+//   4. Restore HyperShift (suite 41) - Always runs (post), re-enables HyperShift
+//
+// HyperShift State Management:
+//   Suite 10 automatically disables HyperShift and enables CAPI/CAPA.
+//   The post block always restores HyperShift via suite 41, regardless of
+//   test outcome, so the shared cluster is left in its expected state.
 //
 // Test Suites:
-//   10-configure-mce-environment  - Configure CAPI/CAPA (RHACM4K-61722)
-//   20-rosa-hcp-provision         - Provision ROSA HCP cluster (runs if 10 passes)
-//   30-rosa-hcp-delete            - Delete ROSA HCP cluster (runs if 20 passes, optional)
-//   05-verify-mce-environment     - Verify MCE environment (manual/separate)
+//   10-configure-mce-environment         - Disable HyperShift, enable CAPI/CAPA (RHACM4K-61722)
+//   20-rosa-hcp-provision                - Provision ROSA HCP cluster (runs if 10 passes)
+//   30-rosa-hcp-delete                   - Delete ROSA HCP cluster (runs if 20 passes, optional)
+//   41-disable-capi-enable-hypershift    - Restore HyperShift (always, post)
+//   05-verify-mce-environment            - Verify MCE environment (manual/separate)
 //
 // Credentials Required:
 //   Parameters (passed when running job):
@@ -33,9 +40,10 @@
 //   - CAPI_OCM_CLIENT_SECRET    : OCM client secret for ROSA provisioning
 //
 // Pipeline Behavior:
-//   - Stage 1 (Configure): If fails → pipeline stops
+//   - Stage 1 (Configure): If fails → pipeline stops (HyperShift still restored)
 //   - Stage 2 (Provision): Only runs if Stage 1 succeeds
 //   - Stage 3 (Delete): Only runs if Stage 2 succeeds AND CLEANUP_AFTER_TEST=true
+//   - Post (Restore HyperShift): Always runs — disables CAPI/CAPA, re-enables HyperShift
 //   - All test results archived as JUnit XML for Jenkins reporting
 //
 // Test Results:
@@ -275,6 +283,34 @@ pipeline {
 
                    // Publish JUnit test results from both systems
                    junit allowEmptyResults: true, testResults: 'rosa-hcp-e2e-test/results/**/*.xml, rosa-hcp-e2e-test/test-results/**/*.xml'
+                }
+            }
+        }
+    }
+    post {
+        always {
+            withEnv([
+                "OCP_HUB_API_URL=${params.OCP_HUB_API_URL}",
+                "OCP_HUB_CLUSTER_USER=${params.OCP_HUB_CLUSTER_USER}",
+                "OCP_HUB_CLUSTER_PASSWORD=${params.OCP_HUB_CLUSTER_PASSWORD}",
+                "MCE_NAMESPACE=${params.MCE_NAMESPACE}"
+            ]) {
+                script {
+                    try {
+                        echo 'Restoring HyperShift: disabling CAPI/CAPA and re-enabling HyperShift components'
+                        sh '''
+                            cd rosa-hcp-e2e-test
+                            ./run-test-suite.py 41-disable-capi-enable-hypershift --format junit -vvv --ai-agent \
+                              -e OCP_HUB_API_URL="${OCP_HUB_API_URL}" \
+                              -e OCP_HUB_CLUSTER_USER="${OCP_HUB_CLUSTER_USER}" \
+                              -e OCP_HUB_CLUSTER_PASSWORD="${OCP_HUB_CLUSTER_PASSWORD}" \
+                              -e MCE_NAMESPACE="${MCE_NAMESPACE}"
+                        '''
+                    }
+                    catch (ex) {
+                        echo "WARNING: Failed to restore HyperShift — cluster may need manual intervention"
+                        echo "Run manually: ./run-test-suite.py 41-disable-capi-enable-hypershift"
+                    }
                 }
             }
         }
