@@ -382,7 +382,7 @@
     - name: Cluster ready confirmation
       debug:
         msg: |
-          ✅ STEP 4 COMPLETE: ROSA HCP cluster is READY!
+          STEP 4 COMPLETE: ROSA HCP cluster is READY!
 
           Cluster: {{ cluster_name }}
           Status: Fully provisioned and running
