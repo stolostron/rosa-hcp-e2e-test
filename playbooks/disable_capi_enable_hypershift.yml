@@ -75,7 +75,7 @@
 
     - name: Cache MCE name and parse components
       set_fact:
-        mce_name: "{{ (mce_info.stdout | from_json).name }}"
+        cached_mce_name: "{{ (mce_info.stdout | from_json).name }}"
         current_components: "{{ (mce_info.stdout | from_json).components }}"
 
     - name: Display current component status
@@ -88,15 +88,15 @@
           • CAPA: {{ (current_components | selectattr('name', 'eq', 'cluster-api-provider-aws') | map(attribute='enabled') | first | default('not configured')) }}
 
     - name: Disable CAPI and enable Hypershift
-      include_tasks: ../tasks/enable_hypershift_disable_capi.yml
+      include_tasks: ../tasks/enable_hypershift.yml
 
     - name: Wait for MCE reconciliation to complete
       shell: |
-        oc get mce {{ mce_name }} -n {{ mce_namespace }} -o jsonpath='{.status.phase}'
+        oc get mce {{ cached_mce_name }} -n {{ mce_namespace }} -o jsonpath='{.status.phase}'
       register: mce_status
       until: mce_status.stdout == "Available"
-      retries: 30
-      delay: 2
+      retries: 60
+      delay: 10
       changed_when: false
 
     - name: Verify Hypershift deployments are ready
@@ -110,7 +110,7 @@
 
     - name: Get final component status
       shell: |
-        oc get mce {{ mce_name }} -n {{ mce_namespace }} -o json | jq -r '.spec.overrides.components // []'
+        oc get mce {{ cached_mce_name }} -n {{ mce_namespace }} -o json | jq -r '.spec.overrides.components // []'
       register: final_components_json
       changed_when: false
 
@@ -138,6 +138,6 @@
           oc get deployment -n {{ mce_namespace }} | grep -E '(hypershift|cluster-api)'
 
           Monitor MCE Status:
-          oc get mce {{ mce_name }} -n {{ mce_namespace }} -w
+          oc get mce {{ cached_mce_name }} -n {{ mce_namespace }} -w
 
           🎉 MCE is now configured for Hypershift!
