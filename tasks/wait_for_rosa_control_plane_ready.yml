@@ -6,16 +6,12 @@
   delay: "{{ 30 if delay is undefined else delay|int }}"
   ignore_errors: true
 
-- name: Display wait timeout warning if cluster not ready
-  debug:
+- name: Fail if ROSA Control Plane did not become ready
+  fail:
     msg: |
-      ⚠️  WARNING: ROSA HCP cluster did not become ready within the timeout period.
+      ROSA HCP cluster did not become ready within the timeout period.
 
-      This may be normal if:
-      - Cluster provisioning takes longer than expected
-      - AWS is experiencing delays
-
-      Check cluster status manually:
+      Check cluster status:
       oc get rosacontrolplane {{ cluster_name }} -n {{ capi_namespace | default('ns-rosa-hcp') }}
       oc describe rosacontrolplane {{ cluster_name }} -n {{ capi_namespace | default('ns-rosa-hcp') }}
   when: not (rcp_status.stdout | bool)
@@ -23,7 +19,7 @@
 - name: Print the ROSA control plane is ready
   debug:
     msg: |
-      ✅ ROSA HCP Control Plane is READY!
+      ROSA HCP Control Plane is READY!
 
       Cluster: {{ cluster_name }}
       Namespace: {{ capi_namespace | default('ns-rosa-hcp') }}
