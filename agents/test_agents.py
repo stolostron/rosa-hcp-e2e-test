@@ -18,12 +18,13 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from agents.diagnostic_agent import DiagnosticAgent
 from agents.monitoring_agent import MonitoringAgent, IssueState
+from agents.domains.rosa_hcp import RosaHcpMonitoringAgent, RosaHcpDiagnosticAgent, RosaHcpRemediationAgent
 
 
 def test_extract_from_oc_command():
     """Test extraction from oc get command"""
     print("\n=== Test 1: Extract from oc command ===")
-    agent = DiagnosticAgent(Path("."), enabled=True, verbose=True)
+    agent = RosaHcpDiagnosticAgent(Path("."), enabled=True, verbose=True)
     context = {
         "buffer": [
             "TASK [Wait for ROSANetwork deletion to complete]",
@@ -41,7 +42,7 @@ def test_extract_from_oc_command():
 def test_extract_from_kubectl_command():
     """Test extraction from kubectl command"""
     print("\n=== Test 2: Extract from kubectl command ===")
-    agent = DiagnosticAgent(Path("."), enabled=True, verbose=True)
+    agent = RosaHcpDiagnosticAgent(Path("."), enabled=True, verbose=True)
     context = {"buffer": ["kubectl get rosanetwork my-test-cluster -n test-namespace"]}
     resource_name, namespace = agent._extract_resource_info(context)
     assert resource_name == "my-test-cluster", f"Expected 'my-test-cluster', got '{resource_name}'"
@@ -52,7 +53,7 @@ def test_extract_from_kubectl_command():
 def test_extract_from_output_table():
     """Test extraction from kubectl/oc output table"""
     print("\n=== Test 3: Extract from output table ===")
-    agent = DiagnosticAgent(Path("."), enabled=True, verbose=True)
+    agent = RosaHcpDiagnosticAgent(Path("."), enabled=True, verbose=True)
     context = {"buffer": ["NAME                   AGE", "pop-rosa-hcp-network   76m"]}
     resource_name, namespace = agent._extract_resource_info(context)
     assert resource_name == "pop-rosa-hcp-network", f"Expected 'pop-rosa-hcp-network', got '{resource_name}'"
@@ -62,7 +63,7 @@ def test_extract_from_output_table():
 def test_extract_from_structured_context():
     """Test extraction from structured context fields (from #AGENT_CONTEXT markers)"""
     print("\n=== Test 4: Extract from structured context ===")
-    agent = DiagnosticAgent(Path("."), enabled=True, verbose=True)
+    agent = RosaHcpDiagnosticAgent(Path("."), enabled=True, verbose=True)
     context = {"resource_name": "explicit-cluster", "namespace": "explicit-namespace"}
     resource_name, namespace = agent._extract_resource_info(context)
     assert resource_name == "explicit-cluster", f"Expected 'explicit-cluster', got '{resource_name}'"
@@ -73,7 +74,7 @@ def test_extract_from_structured_context():
 def test_fallback_to_unknown():
     """Test fallback to 'unknown-cluster' when extraction fails"""
     print("\n=== Test 5: Fallback to 'unknown-cluster' ===")
-    agent = DiagnosticAgent(Path("."), enabled=True, verbose=True)
+    agent = RosaHcpDiagnosticAgent(Path("."), enabled=True, verbose=True)
     context = {"buffer": ["irrelevant output", "nothing useful here"]}
     resource_name, namespace = agent._extract_resource_info(context)
     assert resource_name == "unknown-cluster", f"Expected 'unknown-cluster', got '{resource_name}'"
@@ -84,7 +85,7 @@ def test_fallback_to_unknown():
 def test_real_jenkins_output():
     """Test with actual output from the failed Jenkins job"""
     print("\n=== Test 6: Real Jenkins output scenario ===")
-    agent = DiagnosticAgent(Path("."), enabled=True, verbose=True)
+    agent = RosaHcpDiagnosticAgent(Path("."), enabled=True, verbose=True)
     context = {
         "line": "oc get rosanetwork pop-rosa-hcp-network -n ns-rosa-hcp 2>/dev/null\n",
         "buffer": [
@@ -109,7 +110,7 @@ def test_real_jenkins_output():
 def test_task_name_skip_words():
     """Test that generic words in task names are not extracted as resource names"""
     print("\n=== Test 7: Task name skip words ===")
-    agent = DiagnosticAgent(Path("."), enabled=True, verbose=True)
+    agent = RosaHcpDiagnosticAgent(Path("."), enabled=True, verbose=True)
     context = {
         "buffer": [],
         "current_task": "Wait for ROSANetwork deletion to complete"
@@ -123,7 +124,7 @@ def test_task_name_skip_words():
 def test_state_machine_prevents_duplicate_intervention():
     """Test that the per-resource state machine prevents re-triggering"""
     print("\n=== Test 8: State machine prevents duplicate intervention ===")
-    monitor = MonitoringAgent(Path("."), enabled=True, verbose=True)
+    monitor = RosaHcpMonitoringAgent(Path("."), enabled=True, verbose=True)
 
     callback_count = 0
     def mock_callback(issue_type, context, issue):
@@ -158,7 +159,7 @@ def test_state_machine_prevents_duplicate_intervention():
 def test_state_machine_max_attempts():
     """Test that state machine stops after max_attempts"""
     print("\n=== Test 9: State machine max attempts ===")
-    monitor = MonitoringAgent(Path("."), enabled=True, verbose=True)
+    monitor = RosaHcpMonitoringAgent(Path("."), enabled=True, verbose=True)
 
     callback_count = 0
     def mock_callback(issue_type, context, issue):
@@ -188,7 +189,7 @@ def test_state_machine_max_attempts():
 def test_structured_context_marker():
     """Test parsing #AGENT_CONTEXT markers from playbook output"""
     print("\n=== Test 10: Structured context marker ===")
-    monitor = MonitoringAgent(Path("."), enabled=True, verbose=True)
+    monitor = RosaHcpMonitoringAgent(Path("."), enabled=True, verbose=True)
 
     # Simulate structured context marker (bare format)
     monitor.process_line("#AGENT_CONTEXT: resource_name=my-rosa-network namespace=ns-rosa-hcp resource_type=rosanetwork")
@@ -221,7 +222,7 @@ def test_no_hardcoded_patterns():
 def test_structured_context_cleared_on_new_task():
     """Test that structured context is preserved for one TASK then cleared"""
     print("\n=== Test 12: Structured context cleared on new TASK ===")
-    monitor = MonitoringAgent(Path("."), enabled=True, verbose=True)
+    monitor = RosaHcpMonitoringAgent(Path("."), enabled=True, verbose=True)
 
     # Task A emits structured context
     monitor.process_line("#AGENT_CONTEXT: resource_name=cluster-a namespace=ns-a")
@@ -242,7 +243,7 @@ def test_structured_context_cleared_on_new_task():
 def test_extract_resource_type_parameter():
     """Test that _extract_resource_info works with different resource types"""
     print("\n=== Test 13: Resource type parameter ===")
-    agent = DiagnosticAgent(Path("."), enabled=True, verbose=True)
+    agent = RosaHcpDiagnosticAgent(Path("."), enabled=True, verbose=True)
 
     context = {"buffer": ["oc get rosacontrolplane my-cp -n cp-namespace"]}
     name, ns = agent._extract_resource_info(context, resource_type="rosacontrolplane")
@@ -258,8 +259,7 @@ def test_extract_resource_type_parameter():
 def test_remediation_no_crash_on_success():
     """Test that remediation doesn't crash (learn_from_success was removed)"""
     print("\n=== Test 14: Remediation dry run doesn't crash ===")
-    from agents.remediation_agent import RemediationAgent
-    agent = RemediationAgent(Path("."), enabled=True, verbose=True, dry_run=True)
+    agent = RosaHcpRemediationAgent(Path("."), enabled=True, verbose=True, dry_run=True)
     diagnosis = {
         "issue_type": "rosanetwork_stuck_deletion",
         "recommended_fix": "remove_finalizers",
@@ -277,7 +277,7 @@ def test_remediation_no_crash_on_success():
 def test_callback_receives_resource_key():
     """Test that the issue callback receives resource_key for state machine feedback"""
     print("\n=== Test 15: Callback receives resource_key ===")
-    monitor = MonitoringAgent(Path("."), enabled=True, verbose=True)
+    monitor = RosaHcpMonitoringAgent(Path("."), enabled=True, verbose=True)
 
     captured_context = {}
     def mock_callback(issue_type, context, issue):
@@ -305,7 +305,7 @@ def test_callback_receives_resource_key():
 def test_rosanetwork_pattern_no_false_positive_during_creation():
     """Test that rosanetwork_stuck_deletion does NOT match during creation/provisioning"""
     print("\n=== Test 16: No false positive during ROSANetwork creation ===")
-    monitor = MonitoringAgent(Path("."), enabled=True, verbose=True)
+    monitor = RosaHcpMonitoringAgent(Path("."), enabled=True, verbose=True)
 
     callback_count = 0
     def mock_callback(issue_type, context, issue):
@@ -331,7 +331,7 @@ def test_rosanetwork_pattern_no_false_positive_during_creation():
 def test_rosanetwork_pattern_matches_deletion():
     """Test that rosanetwork_stuck_deletion DOES match during actual deletion"""
     print("\n=== Test 17: Pattern matches during ROSANetwork deletion ===")
-    monitor = MonitoringAgent(Path("."), enabled=True, verbose=True)
+    monitor = RosaHcpMonitoringAgent(Path("."), enabled=True, verbose=True)
 
     callback_count = 0
     detected_types = []
@@ -353,7 +353,7 @@ def test_rosanetwork_pattern_matches_deletion():
 def test_rosanetwork_deletion_task_retrying_matches():
     """Test that RETRYING lines for deletion tasks match the pattern"""
     print("\n=== Test 18: Deletion task RETRYING lines match ===")
-    monitor = MonitoringAgent(Path("."), enabled=True, verbose=True)
+    monitor = RosaHcpMonitoringAgent(Path("."), enabled=True, verbose=True)
 
     callback_count = 0
     def mock_callback(issue_type, context, issue):
@@ -377,7 +377,7 @@ def test_extract_resource_from_retrying_line():
     fields that are passed to the diagnostic agent.
     """
     print("\n=== Test 19: Extract resource from structured context ===")
-    agent = DiagnosticAgent(Path("."), enabled=True, verbose=True)
+    agent = RosaHcpDiagnosticAgent(Path("."), enabled=True, verbose=True)
     context = {
         "resource_name": "pop-rosa-hcp-network",
         "namespace": "ns-rosa-hcp",
@@ -395,7 +395,7 @@ def test_extract_resource_from_retrying_line():
 def test_no_false_positive_on_display_banner():
     """Test that the deletion display banner does NOT trigger detection"""
     print("\n=== Test 20: No false positive on display banner ===")
-    monitor = MonitoringAgent(Path("."), enabled=True, verbose=True)
+    monitor = RosaHcpMonitoringAgent(Path("."), enabled=True, verbose=True)
 
     callback_count = 0
     def mock_callback(issue_type, context, issue):
@@ -424,7 +424,7 @@ def test_no_false_positive_on_display_banner():
 def test_extract_resource_from_ansible_json_cmd():
     """Test resource extraction from Ansible JSON cmd output in buffer"""
     print("\n=== Test 21: Extract resource from Ansible JSON cmd ===")
-    agent = DiagnosticAgent(Path("."), enabled=True, verbose=True)
+    agent = RosaHcpDiagnosticAgent(Path("."), enabled=True, verbose=True)
     context = {
         "buffer": [
             '    "cmd": "oc get rosanetwork pop-rosa-hcp-network -n ns-rosa-hcp 2>/dev/null\\n",',
@@ -440,7 +440,7 @@ def test_extract_resource_from_ansible_json_cmd():
 def test_throttle_blocks_rapid_recheck():
     """Test that the 60-second throttle prevents rapid re-intervention"""
     print("\n=== Test 22: Throttle blocks rapid re-check ===")
-    monitor = MonitoringAgent(Path("."), enabled=True, verbose=True)
+    monitor = RosaHcpMonitoringAgent(Path("."), enabled=True, verbose=True)
 
     callback_count = 0
     def mock_callback(issue_type, context, issue):
@@ -471,7 +471,7 @@ def test_throttle_blocks_rapid_recheck():
 def test_low_confidence_keeps_throttle_active():
     """Test that low-confidence resets keep attempts >= 1 so throttle stays active"""
     print("\n=== Test 23: Low confidence keeps throttle active ===")
-    monitor = MonitoringAgent(Path("."), enabled=True, verbose=True)
+    monitor = RosaHcpMonitoringAgent(Path("."), enabled=True, verbose=True)
 
     callback_count = 0
     def mock_callback(issue_type, context, issue):
@@ -510,7 +510,7 @@ def test_low_confidence_keeps_throttle_active():
 def test_low_confidence_log_throttle():
     """Test that low-confidence checks only log every 5th time"""
     print("\n=== Test 24: Low confidence log throttle ===")
-    monitor = MonitoringAgent(Path("."), enabled=True, verbose=True)
+    monitor = RosaHcpMonitoringAgent(Path("."), enabled=True, verbose=True)
 
     # Create a TrackedIssue and simulate the log throttle logic from app.py
     from agents.monitoring_agent import TrackedIssue
@@ -533,8 +533,7 @@ def test_low_confidence_log_throttle():
 def test_retry_cloudformation_delete_in_remediation():
     """Test that retry_cloudformation_delete is a valid fix method"""
     print("\n=== Test 25: retry_cloudformation_delete fix method exists ===")
-    from agents.remediation_agent import RemediationAgent
-    agent = RemediationAgent(Path("."), enabled=True, verbose=True, dry_run=True)
+    agent = RosaHcpRemediationAgent(Path("."), enabled=True, verbose=True, dry_run=True)
     diagnosis = {
         "issue_type": "rosanetwork_stuck_deletion",
         "recommended_fix": "retry_cloudformation_delete",
@@ -614,9 +613,9 @@ def test_resolved_issue_allows_reintervention():
     should re-evaluate after 120s cooldown and potentially apply a different fix.
     """
     print("\n=== Test 27: Resolved issues allow re-intervention ===")
-    from agents.monitoring_agent import MonitoringAgent, IssueState, TrackedIssue
+    from agents.monitoring_agent import IssueState, TrackedIssue
 
-    monitor = MonitoringAgent(Path(__file__).parent, enabled=True)
+    monitor = RosaHcpMonitoringAgent(Path(__file__).parent, enabled=True)
 
     # Simulate a tracked issue that was resolved
     tracked = TrackedIssue("rosanetwork_stuck_deletion", "ns/test-network", {})
@@ -701,7 +700,7 @@ def test_shell_loop_output_matches_agent_patterns():
     print("\n=== Test 28: Wait loop output matches agent patterns ===")
     from agents.monitoring_agent import MonitoringAgent
 
-    monitor = MonitoringAgent(Path(__file__).parent.parent, enabled=True)
+    monitor = RosaHcpMonitoringAgent(Path(__file__).parent.parent, enabled=True)
 
     # These lines are produced by both:
     # 1. Ansible shell for-loops (tasks/delete_rosa_hcp_resources.yml)
@@ -737,7 +736,7 @@ def test_shell_loop_no_false_positive_on_success():
     print("\n=== Test 29: Shell loop success messages don't trigger agent ===")
     from agents.monitoring_agent import MonitoringAgent
 
-    monitor = MonitoringAgent(Path(__file__).parent.parent, enabled=True)
+    monitor = RosaHcpMonitoringAgent(Path(__file__).parent.parent, enabled=True)
 
     success_lines = [
         "ROSAControlPlane deleted successfully",
@@ -767,7 +766,7 @@ def test_stale_line_not_misattributed():
     print("\n=== Test 31: Stale sidecar lines not misattributed ===")
     from agents.monitoring_agent import MonitoringAgent
 
-    monitor = MonitoringAgent(Path(__file__).parent.parent, enabled=True)
+    monitor = RosaHcpMonitoringAgent(Path(__file__).parent.parent, enabled=True)
 
     detected_issues = []
     def callback(issue_type, context, issue):

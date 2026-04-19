@@ -25,8 +25,8 @@ from .base_agent import BaseAgent
 class LearningAgent(BaseAgent):
     """Records remediation outcomes and adjusts the knowledge base."""
 
-    def __init__(self, base_dir: Path, enabled: bool = True, verbose: bool = False):
-        super().__init__("Learning", base_dir, enabled, verbose)
+    def __init__(self, base_dir: Path, enabled: bool = True, verbose: bool = False, kb_dir: Path = None):
+        super().__init__("Learning", base_dir, enabled, verbose, kb_dir=kb_dir)
 
         # Outcome history file — append-only log of every remediation result
         self.outcomes_file = self.kb_dir / "remediation_outcomes.json"

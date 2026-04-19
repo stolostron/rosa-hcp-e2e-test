@@ -41,7 +41,8 @@ from typing import Dict, List, Optional, Tuple
 
 # AI Agent Framework (optional - only imported if --ai-agent flag is used)
 try:
-    from agents import MonitoringAgent, DiagnosticAgent, RemediationAgent, LearningAgent
+    from agents import LearningAgent
+    from agents.domains.rosa_hcp import RosaHcpMonitoringAgent, RosaHcpDiagnosticAgent, RosaHcpRemediationAgent
     AI_AGENTS_AVAILABLE = True
 except ImportError:
     AI_AGENTS_AVAILABLE = False
@@ -105,10 +106,11 @@ class TestSuiteRunner:
             else:
                 print(f"{Colors.CYAN}Initializing AI Agent Framework...{Colors.ENDC}")
 
-                self.monitor_agent = MonitoringAgent(base_dir, enabled=True, verbose=(verbosity > 0))
-                self.diagnostic_agent = DiagnosticAgent(base_dir, enabled=True, verbose=(verbosity > 0))
-                self.remediation_agent = RemediationAgent(base_dir, enabled=True, verbose=(verbosity > 0), dry_run=ai_agent_dry_run)
-                self.learning_agent = LearningAgent(base_dir, enabled=True, verbose=(verbosity > 0))
+                rosa_kb = base_dir / "agents" / "domains" / "rosa_hcp" / "knowledge_base"
+                self.monitor_agent = RosaHcpMonitoringAgent(base_dir, enabled=True, verbose=(verbosity > 0))
+                self.diagnostic_agent = RosaHcpDiagnosticAgent(base_dir, enabled=True, verbose=(verbosity > 0))
+                self.remediation_agent = RosaHcpRemediationAgent(base_dir, enabled=True, verbose=(verbosity > 0), dry_run=ai_agent_dry_run)
+                self.learning_agent = LearningAgent(base_dir, enabled=True, verbose=(verbosity > 0), kb_dir=rosa_kb)
 
                 self.monitor_agent.set_issue_callback(self._ai_agent_issue_detected)
 

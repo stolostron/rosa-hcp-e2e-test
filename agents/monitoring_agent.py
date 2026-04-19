@@ -86,8 +86,8 @@ class TrackedIssue:
 class MonitoringAgent(BaseAgent):
     """Real-time monitoring agent for test execution output."""
 
-    def __init__(self, base_dir: Path, enabled: bool = True, verbose: bool = False):
-        super().__init__("Monitor", base_dir, enabled, verbose)
+    def __init__(self, base_dir: Path, enabled: bool = True, verbose: bool = False, kb_dir: Path = None):
+        super().__init__("Monitor", base_dir, enabled, verbose, kb_dir=kb_dir)
 
         # Callback for when issues are detected
         self.issue_callback: Optional[Callable] = None
@@ -153,19 +153,8 @@ class MonitoringAgent(BaseAgent):
         """Handle a detected issue through the state machine."""
         issue_type = issue.get("type", "unknown")
 
-        # Guard: skip stale issues that don't match the current structured
-        # context.  For example, if the sidecar log still contains old
-        # rosanetwork_stuck_deletion lines but the playbook has already
-        # moved on to rosaroleconfig, we must not re-trigger the old issue.
-        ctx_resource_type = self._structured_context.get("resource_type")
-        if ctx_resource_type and "_stuck_deletion" in issue_type:
-            expected_prefix = f"{ctx_resource_type}_stuck_deletion"
-            if issue_type != expected_prefix:
-                self.log(
-                    f"Skipping stale issue {issue_type} — structured context says resource_type={ctx_resource_type}",
-                    "debug",
-                )
-                return False
+        if self._should_skip_stale_issue(issue_type, issue):
+            return False
 
         # Build a resource key from structured context or fallback to issue type
         resource_key = self._build_resource_key()
@@ -291,13 +280,26 @@ class MonitoringAgent(BaseAgent):
                 self.log(f"Current task: {task_match}", "debug")
 
         if "Waiting for" in line or "waiting for" in line:
-            if "ROSANetwork" in line:
-                self.waiting_for_resource = "ROSANetwork"
-            elif "ROSAControlPlane" in line:
-                self.waiting_for_resource = "ROSAControlPlane"
-            elif "ROSARoleConfig" in line:
-                self.waiting_for_resource = "ROSARoleConfig"
+            resource = self._extract_waiting_for_resource(line)
+            if resource is not None:
+                self.waiting_for_resource = resource
             self.update_context("waiting_for", self.waiting_for_resource)
+
+    def _should_skip_stale_issue(self, issue_type: str, issue: Dict) -> bool:
+        """Check if an issue should be skipped as stale/misattributed.
+
+        Override in domain subclasses to filter issues that don't match
+        the current execution context.
+        """
+        return False
+
+    def _extract_waiting_for_resource(self, line: str) -> Optional[str]:
+        """Extract resource type from a 'Waiting for' output line.
+
+        Override in domain subclasses to recognize domain-specific
+        resource type names in output.
+        """
+        return None
 
     def _detect_issue(self, line: str) -> Optional[Dict]:
         """Detect known issues using knowledge base patterns only.

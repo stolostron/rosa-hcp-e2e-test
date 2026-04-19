@@ -1,0 +1,200 @@
+{
+  "version": "1.0.0",
+  "description": "Fix strategies for known ROSA HCP test automation issues",
+  "vpc_deletion_failure": {
+    "name": "VPC Cleanup - Remove Orphaned Dependencies",
+    "strategy": "cleanup_vpc_dependencies",
+    "automated": true,
+    "steps": [
+      "Identify VPC dependencies blocking deletion",
+      "Find and detach orphaned ENIs",
+      "Delete security groups with no dependencies",
+      "Retry VPC/stack deletion"
+    ],
+    "commands": [
+      "aws ec2 describe-network-interfaces --region {region} --filters Name=vpc-id,Values={vpc_id}",
+      "aws ec2 describe-security-groups --region {region} --filters Name=vpc-id,Values={vpc_id}",
+      "aws ec2 detach-network-interface --region {region} --attachment-id {attachment_id}",
+      "aws ec2 delete-network-interface --region {region} --network-interface-id {eni_id}",
+      "aws ec2 delete-security-group --region {region} --group-id {sg_id}"
+    ],
+    "prerequisites": [
+      "AWS CLI access",
+      "AWS credentials with EC2 permissions",
+      "VPC ID from CloudFormation stack"
+    ],
+    "success_criteria": "VPC has no dependencies and can be deleted",
+    "rollback": "ENIs and security groups can be recreated if needed",
+    "notes": "Common blockers: Lambda ENIs, orphaned security groups, leftover network interfaces. Agent will identify and clean these automatically."
+  },
+  "cloudformation_deletion_failure": {
+    "name": "CloudFormation Stack Manual Cleanup",
+    "strategy": "manual_cloudformation_cleanup",
+    "automated": false,
+    "steps": [
+      "Identify the failing CloudFormation stack",
+      "Check stack events for specific failure reasons",
+      "Manually delete orphaned resources (security groups, ENIs)",
+      "Retry stack deletion"
+    ],
+    "commands": [
+      "aws cloudformation describe-stacks --region {region} --stack-name {stack_name}",
+      "aws cloudformation describe-stack-events --region {region} --stack-name {stack_name}",
+      "aws ec2 describe-security-groups --region {region} --filters Name=vpc-id,Values={vpc_id}",
+      "aws ec2 delete-security-group --region {region} --group-id {sg_id}"
+    ],
+    "prerequisites": [
+      "AWS CLI access",
+      "AWS credentials with appropriate permissions"
+    ],
+    "success_criteria": "CloudFormation stack deleted successfully",
+    "rollback": "CloudFormation maintains state - can retry deletion",
+    "notes": "Most common cause is orphaned security groups with dependencies. Check for ENIs and load balancers using the security groups."
+  },
+  "ocm_auth_failure": {
+    "name": "Refresh OCM Token",
+    "strategy": "refresh_ocm_token",
+    "automated": false,
+    "steps": [
+      "Check OCM token expiration",
+      "Obtain fresh token from OCM",
+      "Update credentials in test environment",
+      "Retry operation"
+    ],
+    "commands": [
+      "rosa whoami",
+      "rosa login --token={new_token}"
+    ],
+    "prerequisites": [
+      "Valid OCM account",
+      "Access to obtain new OCM token"
+    ],
+    "success_criteria": "'rosa whoami' succeeds",
+    "rollback": "Keep old token until new one is verified",
+    "notes": "OCM tokens typically expire after 24 hours. Consider using client credentials for automation."
+  },
+  "capi_not_installed": {
+    "name": "Install/Verify CAPI/CAPA",
+    "strategy": "install_capi_capa",
+    "automated": false,
+    "steps": [
+      "Run test suite 10-configure-mce-environment",
+      "Verify CAPI controllers in capi-system namespace",
+      "Verify CAPA controllers in capa-system namespace",
+      "Check MCE configuration"
+    ],
+    "commands": [
+      "./run-test-suite.py 10-configure-mce-environment",
+      "oc get deploy -n capi-system",
+      "oc get deploy -n capa-system"
+    ],
+    "prerequisites": [
+      "MCE installed on hub cluster",
+      "Proper MCE configuration"
+    ],
+    "success_criteria": "CAPI and CAPA controllers running and ready",
+    "rollback": "None - installation is additive",
+    "notes": "CAPI/CAPA are installed as part of MCE configuration. Requires MCE 2.x or ACM 2.x."
+  },
+  "api_rate_limit": {
+    "name": "Backoff and Retry",
+    "strategy": "backoff_and_retry",
+    "automated": true,
+    "steps": [
+      "Detect rate limiting",
+      "Apply exponential backoff",
+      "Retry operation",
+      "Monitor for repeated rate limiting"
+    ],
+    "commands": [],
+    "prerequisites": [],
+    "success_criteria": "Operation completes without rate limit errors",
+    "rollback": "None needed",
+    "notes": "Exponential backoff: 60s, 120s, 240s. If rate limiting persists after 3 retries, consider reducing parallel operations."
+  },
+  "repeated_timeouts": {
+    "name": "Increase Timeout and Monitor",
+    "strategy": "increase_timeout_and_monitor",
+    "automated": false,
+    "steps": [
+      "Identify operation timing out",
+      "Increase timeout value (suggest 2x)",
+      "Monitor operation progress",
+      "Check for stuck resources if timeout persists"
+    ],
+    "commands": [],
+    "prerequisites": [],
+    "success_criteria": "Operation completes within extended timeout",
+    "rollback": "Can reduce timeout if operation completes quickly",
+    "notes": "Repeated timeouts may indicate stuck resources or infrastructure issues. Monitor CloudFormation and Kubernetes resource states."
+  },
+  "resource_quota_exceeded": {
+    "name": "Increase Quota or Clean Up Resources",
+    "strategy": "quota_management",
+    "automated": false,
+    "steps": [
+      "Identify which quota is exceeded",
+      "Check current resource usage",
+      "Either request quota increase or delete unused resources",
+      "Retry operation"
+    ],
+    "commands": [
+      "aws service-quotas get-service-quota --service-code ec2 --quota-code {quota_code}",
+      "rosa verify quota"
+    ],
+    "prerequisites": [
+      "AWS account access",
+      "Permissions to view and request quota increases"
+    ],
+    "success_criteria": "Sufficient quota available for operation",
+    "rollback": "None needed",
+    "notes": "Common quotas: VPCs per region (5), Elastic IPs (5), NAT Gateways (5). Quota increases may take 24-48 hours."
+  },
+  "networking_configuration_error": {
+    "name": "Verify Network Configuration",
+    "strategy": "verify_network_config",
+    "automated": false,
+    "steps": [
+      "Verify VPC exists and is accessible",
+      "Check subnet configurations and availability zones",
+      "Verify route tables and internet gateways",
+      "Ensure subnets are tagged correctly"
+    ],
+    "commands": [
+      "aws ec2 describe-vpcs --vpc-ids {vpc_id}",
+      "aws ec2 describe-subnets --filters Name=vpc-id,Values={vpc_id}",
+      "aws ec2 describe-route-tables --filters Name=vpc-id,Values={vpc_id}"
+    ],
+    "prerequisites": [
+      "AWS CLI access",
+      "Network architecture documentation"
+    ],
+    "success_criteria": "All network components properly configured and accessible",
+    "rollback": "None - verification only",
+    "notes": "ROSA HCP requires specific network configuration: subnets in multiple AZs, proper route tables, NAT gateways for private subnets."
+  },
+  "iam_permission_error": {
+    "name": "Verify IAM Permissions and Roles",
+    "strategy": "verify_iam_config",
+    "automated": false,
+    "steps": [
+      "Verify AWS credentials are valid",
+      "Check ROSA-required IAM roles exist",
+      "Verify trust relationships",
+      "Test permissions with 'rosa verify permissions'"
+    ],
+    "commands": [
+      "aws sts get-caller-identity",
+      "rosa verify permissions",
+      "aws iam get-role --role-name {role_name}",
+      "aws iam list-attached-role-policies --role-name {role_name}"
+    ],
+    "prerequisites": [
+      "AWS CLI access",
+      "IAM permissions to view roles and policies"
+    ],
+    "success_criteria": "All required IAM roles exist with correct permissions",
+    "rollback": "None - verification only",
+    "notes": "ROSA requires specific IAM roles: installer role, support role, worker role, control plane role. Roles are typically created automatically but may need manual creation in some cases."
+  }
+}

@@ -24,7 +24,8 @@ from typing import Dict, List, Optional
 class BaseAgent:
     """Base class for all AI agents with core functionality."""
 
-    def __init__(self, name: str, base_dir: Path, enabled: bool = True, verbose: bool = False):
+    def __init__(self, name: str, base_dir: Path, enabled: bool = True, verbose: bool = False,
+                 kb_dir: Path = None):
         self.name = name
         self.base_dir = base_dir
         self.enabled = enabled
@@ -40,7 +41,10 @@ class BaseAgent:
         self.current_context: Dict = {}
 
         # Knowledge base directory
-        self.kb_dir = base_dir / "agents" / "knowledge_base"
+        if kb_dir is not None:
+            self.kb_dir = kb_dir
+        else:
+            self.kb_dir = base_dir / "agents" / "knowledge_base"
         self.kb_dir.mkdir(parents=True, exist_ok=True)
 
         # Lazy-loaded knowledge base cache
