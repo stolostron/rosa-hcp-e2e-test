@@ -36,6 +36,7 @@
         ocp_password: "{{ OCP_HUB_CLUSTER_PASSWORD }}"
         api_url: "{{ OCP_HUB_API_URL }}"
         mce_namespace: "{{ MCE_NAMESPACE }}"
+        AUTOMATION_PATH: "{{ lookup('env', 'AUTOMATION_PATH') | default(playbook_dir + '/..', true) }}"
 
     - name: Prepare ansible runner host
       include_tasks: ../tasks/prepare_ansible_runner.yml
