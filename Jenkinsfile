@@ -7,8 +7,10 @@
 // Pipeline Flow:
 //   1. Configure MCE Environment (suite 10) - Disable HyperShift, enable CAPI/CAPA
 //   2. Provision ROSA HCP Cluster (suite 20) - Only runs if configuration passes
-//   3. Delete ROSA HCP Cluster (suite 30) - Only runs if provisioning passes (optional)
-//   4. Restore HyperShift (suite 41) - Always runs as final stage, re-enables HyperShift
+//   3. Upgrade Control Plane (suite 25) - Only runs if provisioning passes (optional)
+//   4. Upgrade Machine Pool (suite 26) - Only runs if CP upgrade passes (optional)
+//   5. Delete ROSA HCP Cluster (suite 30) - Only runs if provisioning passes (optional)
+//   6. Restore HyperShift (suite 41) - Always runs as final stage, re-enables HyperShift
 //
 // HyperShift State Management:
 //   Suite 10 automatically disables HyperShift and enables CAPI/CAPA.
@@ -16,11 +18,13 @@
 //   test outcome, so the shared cluster is left in its expected state.
 //
 // Test Suites:
-//   10-configure-mce-environment         - Disable HyperShift, enable CAPI/CAPA (RHACM4K-61722)
-//   20-rosa-hcp-provision                - Provision ROSA HCP cluster (runs if 10 passes)
-//   30-rosa-hcp-delete                   - Delete ROSA HCP cluster (runs if 20 passes, optional)
-//   41-disable-capi-enable-hypershift    - Restore HyperShift (always runs as final stage)
-//   05-verify-mce-environment            - Verify MCE environment (manual/separate)
+//   10-configure-mce-environment             - Disable HyperShift, enable CAPI/CAPA (RHACM4K-61722)
+//   20-rosa-hcp-provision                    - Provision ROSA HCP cluster (runs if 10 passes)
+//   25-rosa-hcp-upgrade-control-plane        - Upgrade control plane (runs if 20 passes, optional)
+//   26-rosa-hcp-upgrade-machine-pool         - Upgrade machine pool (runs if 25 passes, optional)
+//   30-rosa-hcp-delete                       - Delete ROSA HCP cluster (runs if 20 passes, optional)
+//   41-disable-capi-enable-hypershift        - Restore HyperShift (always runs as final stage)
+//   05-verify-mce-environment                - Verify MCE environment (manual/separate)
 //
 // Credentials Required:
 //   Parameters (passed when running job):
@@ -42,8 +46,10 @@
 // Pipeline Behavior:
 //   - Stage 1 (Configure): If fails → skips to Restore HyperShift stage
 //   - Stage 2 (Provision): Only runs if Stage 1 succeeds
-//   - Stage 3 (Delete): Only runs if Stage 2 succeeds AND CLEANUP_AFTER_TEST=true
-//   - Stage 4 (Restore HyperShift): Always runs — disables CAPI/CAPA, re-enables HyperShift
+//   - Stage 3 (Upgrade CP): Only runs if Stage 2 succeeds AND RUN_UPGRADE_TESTS=true
+//   - Stage 4 (Upgrade MP): Only runs if Stage 3 succeeds AND RUN_UPGRADE_TESTS=true
+//   - Stage 5 (Delete): Only runs if provisioning succeeded AND CLEANUP_AFTER_TEST=true (runs even if upgrades fail)
+//   - Stage 6 (Restore HyperShift): Always runs — disables CAPI/CAPA, re-enables HyperShift
 //   - All test results archived as JUnit XML for Jenkins reporting
 //
 // Test Results:
@@ -83,6 +89,7 @@ pipeline {
         string(name:'OCM_CLIENT_SECRET', defaultValue: '', description: 'OCM client secret for ROSA provisioning')
         string(name:'TEST_GIT_BRANCH', defaultValue: 'main', description: 'Git branch to test (for reference/documentation)')
         string(name:'NAME_PREFIX', defaultValue: 'jnk', description: 'Cluster name prefix (creates {prefix}-rosa-hcp)')
+        booleanParam(name:'RUN_UPGRADE_TESTS', defaultValue: false, description: 'Run control plane and machine pool upgrade tests after provisioning')
         booleanParam(name:'CLEANUP_AFTER_TEST', defaultValue: true, description: 'Delete cluster after successful provisioning (E2E test)')
     }
     stages {
@@ -212,6 +219,7 @@ pipeline {
                         }
                         // Archive provisioning test results, including AI agent logs
                         archiveArtifacts artifacts: 'rosa-hcp-e2e-test/test-results/**/*.xml, rosa-hcp-e2e-test/test-results/**/*.html, rosa-hcp-e2e-test/test-results/**/*.json, rosa-hcp-e2e-test/agents/knowledge_base/intervention_log.json', allowEmptyArchive: true, followSymlinks: false, fingerprint: true
+                        env.PROVISION_PASSED = 'true'
                     }
                     catch (ex) {
                         echo 'ROSA HCP Provisioning Tests failed'
@@ -220,10 +228,112 @@ pipeline {
                 }
             }
         }
-        stage('Delete the ROSA HCP Cluster') {
+        stage('Upgrade Control Plane') {
             when {
                 allOf {
                     expression { currentBuild.result != 'FAILURE' }
+                    expression { params.RUN_UPGRADE_TESTS == true }
+                }
+            }
+            environment {
+                OCP_HUB_API_URL = "${params.OCP_HUB_API_URL}"
+                OCP_HUB_CLUSTER_USER = "${params.OCP_HUB_CLUSTER_USER}"
+                OCP_HUB_CLUSTER_PASSWORD = "${params.OCP_HUB_CLUSTER_PASSWORD}"
+                MCE_NAMESPACE = "${params.MCE_NAMESPACE}"
+                UPGRADE_CLUSTER_NAME = "${params.NAME_PREFIX}-rosa-hcp"
+            }
+            steps {
+                script {
+                    try {
+                        withCredentials([
+                            string(credentialsId: 'CAPI_AWS_ACCESS_KEY_ID', variable: 'AWS_ACCESS_KEY_ID'),
+                            string(credentialsId: 'CAPI_AWS_SECRET_ACCESS_KEY', variable: 'AWS_SECRET_ACCESS_KEY'),
+                            string(credentialsId: 'CAPI_AWS_ACCOUNT_ID', variable: 'AWS_ACCOUNT_ID'),
+                            string(credentialsId: 'CAPI_OCM_CLIENT_ID', variable: 'OCM_CLIENT_ID'),
+                            string(credentialsId: 'CAPI_OCM_CLIENT_SECRET', variable: 'OCM_CLIENT_SECRET')
+                        ]) {
+                            timeout(time: 90, unit: 'MINUTES') {
+                                sh '''
+                                    cd rosa-hcp-e2e-test
+                                    ./run-test-suite.py 25-rosa-hcp-upgrade-control-plane --format junit -vvv --ai-agent \
+                                      -e OCP_HUB_API_URL="${OCP_HUB_API_URL}" \
+                                      -e OCP_HUB_CLUSTER_USER="${OCP_HUB_CLUSTER_USER}" \
+                                      -e OCP_HUB_CLUSTER_PASSWORD="${OCP_HUB_CLUSTER_PASSWORD}" \
+                                      -e MCE_NAMESPACE="${MCE_NAMESPACE}" \
+                                      -e OCM_CLIENT_ID="${OCM_CLIENT_ID}" \
+                                      -e OCM_CLIENT_SECRET="${OCM_CLIENT_SECRET}" \
+                                      -e AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID}" \
+                                      -e AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY}" \
+                                      -e AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID}" \
+                                      -e AWS_REGION="us-west-2" \
+                                      -e cluster_name="${UPGRADE_CLUSTER_NAME}"
+                                '''
+                            }
+                        }
+                        archiveArtifacts artifacts: 'rosa-hcp-e2e-test/test-results/**/*.xml, rosa-hcp-e2e-test/agents/knowledge_base/intervention_log.json', allowEmptyArchive: true, followSymlinks: false, fingerprint: true
+                    }
+                    catch (ex) {
+                        echo 'Control Plane Upgrade failed'
+                        currentBuild.result = 'FAILURE'
+                    }
+                }
+            }
+        }
+        stage('Upgrade Machine Pool') {
+            when {
+                allOf {
+                    expression { currentBuild.result != 'FAILURE' }
+                    expression { params.RUN_UPGRADE_TESTS == true }
+                }
+            }
+            environment {
+                OCP_HUB_API_URL = "${params.OCP_HUB_API_URL}"
+                OCP_HUB_CLUSTER_USER = "${params.OCP_HUB_CLUSTER_USER}"
+                OCP_HUB_CLUSTER_PASSWORD = "${params.OCP_HUB_CLUSTER_PASSWORD}"
+                MCE_NAMESPACE = "${params.MCE_NAMESPACE}"
+                UPGRADE_CLUSTER_NAME = "${params.NAME_PREFIX}-rosa-hcp"
+            }
+            steps {
+                script {
+                    try {
+                        withCredentials([
+                            string(credentialsId: 'CAPI_AWS_ACCESS_KEY_ID', variable: 'AWS_ACCESS_KEY_ID'),
+                            string(credentialsId: 'CAPI_AWS_SECRET_ACCESS_KEY', variable: 'AWS_SECRET_ACCESS_KEY'),
+                            string(credentialsId: 'CAPI_AWS_ACCOUNT_ID', variable: 'AWS_ACCOUNT_ID'),
+                            string(credentialsId: 'CAPI_OCM_CLIENT_ID', variable: 'OCM_CLIENT_ID'),
+                            string(credentialsId: 'CAPI_OCM_CLIENT_SECRET', variable: 'OCM_CLIENT_SECRET')
+                        ]) {
+                            timeout(time: 180, unit: 'MINUTES') {
+                                sh '''
+                                    cd rosa-hcp-e2e-test
+                                    ./run-test-suite.py 26-rosa-hcp-upgrade-machine-pool --format junit -vvv --ai-agent \
+                                      -e OCP_HUB_API_URL="${OCP_HUB_API_URL}" \
+                                      -e OCP_HUB_CLUSTER_USER="${OCP_HUB_CLUSTER_USER}" \
+                                      -e OCP_HUB_CLUSTER_PASSWORD="${OCP_HUB_CLUSTER_PASSWORD}" \
+                                      -e MCE_NAMESPACE="${MCE_NAMESPACE}" \
+                                      -e OCM_CLIENT_ID="${OCM_CLIENT_ID}" \
+                                      -e OCM_CLIENT_SECRET="${OCM_CLIENT_SECRET}" \
+                                      -e AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID}" \
+                                      -e AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY}" \
+                                      -e AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID}" \
+                                      -e AWS_REGION="us-west-2" \
+                                      -e cluster_name="${UPGRADE_CLUSTER_NAME}"
+                                '''
+                            }
+                        }
+                        archiveArtifacts artifacts: 'rosa-hcp-e2e-test/test-results/**/*.xml, rosa-hcp-e2e-test/agents/knowledge_base/intervention_log.json', allowEmptyArchive: true, followSymlinks: false, fingerprint: true
+                    }
+                    catch (ex) {
+                        echo 'Machine Pool Upgrade failed'
+                        currentBuild.result = 'FAILURE'
+                    }
+                }
+            }
+        }
+        stage('Delete the ROSA HCP Cluster') {
+            when {
+                allOf {
+                    expression { env.PROVISION_PASSED == 'true' }
                     expression { params.CLEANUP_AFTER_TEST == true }
                 }
             }

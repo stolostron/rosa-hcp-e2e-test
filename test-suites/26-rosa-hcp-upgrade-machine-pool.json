@@ -1,0 +1,49 @@
+{
+  "name": "Upgrade ROSA HCP Machine Pool",
+  "description": "Upgrade a ROSA HCP cluster machine pool to the next available OpenShift version via ROSAMachinePool spec.version patch",
+  "version": "1.0.0",
+  "tags": ["rosa", "hcp", "upgrade", "machine-pool"],
+  "environment": "mce",
+  "playbooks": [
+    {
+      "name": "Upgrade Machine Pool",
+      "file": "playbooks/upgrade_rosa_machine_pool.yml",
+      "description": "Upgrades the ROSAMachinePool to the next available version and waits for completion",
+      "extra_vars": {
+        "cluster_name": "",
+        "capi_namespace": "ns-rosa-hcp"
+      }
+    }
+  ],
+  "documentation": {
+    "overview": "This test suite upgrades a ROSA HCP cluster's machine pool version. It auto-detects the pool name and next available upgrade version, patches the ROSAMachinePool resource, and waits for the upgrade to complete. The control plane must be upgraded first.",
+    "prerequisites": [
+      "An existing ROSA HCP cluster with machine pool in ready state",
+      "Control plane already upgraded to the target version or higher",
+      "MCE/ACM hub cluster with CAPI/CAPA configured",
+      "OpenShift cluster login credentials configured",
+      "Available upgrade versions (check .status.availableUpgrades)"
+    ],
+    "quick_start": {
+      "basic_usage": "./run-test-suite.py 26-rosa-hcp-upgrade-machine-pool -e cluster_name=my-cluster",
+      "description": "Auto-discovers the machine pool and upgrades to the first available version"
+    },
+    "customization": {
+      "cluster_name": "Name of the cluster (required)",
+      "pool_name": "Name of the ROSAMachinePool resource (optional, auto-discovered if omitted)",
+      "requested_version": "Specific version to upgrade to (optional, defaults to first available)",
+      "capi_namespace": "Namespace containing the ROSAMachinePool resource (default: ns-rosa-hcp)"
+    },
+    "expected_results": [
+      "ROSAMachinePool spec.version patched to requested version",
+      "Worker nodes begin rolling upgrade",
+      "Playbook waits for ROSAMachinePool status.ready to become true",
+      "All replicas upgraded and ready (max wait: 60 minutes)"
+    ],
+    "monitoring": [
+      "oc get rosamachinepool <pool-name> -n ns-rosa-hcp -w",
+      "oc describe rosamachinepool <pool-name> -n ns-rosa-hcp",
+      "oc get rosamachinepool <pool-name> -n ns-rosa-hcp -o jsonpath='{.status.availableUpgrades}'"
+    ]
+  }
+}

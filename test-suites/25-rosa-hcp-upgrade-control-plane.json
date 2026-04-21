@@ -1,0 +1,47 @@
+{
+  "name": "Upgrade ROSA HCP Control Plane",
+  "description": "Upgrade a ROSA HCP cluster control plane to the next available OpenShift version via ROSAControlPlane spec.version patch",
+  "version": "1.0.0",
+  "tags": ["rosa", "hcp", "upgrade", "control-plane"],
+  "environment": "mce",
+  "playbooks": [
+    {
+      "name": "Upgrade Control Plane",
+      "file": "playbooks/upgrade_rosa_control_plane.yml",
+      "description": "Upgrades the ROSAControlPlane to the next available version and waits for completion",
+      "extra_vars": {
+        "cluster_name": "",
+        "capi_namespace": "ns-rosa-hcp"
+      }
+    }
+  ],
+  "documentation": {
+    "overview": "This test suite upgrades a ROSA HCP cluster's control plane version. It auto-detects the next available upgrade version, patches the ROSAControlPlane resource, and waits for the upgrade to complete.",
+    "prerequisites": [
+      "An existing ROSA HCP cluster in ready state",
+      "MCE/ACM hub cluster with CAPI/CAPA configured",
+      "OpenShift cluster login credentials configured",
+      "Available upgrade versions (check .status.availableUpgrades)"
+    ],
+    "quick_start": {
+      "basic_usage": "./run-test-suite.py 25-rosa-hcp-upgrade-control-plane -e cluster_name=my-cluster",
+      "description": "Upgrades the control plane to the first available version automatically"
+    },
+    "customization": {
+      "cluster_name": "Name of the cluster to upgrade (required)",
+      "requested_version": "Specific version to upgrade to (optional, defaults to first available)",
+      "capi_namespace": "Namespace containing the ROSAControlPlane resource (default: ns-rosa-hcp)"
+    },
+    "expected_results": [
+      "ROSAControlPlane spec.version patched to requested version",
+      "Cluster begins upgrade process",
+      "Playbook waits for ROSAControlPlane status.ready to become true",
+      "Cluster fully upgraded and ready (max wait: 60 minutes)"
+    ],
+    "monitoring": [
+      "oc get rosacontrolplane <cluster-name> -n ns-rosa-hcp -w",
+      "oc describe rosacontrolplane <cluster-name> -n ns-rosa-hcp",
+      "oc get rosacontrolplane <cluster-name> -n ns-rosa-hcp -o jsonpath='{.status.availableUpgrades}'"
+    ]
+  }
+}
