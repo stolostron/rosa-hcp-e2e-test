@@ -11,7 +11,6 @@
       "description": "Upgrades the ROSAMachinePool to the next available version and waits for completion",
       "extra_vars": {
         "cluster_name": "",
-        "pool_name": "",
         "capi_namespace": "ns-rosa-hcp"
       }
     }
