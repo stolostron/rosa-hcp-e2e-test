@@ -1,0 +1,145 @@
+---
+# ================================================================
+# Delete a ROSAMachinePool from a ROSA HCP Cluster
+# ================================================================
+# Deletes the MachinePool + ROSAMachinePool pair, removing
+# worker nodes from a running ROSA HCP cluster.
+#
+# Usage:
+#   ansible-playbook delete_rosa_machine_pool.yml \
+#     -e cluster_name=my-cluster \
+#     -e pool_name=my-pool
+# ================================================================
+
+- name: Delete ROSAMachinePool
+  hosts: localhost
+  connection: local
+  any_errors_fatal: true
+  vars_files:
+    - ../vars/vars.yml
+    - ../vars/user_vars.yml
+
+  tasks:
+    - name: Set cluster credentials
+      set_fact:
+        ocp_user: "{{ OCP_HUB_CLUSTER_USER }}"
+        ocp_password: "{{ OCP_HUB_CLUSTER_PASSWORD }}"
+        api_url: "{{ OCP_HUB_API_URL }}"
+        AUTOMATION_PATH: "{{ lookup('env', 'AUTOMATION_PATH') | default(playbook_dir + '/..', true) }}"
+
+    - name: Set defaults
+      set_fact:
+        capi_namespace: "{{ capi_namespace | default('ns-rosa-hcp') }}"
+
+    - name: Prepare ansible runner host
+      include_tasks: ../tasks/prepare_ansible_runner.yml
+      when: not skip_ansible_runner | default(false) | bool
+
+    - name: Login to OCP cluster
+      include_tasks: ../tasks/login_ocp.yml
+
+    - name: Validate required parameters
+      fail:
+        msg: "cluster_name and pool_name are required. Usage: -e cluster_name=my-cluster -e pool_name=my-pool"
+      when: cluster_name is not defined or cluster_name == "" or pool_name is not defined or pool_name == ""
+
+    - name: Check if ROSAMachinePool exists
+      shell: |
+        oc get rosamachinepool {{ pool_name }} -n {{ capi_namespace }} -o jsonpath='{.metadata.name}' 2>/dev/null || echo ""
+      register: existing_pool
+
+    - name: Skip if pool does not exist
+      debug:
+        msg: "ROSAMachinePool '{{ pool_name }}' not found in namespace {{ capi_namespace }}. Nothing to delete."
+      when: existing_pool.stdout == ""
+
+    - name: End if pool does not exist
+      meta: end_play
+      when: existing_pool.stdout == ""
+
+    - name: Get pool details before deletion
+      shell: |
+        oc get rosamachinepool {{ pool_name }} -n {{ capi_namespace }} \
+          -o jsonpath='{.spec.instanceType}|{.spec.version}|{.status.replicas}|{.status.ready}'
+      register: pool_details
+
+    - name: Display deletion plan
+      debug:
+        msg: |
+          ╔═══════════════════════════════════════════════════════════════╗
+          ║       Delete ROSAMachinePool                                 ║
+          ╚═══════════════════════════════════════════════════════════════╝
+
+          Cluster: {{ cluster_name }}
+          Pool: {{ pool_name }}
+          Instance Type: {{ pool_details.stdout.split('|')[0] | default('unknown') }}
+          Version: {{ pool_details.stdout.split('|')[1] | default('unknown') }}
+          Replicas: {{ pool_details.stdout.split('|')[2] | default('0') }}
+          Ready: {{ pool_details.stdout.split('|')[3] | default('false') }}
+
+    - name: Record deletion start time
+      set_fact:
+        delete_start_epoch: "{{ now(utc=true) | int }}"
+
+    - name: Delete MachinePool resource
+      shell: |
+        oc delete machinepool {{ pool_name }} -n {{ capi_namespace }} --ignore-not-found=true
+      register: mp_delete
+      failed_when: mp_delete.rc != 0
+
+    - name: Delete ROSAMachinePool resource
+      shell: |
+        oc delete rosamachinepool {{ pool_name }} -n {{ capi_namespace }} --ignore-not-found=true
+      register: rmp_delete
+      failed_when: rmp_delete.rc != 0
+
+    - name: Display deletion initiated
+      debug:
+        msg: |
+          MachinePool: {{ mp_delete.stdout }}
+          ROSAMachinePool: {{ rmp_delete.stdout }}
+
+    - name: Wait for ROSAMachinePool to be fully removed
+      shell: |
+        EXISTS=$(oc get rosamachinepool {{ pool_name }} -n {{ capi_namespace }} -o name 2>/dev/null || echo "gone")
+        ELAPSED=$(( $(date +%s) - {{ delete_start_epoch }} ))
+        MINS=$((ELAPSED / 60))
+        SECS=$((ELAPSED % 60))
+        echo "[${MINS}m${SECS}s] Deletion status: ${EXISTS}" >&2
+        echo "${EXISTS}"
+      register: delete_check
+      until: delete_check.stdout == "gone"
+      retries: 60
+      delay: 15
+      failed_when: false
+      changed_when: false
+
+    - name: Verify deletion completed
+      fail:
+        msg: |
+          ROSAMachinePool {{ pool_name }} was not fully removed within 15 minutes.
+          The resource may have stuck finalizers.
+
+          Check status:
+            oc describe rosamachinepool {{ pool_name }} -n {{ capi_namespace }}
+            oc get rosamachinepool {{ pool_name }} -n {{ capi_namespace }} -o jsonpath='{.metadata.finalizers}'
+      when: delete_check.stdout != "gone"
+
+    - name: Calculate deletion time
+      set_fact:
+        total_seconds: "{{ now(utc=true) | int - delete_start_epoch | int }}"
+
+    - name: Display success
+      debug:
+        msg: |
+          ╔═══════════════════════════════════════════════════════════════╗
+          ║       MACHINE POOL DELETED!                                  ║
+          ╚═══════════════════════════════════════════════════════════════╝
+
+          Cluster: {{ cluster_name }}
+          Pool: {{ pool_name }}
+          Deletion Time: {{ (total_seconds | int // 60) }}m {{ (total_seconds | int % 60) }}s
+
+          Verify:
+            oc get rosamachinepool -n {{ capi_namespace }}
+            oc get machinepool -n {{ capi_namespace }}

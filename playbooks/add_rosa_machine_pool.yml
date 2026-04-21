@@ -1,0 +1,219 @@
+---
+# ================================================================
+# Add a ROSAMachinePool to an Existing ROSA HCP Cluster
+# ================================================================
+# Creates a MachinePool + ROSAMachinePool pair to add worker
+# nodes to a running ROSA HCP cluster.
+#
+# Usage:
+#   ansible-playbook add_rosa_machine_pool.yml \
+#     -e cluster_name=my-cluster \
+#     -e pool_name=my-pool
+#
+#   ansible-playbook add_rosa_machine_pool.yml \
+#     -e cluster_name=my-cluster \
+#     -e pool_name=my-pool \
+#     -e instance_type=m5.2xlarge \
+#     -e replicas=3 \
+#     -e availability_zone=us-west-2b
+# ================================================================
+
+- name: Add ROSAMachinePool
+  hosts: localhost
+  connection: local
+  any_errors_fatal: true
+  vars_files:
+    - ../vars/vars.yml
+    - ../vars/user_vars.yml
+
+  tasks:
+    - name: Set cluster credentials
+      set_fact:
+        ocp_user: "{{ OCP_HUB_CLUSTER_USER }}"
+        ocp_password: "{{ OCP_HUB_CLUSTER_PASSWORD }}"
+        api_url: "{{ OCP_HUB_API_URL }}"
+        AUTOMATION_PATH: "{{ lookup('env', 'AUTOMATION_PATH') | default(playbook_dir + '/..', true) }}"
+
+    - name: Set defaults
+      set_fact:
+        capi_namespace: "{{ capi_namespace | default('ns-rosa-hcp') }}"
+        instance_type: "{{ instance_type | default('m5.xlarge') }}"
+        replicas: "{{ replicas | default(2) }}"
+        availability_zone: "{{ availability_zone | default('') }}"
+
+    - name: Prepare ansible runner host
+      include_tasks: ../tasks/prepare_ansible_runner.yml
+      when: not skip_ansible_runner | default(false) | bool
+
+    - name: Login to OCP cluster
+      include_tasks: ../tasks/login_ocp.yml
+
+    - name: Validate required parameters
+      fail:
+        msg: "cluster_name and pool_name are required. Usage: -e cluster_name=my-cluster -e pool_name=my-pool"
+      when: cluster_name is not defined or cluster_name == "" or pool_name is not defined or pool_name == ""
+
+    - name: Validate pool_name length
+      fail:
+        msg: "pool_name '{{ pool_name }}' exceeds 15 characters (max for nodePoolName)"
+      when: pool_name | length > 15
+
+    - name: Check if ROSAMachinePool already exists
+      shell: |
+        oc get rosamachinepool {{ pool_name }} -n {{ capi_namespace }} -o name 2>/dev/null || echo ""
+      register: existing_pool
+
+    - name: Fail if pool already exists
+      fail:
+        msg: "ROSAMachinePool '{{ pool_name }}' already exists in namespace {{ capi_namespace }}"
+      when: existing_pool.stdout != ""
+
+    - name: Get control plane version
+      shell: |
+        oc get rosacontrolplane {{ cluster_name }} -n {{ capi_namespace }} \
+          -o jsonpath='{.spec.version}' 2>/dev/null || echo ""
+      register: cp_version_result
+
+    - name: Set control plane version
+      set_fact:
+        cp_version: "{{ cp_version_result.stdout }}"
+
+    - name: Validate control plane exists
+      fail:
+        msg: "ROSAControlPlane '{{ cluster_name }}' not found in namespace {{ capi_namespace }}"
+      when: cp_version == ""
+
+    - name: Set pool version
+      set_fact:
+        pool_version: "{{ version | default(cp_version) }}"
+
+    - name: Display plan
+      debug:
+        msg: |
+          ╔═══════════════════════════════════════════════════════════════╗
+          ║       Add ROSAMachinePool                                    ║
+          ╚═══════════════════════════════════════════════════════════════╝
+
+          Cluster: {{ cluster_name }}
+          Pool Name: {{ pool_name }}
+          Namespace: {{ capi_namespace }}
+          Instance Type: {{ instance_type }}
+          Replicas: {{ replicas }}
+          Version: {{ pool_version }}
+          Availability Zone: {{ availability_zone if availability_zone != '' else 'auto' }}
+
+    - name: Create MachinePool resource
+      shell: |
+        cat <<'YAML' | oc apply -f -
+        apiVersion: cluster.x-k8s.io/v1beta2
+        kind: MachinePool
+        metadata:
+          name: {{ pool_name }}
+          namespace: {{ capi_namespace }}
+          labels:
+            cluster.x-k8s.io/cluster-name: {{ cluster_name }}
+        spec:
+          clusterName: {{ cluster_name }}
+          replicas: {{ replicas }}
+          template:
+            spec:
+              bootstrap:
+                dataSecretName: ""
+              clusterName: {{ cluster_name }}
+              infrastructureRef:
+                apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+                kind: ROSAMachinePool
+                name: {{ pool_name }}
+                namespace: {{ capi_namespace }}
+        YAML
+      register: mp_result
+      failed_when: mp_result.rc != 0
+
+    - name: Create ROSAMachinePool resource
+      shell: |
+        cat <<'YAML' | oc apply -f -
+        apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+        kind: ROSAMachinePool
+        metadata:
+          name: {{ pool_name }}
+          namespace: {{ capi_namespace }}
+          labels:
+            cluster.x-k8s.io/cluster-name: {{ cluster_name }}
+        spec:
+          nodePoolName: {{ pool_name }}
+          instanceType: {{ instance_type }}
+          version: "{{ pool_version }}"
+          autoRepair: true
+        {% if availability_zone != '' %}
+          availabilityZone: {{ availability_zone }}
+        {% endif %}
+          updateConfig:
+            rollingUpdate:
+              maxSurge: 1
+              maxUnavailable: 0
+        YAML
+      register: rmp_result
+      failed_when: rmp_result.rc != 0
+
+    - name: Display creation result
+      debug:
+        msg: |
+          MachinePool: {{ mp_result.stdout }}
+          ROSAMachinePool: {{ rmp_result.stdout }}
+
+    - name: Wait for ROSAMachinePool to become ready
+      shell: |
+        READY=$(oc get rosamachinepool {{ pool_name }} -n {{ capi_namespace }} \
+          -o jsonpath='{.status.ready}' 2>/dev/null || echo "false")
+        REPLICAS=$(oc get rosamachinepool {{ pool_name }} -n {{ capi_namespace }} \
+          -o jsonpath='{.status.replicas}' 2>/dev/null || echo "0")
+        ELAPSED=$(( $(date +%s) - {{ start_epoch }} ))
+        MINS=$((ELAPSED / 60))
+        SECS=$((ELAPSED % 60))
+        echo "[${MINS}m${SECS}s] Pool status: ready=${READY} replicas=${REPLICAS}" >&2
+        echo "${READY}|${REPLICAS}"
+      vars:
+        start_epoch: "{{ now(utc=true) | int }}"
+      register: pool_status
+      until: >
+        pool_status.stdout is defined and
+        pool_status.stdout.split('|')[0] == 'true'
+      retries: 60
+      delay: 30
+      failed_when: false
+      changed_when: false
+
+    - name: Parse final status
+      set_fact:
+        final_ready: "{{ pool_status.stdout.split('|')[0] | default('false') }}"
+        final_replicas: "{{ pool_status.stdout.split('|')[1] | default('0') }}"
+
+    - name: Verify pool is ready
+      fail:
+        msg: |
+          ROSAMachinePool {{ pool_name }} did not become ready within 30 minutes.
+          Ready: {{ final_ready }}
+          Replicas: {{ final_replicas }}
+
+          Check status:
+            oc describe rosamachinepool {{ pool_name }} -n {{ capi_namespace }}
+            oc describe machinepool {{ pool_name }} -n {{ capi_namespace }}
+      when: final_ready | lower != "true"
+
+    - name: Display success
+      debug:
+        msg: |
+          ╔═══════════════════════════════════════════════════════════════╗
+          ║       MACHINE POOL CREATED!                                  ║
+          ╚═══════════════════════════════════════════════════════════════╝
+
+          Cluster: {{ cluster_name }}
+          Pool: {{ pool_name }}
+          Instance Type: {{ instance_type }}
+          Replicas: {{ final_replicas }}
+          Version: {{ pool_version }}
+          Status: Ready
+
+          Verify:
+            oc get rosamachinepool {{ pool_name }} -n {{ capi_namespace }}
+            oc get machinepool {{ pool_name }} -n {{ capi_namespace }}
