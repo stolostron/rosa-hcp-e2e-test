@@ -1,0 +1,208 @@
+---
+# ================================================================
+# Upgrade ROSA HCP Control Plane Version
+# ================================================================
+# This playbook upgrades a ROSA HCP cluster's control plane to
+# the next available OpenShift version via the ROSAControlPlane
+# spec.version patch.
+#
+# Usage Examples:
+#
+# 1. Upgrade to the first available version (auto-detect):
+#    ansible-playbook upgrade_rosa_control_plane.yml \
+#      -e cluster_name=my-cluster
+#
+# 2. Upgrade to a specific version:
+#    ansible-playbook upgrade_rosa_control_plane.yml \
+#      -e cluster_name=my-cluster \
+#      -e requested_version=4.20.14
+#
+# 3. Via UI (Workflow Builder):
+#    All configuration options are passed as extra_vars
+# ================================================================
+
+- name: Upgrade ROSA HCP Control Plane
+  hosts: localhost
+  connection: local
+  any_errors_fatal: true
+  vars_files:
+    - ../vars/vars.yml
+    - ../vars/user_vars.yml
+
+  tasks:
+    - name: Set cluster credentials
+      set_fact:
+        ocp_user: "{{ OCP_HUB_CLUSTER_USER }}"
+        ocp_password: "{{ OCP_HUB_CLUSTER_PASSWORD }}"
+        api_url: "{{ OCP_HUB_API_URL }}"
+        AUTOMATION_PATH: "{{ lookup('env', 'AUTOMATION_PATH') | default(playbook_dir + '/..', true) }}"
+
+    - name: Set default namespace
+      set_fact:
+        capi_namespace: "ns-rosa-hcp"
+      when: capi_namespace is not defined
+
+    - name: Prepare ansible runner host
+      include_tasks: ../tasks/prepare_ansible_runner.yml
+      when: not skip_ansible_runner | default(false) | bool
+
+    - name: Login to OCP cluster
+      include_tasks: ../tasks/login_ocp.yml
+
+    - name: Validate cluster_name is provided
+      fail:
+        msg: "cluster_name is required. Usage: -e cluster_name=my-cluster"
+      when: cluster_name is not defined or cluster_name == ""
+
+    - name: Get ROSAControlPlane resource
+      shell: |
+        oc get rosacontrolplane {{ cluster_name }} -n {{ capi_namespace }} -o json
+      register: rcp_resource
+      failed_when: rcp_resource.rc != 0
+
+    - name: Parse ROSAControlPlane details
+      set_fact:
+        rcp_data: "{{ rcp_resource.stdout | from_json }}"
+
+    - name: Get current version
+      set_fact:
+        current_version: "{{ rcp_data.spec.version }}"
+        available_upgrades: "{{ rcp_data.status.availableUpgrades | default([]) }}"
+        cluster_ready: "{{ rcp_data.status.ready | default(false) }}"
+
+    - name: Validate cluster is ready
+      fail:
+        msg: |
+          Cluster {{ cluster_name }} is not in ready state.
+          Current status: ready={{ cluster_ready }}
+          The cluster must be fully provisioned before upgrading.
+      when: not cluster_ready | bool
+
+    - name: Display current state
+      debug:
+        msg: |
+          ╔═══════════════════════════════════════════════════════════════╗
+          ║       ROSA HCP Control Plane Upgrade                         ║
+          ╚═══════════════════════════════════════════════════════════════╝
+
+          Cluster: {{ cluster_name }}
+          Namespace: {{ capi_namespace }}
+          Current Version: {{ current_version }}
+          Available Upgrades: {{ available_upgrades | join(', ') if available_upgrades | length > 0 else 'None' }}
+
+    - name: Validate available upgrades exist
+      fail:
+        msg: |
+          No available upgrades for cluster {{ cluster_name }}.
+          Current version: {{ current_version }}
+          The cluster is already at the latest version or upgrade paths
+          have not been populated yet. Check:
+            oc get rosacontrolplane {{ cluster_name }} -n {{ capi_namespace }} -o jsonpath='{.status.availableUpgrades}'
+      when: available_upgrades | length == 0
+
+    - name: Set requested version (auto-detect first available)
+      set_fact:
+        requested_version: "{{ available_upgrades[0] }}"
+      when: requested_version is not defined or requested_version == ""
+
+    - name: Validate requested version is in available upgrades
+      fail:
+        msg: |
+          Requested version {{ requested_version }} is not available.
+          Available upgrades: {{ available_upgrades | join(', ') }}
+      when: requested_version not in available_upgrades
+
+    - name: Display upgrade plan
+      debug:
+        msg: |
+          Upgrading ROSAControlPlane:
+          • Cluster: {{ cluster_name }}
+          • From: {{ current_version }}
+          • To:   {{ requested_version }}
+
+    - name: Patch ROSAControlPlane with new version
+      shell: |
+        oc patch rosacontrolplane {{ cluster_name }} -n {{ capi_namespace }} \
+          --type=merge \
+          -p '{"spec": {"version": "{{ requested_version }}"}}'
+      register: patch_result
+      failed_when: patch_result.rc != 0
+
+    - name: Record patch time
+      set_fact:
+        patch_epoch: "{{ now(utc=true) | int }}"
+
+    - name: Display patch result
+      debug:
+        msg: "Patch applied: {{ patch_result.stdout }}"
+
+    - name: Wait for upgrade to begin
+      shell: |
+        oc get rosacontrolplane {{ cluster_name }} -n {{ capi_namespace }} \
+          -o jsonpath='{.status.ready}'
+      register: upgrade_status
+      until: upgrade_status.stdout == "false" or upgrade_status.stdout == "true"
+      retries: 10
+      delay: 15
+      failed_when: false
+      changed_when: false
+
+    - name: Wait for ROSAControlPlane upgrade to complete
+      shell: |
+        STATUS_VERSION=$(oc get rosacontrolplane {{ cluster_name }} -n {{ capi_namespace }} \
+          -o jsonpath='{.status.version}' 2>/dev/null || echo "unknown")
+        READY=$(oc get rosacontrolplane {{ cluster_name }} -n {{ capi_namespace }} \
+          -o jsonpath='{.status.ready}' 2>/dev/null || echo "false")
+        UPGRADE_STATE=$(oc get rosacontrolplane {{ cluster_name }} -n {{ capi_namespace }} \
+          -o jsonpath='{.status.conditions[?(@.type=="ROSAControlPlaneUpgrading")].reason}' 2>/dev/null || echo "unknown")
+        ELAPSED=$(( $(date +%s) - {{ patch_epoch }} ))
+        MINS=$((ELAPSED / 60))
+        SECS=$((ELAPSED % 60))
+        echo "[${MINS}m${SECS}s] Upgrade progress: version=${STATUS_VERSION} ready=${READY} state=${UPGRADE_STATE}" >&2
+        echo "${STATUS_VERSION}|${READY}|${UPGRADE_STATE}"
+      register: upgrade_check
+      until: >
+        upgrade_check.stdout is defined and
+        upgrade_check.stdout.split('|')[0] == requested_version and
+        upgrade_check.stdout.split('|')[1] == 'true'
+      retries: 120
+      delay: 30
+      failed_when: false
+      changed_when: false
+
+    - name: Parse final upgrade status
+      set_fact:
+        final_version: "{{ upgrade_check.stdout.split('|')[0] | default('unknown') }}"
+        final_ready: "{{ upgrade_check.stdout.split('|')[1] | default('false') }}"
+
+    - name: Verify upgrade completed successfully
+      fail:
+        msg: |
+          ROSAControlPlane upgrade did not complete within 60 minutes.
+          status.version: {{ final_version }}
+          Ready: {{ final_ready }}
+          Expected version: {{ requested_version }}
+
+          Check upgrade status:
+            oc describe rosacontrolplane {{ cluster_name }} -n {{ capi_namespace }}
+      when: final_version != requested_version or final_ready | lower != "true"
+
+    - name: Calculate total upgrade time
+      set_fact:
+        total_seconds: "{{ now(utc=true) | int - patch_epoch | int }}"
+
+    - name: Display upgrade success
+      debug:
+        msg: |
+          ╔═══════════════════════════════════════════════════════════════╗
+          ║       ✅  UPGRADE COMPLETE!                                   ║
+          ╚═══════════════════════════════════════════════════════════════╝
+
+          Cluster: {{ cluster_name }}
+          Previous Version: {{ current_version }}
+          New Version: {{ requested_version }}
+          Status: Ready
+          Total Upgrade Time: {{ (total_seconds | int // 60) }}m {{ (total_seconds | int % 60) }}s
+
+          Verify:
+            oc get rosacontrolplane {{ cluster_name }} -n {{ capi_namespace }}
