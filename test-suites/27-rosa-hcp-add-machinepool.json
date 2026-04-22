@@ -13,7 +13,7 @@
         "cluster_name": "",
         "capi_namespace": "ns-rosa-hcp",
         "instance_type": "m5.xlarge",
-        "replicas": 2
+        "replicas": 1
       }
     }
   ],
@@ -26,13 +26,13 @@
     ],
     "quick_start": {
       "basic_usage": "./run-test-suite.py 27-rosa-hcp-add-machinepool -e cluster_name=my-cluster -e pool_name=my-pool",
-      "description": "Adds a machine pool with default settings (m5.xlarge, 2 replicas)"
+      "description": "Adds a machine pool with default settings (m5.xlarge, 1 replica)"
     },
     "customization": {
       "cluster_name": "Name of the cluster to add the pool to (required)",
       "pool_name": "Name for the new machine pool, max 15 chars (required)",
       "instance_type": "AWS instance type (default: m5.xlarge)",
-      "replicas": "Number of worker replicas (default: 2)",
+      "replicas": "Number of worker replicas (default: 1)",
       "availability_zone": "AWS availability zone (optional, auto-assigned if omitted)"
     },
     "expected_results": [
