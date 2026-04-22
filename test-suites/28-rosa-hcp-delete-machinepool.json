@@ -1,0 +1,46 @@
+{
+  "name": "Delete ROSAMachinePool",
+  "description": "Delete a machine pool from an existing ROSA HCP cluster by removing the MachinePool + ROSAMachinePool pair",
+  "version": "1.0.0",
+  "tags": ["rosa", "hcp", "machinepool", "delete"],
+  "environment": "mce",
+  "playbooks": [
+    {
+      "name": "Delete Machine Pool",
+      "file": "playbooks/delete_rosa_machine_pool.yml",
+      "description": "Deletes the MachinePool and ROSAMachinePool resources and waits for full removal",
+      "extra_vars": {
+        "cluster_name": "",
+        "pool_name": "",
+        "capi_namespace": "ns-rosa-hcp"
+      }
+    }
+  ],
+  "documentation": {
+    "overview": "This test suite deletes a machine pool from an existing ROSA HCP cluster. It removes both the CAPI MachinePool and the ROSAMachinePool infrastructure resource, then waits for the resources to be fully cleaned up.",
+    "prerequisites": [
+      "An existing ROSA HCP cluster with the target machine pool",
+      "MCE/ACM hub cluster with CAPI/CAPA configured",
+      "OpenShift cluster login credentials configured"
+    ],
+    "quick_start": {
+      "basic_usage": "./run-test-suite.py 28-rosa-hcp-delete-machinepool -e cluster_name=my-cluster -e pool_name=my-pool",
+      "description": "Deletes the specified machine pool and waits for cleanup"
+    },
+    "customization": {
+      "cluster_name": "Name of the cluster (required)",
+      "pool_name": "Name of the machine pool to delete (required)"
+    },
+    "expected_results": [
+      "MachinePool resource deleted",
+      "ROSAMachinePool resource deleted",
+      "ROSA decommissions worker nodes in AWS",
+      "Resources fully removed from the namespace (max wait: 15 minutes)"
+    ],
+    "monitoring": [
+      "oc get rosamachinepool -n ns-rosa-hcp",
+      "oc get machinepool -n ns-rosa-hcp",
+      "oc describe rosamachinepool <pool-name> -n ns-rosa-hcp"
+    ]
+  }
+}

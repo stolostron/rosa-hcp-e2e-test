@@ -7,10 +7,12 @@
 // Pipeline Flow:
 //   1. Configure MCE Environment (suite 10) - Disable HyperShift, enable CAPI/CAPA
 //   2. Provision ROSA HCP Cluster (suite 20) - Only runs if configuration passes
-//   3. Upgrade Control Plane (suite 25) - Only runs if provisioning passes (optional)
-//   4. Upgrade Machine Pool (suite 26) - Only runs if CP upgrade passes (optional)
-//   5. Delete ROSA HCP Cluster (suite 30) - Only runs if provisioning passes (optional)
-//   6. Restore HyperShift (suite 41) - Always runs as final stage, re-enables HyperShift
+//   3. Add ROSA MachinePool (suite 27) - Only runs if provisioning passes
+//   4. Delete ROSA MachinePool (suite 28) - Only runs if add ROSA machinepool passes
+//   5. Upgrade ROSA Control Plane (suite 25) - Only runs if provisioning passes (optional)
+//   6. Upgrade ROSA Machine Pool (suite 26) - Only runs if CP upgrade passes (optional)
+//   7. Delete ROSA HCP Cluster (suite 30) - Only runs if provisioning passes (optional)
+//   8. Restore HyperShift (suite 41) - Always runs as final stage, re-enables HyperShift
 //
 // HyperShift State Management:
 //   Suite 10 automatically disables HyperShift and enables CAPI/CAPA.
@@ -20,6 +22,8 @@
 // Test Suites:
 //   10-configure-mce-environment             - Disable HyperShift, enable CAPI/CAPA (RHACM4K-61722)
 //   20-rosa-hcp-provision                    - Provision ROSA HCP cluster (runs if 10 passes)
+//   27-rosa-hcp-add-machinepool              - Add a ROSA MachinePool (runs if 20 passes)
+//   28-rosa-hcp-delete-machinepool           - Delete the ROSA MachinePool (runs if 27 passes)
 //   25-rosa-hcp-upgrade-control-plane        - Upgrade control plane (runs if 20 passes, optional)
 //   26-rosa-hcp-upgrade-machine-pool         - Upgrade machine pool (runs if 25 passes, optional)
 //   30-rosa-hcp-delete                       - Delete ROSA HCP cluster (runs if 20 passes, optional)
@@ -46,10 +50,12 @@
 // Pipeline Behavior:
 //   - Stage 1 (Configure): If fails → skips to Restore HyperShift stage
 //   - Stage 2 (Provision): Only runs if Stage 1 succeeds
-//   - Stage 3 (Upgrade CP): Only runs if Stage 2 succeeds AND RUN_UPGRADE_TESTS=true
-//   - Stage 4 (Upgrade MP): Only runs if Stage 3 succeeds AND RUN_UPGRADE_TESTS=true
-//   - Stage 5 (Delete): Only runs if provisioning succeeded AND CLEANUP_AFTER_TEST=true (runs even if upgrades fail)
-//   - Stage 6 (Restore HyperShift): Always runs — disables CAPI/CAPA, re-enables HyperShift
+//   - Stage 3 (Add ROSA MachinePool): Only runs if Stage 2 succeeds
+//   - Stage 4 (Delete ROSA MachinePool): Only runs if Stage 3 succeeds
+//   - Stage 5 (Upgrade ROSA CP): Only runs if Stage 2 succeeds AND RUN_UPGRADE_TESTS=true
+//   - Stage 6 (Upgrade ROSA MP): Only runs if Stage 5 succeeds AND RUN_UPGRADE_TESTS=true
+//   - Stage 7 (Delete): Only runs if provisioning succeeded AND CLEANUP_AFTER_TEST=true (runs even if upgrades fail)
+//   - Stage 8 (Restore HyperShift): Always runs — disables CAPI/CAPA, re-enables HyperShift
 //   - All test results archived as JUnit XML for Jenkins reporting
 //
 // Test Results:
@@ -228,7 +234,71 @@ pipeline {
                 }
             }
         }
-        stage('Upgrade Control Plane') {
+        stage('Add a ROSA MachinePool') {
+            when {
+                expression { currentBuild.result != 'FAILURE' }
+            }
+            environment {
+                OCP_HUB_API_URL = "${params.OCP_HUB_API_URL}"
+                OCP_HUB_CLUSTER_USER = "${params.OCP_HUB_CLUSTER_USER}"
+                OCP_HUB_CLUSTER_PASSWORD = "${params.OCP_HUB_CLUSTER_PASSWORD}"
+                MCE_NAMESPACE = "${params.MCE_NAMESPACE}"
+            }
+            steps {
+                script {
+                    try {
+                        sh '''
+                            cd rosa-hcp-e2e-test
+                            ./run-test-suite.py 27-rosa-hcp-add-machinepool --format junit -vvv --ai-agent \
+                              -e OCP_HUB_API_URL="${OCP_HUB_API_URL}" \
+                              -e OCP_HUB_CLUSTER_USER="${OCP_HUB_CLUSTER_USER}" \
+                              -e OCP_HUB_CLUSTER_PASSWORD="${OCP_HUB_CLUSTER_PASSWORD}" \
+                              -e MCE_NAMESPACE="${MCE_NAMESPACE}" \
+                              -e cluster_name="${NAME_PREFIX}-rosa-hcp" \
+                              -e pool_name="${NAME_PREFIX}-mp"
+                        '''
+                        archiveArtifacts artifacts: 'rosa-hcp-e2e-test/test-results/**/*.xml, rosa-hcp-e2e-test/agents/knowledge_base/intervention_log.json', allowEmptyArchive: true, followSymlinks: false, fingerprint: true
+                    }
+                    catch (ex) {
+                        echo 'Add ROSA MachinePool failed'
+                        currentBuild.result = 'FAILURE'
+                    }
+                }
+            }
+        }
+        stage('Delete the ROSA MachinePool') {
+            when {
+                expression { currentBuild.result != 'FAILURE' }
+            }
+            environment {
+                OCP_HUB_API_URL = "${params.OCP_HUB_API_URL}"
+                OCP_HUB_CLUSTER_USER = "${params.OCP_HUB_CLUSTER_USER}"
+                OCP_HUB_CLUSTER_PASSWORD = "${params.OCP_HUB_CLUSTER_PASSWORD}"
+                MCE_NAMESPACE = "${params.MCE_NAMESPACE}"
+            }
+            steps {
+                script {
+                    try {
+                        sh '''
+                            cd rosa-hcp-e2e-test
+                            ./run-test-suite.py 28-rosa-hcp-delete-machinepool --format junit -vvv --ai-agent \
+                              -e OCP_HUB_API_URL="${OCP_HUB_API_URL}" \
+                              -e OCP_HUB_CLUSTER_USER="${OCP_HUB_CLUSTER_USER}" \
+                              -e OCP_HUB_CLUSTER_PASSWORD="${OCP_HUB_CLUSTER_PASSWORD}" \
+                              -e MCE_NAMESPACE="${MCE_NAMESPACE}" \
+                              -e cluster_name="${NAME_PREFIX}-rosa-hcp" \
+                              -e pool_name="${NAME_PREFIX}-mp"
+                        '''
+                        archiveArtifacts artifacts: 'rosa-hcp-e2e-test/test-results/**/*.xml, rosa-hcp-e2e-test/agents/knowledge_base/intervention_log.json', allowEmptyArchive: true, followSymlinks: false, fingerprint: true
+                    }
+                    catch (ex) {
+                        echo 'Delete ROSA MachinePool failed'
+                        currentBuild.result = 'UNSTABLE'
+                    }
+                }
+            }
+        }
+        stage('Upgrade ROSA Control Plane') {
             when {
                 allOf {
                     expression { currentBuild.result != 'FAILURE' }
@@ -273,13 +343,13 @@ pipeline {
                         archiveArtifacts artifacts: 'rosa-hcp-e2e-test/test-results/**/*.xml, rosa-hcp-e2e-test/agents/knowledge_base/intervention_log.json', allowEmptyArchive: true, followSymlinks: false, fingerprint: true
                     }
                     catch (ex) {
-                        echo 'Control Plane Upgrade failed'
+                        echo 'ROSA Control Plane Upgrade failed'
                         currentBuild.result = 'FAILURE'
                     }
                 }
             }
         }
-        stage('Upgrade Machine Pool') {
+        stage('Upgrade ROSA Machine Pool') {
             when {
                 allOf {
                     expression { currentBuild.result != 'FAILURE' }
@@ -324,7 +394,7 @@ pipeline {
                         archiveArtifacts artifacts: 'rosa-hcp-e2e-test/test-results/**/*.xml, rosa-hcp-e2e-test/agents/knowledge_base/intervention_log.json', allowEmptyArchive: true, followSymlinks: false, fingerprint: true
                     }
                     catch (ex) {
-                        echo 'Machine Pool Upgrade failed'
+                        echo 'ROSA Machine Pool Upgrade failed'
                         currentBuild.result = 'FAILURE'
                     }
                 }

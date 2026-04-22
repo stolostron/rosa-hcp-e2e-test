@@ -1,0 +1,51 @@
+{
+  "name": "Add ROSAMachinePool",
+  "description": "Add a new machine pool to an existing ROSA HCP cluster by creating a MachinePool + ROSAMachinePool pair",
+  "version": "1.0.0",
+  "tags": ["rosa", "hcp", "machinepool", "add"],
+  "environment": "mce",
+  "playbooks": [
+    {
+      "name": "Add Machine Pool",
+      "file": "playbooks/add_rosa_machine_pool.yml",
+      "description": "Creates a MachinePool and ROSAMachinePool resource pair and waits for the pool to become ready",
+      "extra_vars": {
+        "cluster_name": "",
+        "pool_name": "",
+        "capi_namespace": "ns-rosa-hcp",
+        "instance_type": "m5.xlarge",
+        "replicas": 1
+      }
+    }
+  ],
+  "documentation": {
+    "overview": "This test suite adds a new machine pool to an existing ROSA HCP cluster. It creates both the CAPI MachinePool and the ROSAMachinePool infrastructure resource, then waits for the pool to become ready.",
+    "prerequisites": [
+      "An existing ROSA HCP cluster in ready state",
+      "MCE/ACM hub cluster with CAPI/CAPA configured",
+      "OpenShift cluster login credentials configured"
+    ],
+    "quick_start": {
+      "basic_usage": "./run-test-suite.py 27-rosa-hcp-add-machinepool -e cluster_name=my-cluster -e pool_name=my-pool",
+      "description": "Adds a machine pool with default settings (m5.xlarge, 1 replica)"
+    },
+    "customization": {
+      "cluster_name": "Name of the cluster to add the pool to (required)",
+      "pool_name": "Name for the new machine pool, max 15 chars (required)",
+      "instance_type": "AWS instance type (default: m5.xlarge)",
+      "replicas": "Number of worker replicas (default: 1)",
+      "availability_zone": "AWS availability zone (optional, auto-assigned if omitted)"
+    },
+    "expected_results": [
+      "MachinePool resource created in the cluster namespace",
+      "ROSAMachinePool resource created with matching infrastructure reference",
+      "ROSA provisions new worker nodes in AWS",
+      "Pool becomes ready with requested number of replicas (max wait: 30 minutes)"
+    ],
+    "monitoring": [
+      "oc get rosamachinepool <pool-name> -n ns-rosa-hcp",
+      "oc get machinepool <pool-name> -n ns-rosa-hcp",
+      "oc describe rosamachinepool <pool-name> -n ns-rosa-hcp"
+    ]
+  }
+}
