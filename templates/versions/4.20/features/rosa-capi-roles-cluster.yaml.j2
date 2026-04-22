@@ -288,10 +288,10 @@ spec:
   # Scaling Configuration
   {% if autoscaling_enabled | default(false) %}
   autoscaling:
-    minReplicas: {{ min_replicas | default(1) }}
+    minReplicas: {{ min_replicas | default(2) }}
     maxReplicas: {{ max_replicas | default(2) }}
   {% else %}
-  replicas: {{ replicas | default(1) }}
+  replicas: {{ replicas | default(2) }}
   {% endif %}
 
   # Storage Configuration
@@ -360,9 +360,9 @@ metadata:
 spec:
   clusterName: {{ cluster_name }}
   {% if autoscaling_enabled | default(false) %}
-  replicas: {{ min_replicas | default(1) }}
+  replicas: {{ min_replicas | default(2) }}
   {% else %}
-  replicas: {{ replicas | default(1) }}
+  replicas: {{ replicas | default(2) }}
   {% endif %}
   template:
     spec:

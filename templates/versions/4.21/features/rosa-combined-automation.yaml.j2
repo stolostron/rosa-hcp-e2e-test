@@ -128,7 +128,7 @@ spec:
     instanceType: {{ machine_pool.instance_type | default('m5.xlarge') }}
     autoscaling:
       maxReplicas: {{ machine_pool.max_replicas | default(2) }}
-      minReplicas: {{ machine_pool.min_replicas | default(1) }}
+      minReplicas: {{ machine_pool.min_replicas | default(2) }}
 
   additionalTags:
     env: {{ environment_tag | default('test') }}
@@ -202,7 +202,7 @@ metadata:
     automation.acm.redhat.com/role-automation: "true"
 spec:
   clusterName: {{ cluster_name }}
-  replicas: {{ machine_pool.replicas | default(1) }}
+  replicas: {{ machine_pool.replicas | default(2) }}
   template:
     spec:
       clusterName: {{ cluster_name }}
