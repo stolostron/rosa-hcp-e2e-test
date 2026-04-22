@@ -41,7 +41,7 @@
 
 - name: Set default value for availability_zone_count
   set_fact:
-    availability_zone_count: 1
+    availability_zone_count: 2
   when: availability_zone_count is not defined
 
 - name: Set default value for create_rosa_roles

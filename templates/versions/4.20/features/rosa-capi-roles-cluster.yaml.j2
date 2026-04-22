@@ -289,9 +289,9 @@ spec:
   {% if autoscaling_enabled | default(false) %}
   autoscaling:
     minReplicas: {{ min_replicas | default(1) }}
-    maxReplicas: {{ max_replicas | default(3) }}
+    maxReplicas: {{ max_replicas | default(2) }}
   {% else %}
-  replicas: {{ replicas | default(2) }}
+  replicas: {{ replicas | default(1) }}
   {% endif %}
 
   # Storage Configuration
@@ -362,7 +362,7 @@ spec:
   {% if autoscaling_enabled | default(false) %}
   replicas: {{ min_replicas | default(1) }}
   {% else %}
-  replicas: {{ replicas | default(2) }}
+  replicas: {{ replicas | default(1) }}
   {% endif %}
   template:
     spec:

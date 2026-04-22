@@ -86,7 +86,7 @@
       set_fact:
         create_rosa_network: true
         vpc_cidr_block: "10.0.0.0/16"
-        availability_zone_count: 1
+        availability_zone_count: 2
       when: create_rosa_network is not defined
 
     - name: Set default role config settings

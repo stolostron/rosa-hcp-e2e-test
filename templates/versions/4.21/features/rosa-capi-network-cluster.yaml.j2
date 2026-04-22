@@ -77,8 +77,8 @@ spec:
   defaultMachinePoolSpec:
     instanceType: {{ machine_pool.instance_type | default('m5.xlarge') }}
     autoscaling:
-      maxReplicas: {{ machine_pool.max_replicas | default(3) }}
-      minReplicas: {{ machine_pool.min_replicas | default(2) }}
+      maxReplicas: {{ machine_pool.max_replicas | default(2) }}
+      minReplicas: {{ machine_pool.min_replicas | default(1) }}
 
   additionalTags:
     env: {{ environment_tag | default('test') }}
@@ -105,7 +105,7 @@ metadata:
     automation.acm.redhat.com/network-automation: "true"
 spec:
   clusterName: {{ cluster_name }}
-  replicas: {{ machine_pool.replicas | default(2) }}
+  replicas: {{ machine_pool.replicas | default(1) }}
   template:
     spec:
       clusterName: {{ cluster_name }}
