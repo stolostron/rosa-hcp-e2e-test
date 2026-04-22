@@ -173,7 +173,7 @@
         echo "[${MINS}m${SECS}s] Pool status: ready=${READY} replicas=${REPLICAS}" >&2
         echo "${READY}|${REPLICAS}"
       vars:
-        start_epoch: "{{ now(utc=true) | int }}"
+        start_epoch: "{{ now(utc=true).strftime('%s') }}"
       register: pool_status
       until: >
         pool_status.stdout is defined and

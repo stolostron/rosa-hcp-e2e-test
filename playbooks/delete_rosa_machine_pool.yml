@@ -79,7 +79,7 @@
 
     - name: Record deletion start time
       set_fact:
-        delete_start_epoch: "{{ now(utc=true) | int }}"
+        delete_start_epoch: "{{ now(utc=true).strftime('%s') }}"
 
     - name: Delete MachinePool resource
       shell: |
@@ -127,7 +127,7 @@
 
     - name: Calculate deletion time
       set_fact:
-        total_seconds: "{{ now(utc=true) | int - delete_start_epoch | int }}"
+        total_seconds: "{{ now(utc=true).strftime('%s') | int - delete_start_epoch | int }}"
 
     - name: Display success
       debug:
