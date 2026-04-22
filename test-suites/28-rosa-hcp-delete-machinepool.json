@@ -11,6 +11,7 @@
       "description": "Deletes the MachinePool and ROSAMachinePool resources and waits for full removal",
       "extra_vars": {
         "cluster_name": "",
+        "pool_name": "",
         "capi_namespace": "ns-rosa-hcp"
       }
     }

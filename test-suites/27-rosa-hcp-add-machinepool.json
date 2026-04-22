@@ -11,6 +11,7 @@
       "description": "Creates a MachinePool and ROSAMachinePool resource pair and waits for the pool to become ready",
       "extra_vars": {
         "cluster_name": "",
+        "pool_name": "",
         "capi_namespace": "ns-rosa-hcp",
         "instance_type": "m5.xlarge",
         "replicas": 1
