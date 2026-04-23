@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from .base_agent import BaseAgent
+from .aws_client import AWSClient
 
 
 class DiagnosticAgent(BaseAgent):
@@ -27,6 +28,12 @@ class DiagnosticAgent(BaseAgent):
     def __init__(self, base_dir: Path, enabled: bool = True, verbose: bool = False):
         super().__init__("Diagnostic", base_dir, enabled, verbose)
         self.current_diagnosis = None
+        self._aws = None
+
+    def _get_aws_client(self, region: str = "us-west-2") -> AWSClient:
+        if self._aws is None or self._aws.region != region:
+            self._aws = AWSClient(region=region, log_fn=self.log)
+        return self._aws
 
     def diagnose(self, issue_type: str, context: Dict) -> Optional[Dict]:
         """
@@ -262,10 +269,10 @@ class DiagnosticAgent(BaseAgent):
 
         Priority:
         1. Read from ROSANetwork K8s resource .status.stackStatus (no AWS deps)
-        2. Fall back to aws CLI subprocess (if available)
+        2. Fall back to AWS (CLI or boto3)
 
         Returns one of: DELETE_IN_PROGRESS, DELETE_FAILED, DELETE_COMPLETE, GONE,
-        UNKNOWN, or the raw stack status string.
+        UNKNOWN, UNAVAILABLE, or the raw stack status string.
         """
         if not stack_name:
             return "UNKNOWN"
@@ -277,55 +284,21 @@ class DiagnosticAgent(BaseAgent):
                 self.log(f"CloudFormation status from K8s resource: {k8s_stack_status}", "debug")
                 return k8s_stack_status
 
-        # 2. Fall back to aws CLI (may not be available in Jenkins)
+        # 2. Fall back to AWS (CLI first, then boto3)
         region = "us-west-2"
         if resource_info:
             region = resource_info.get("spec", {}).get("region", region)
 
-        try:
-            cmd = [
-                "aws", "cloudformation", "describe-stacks",
-                "--stack-name", stack_name,
-                "--region", region,
-                "--query", "Stacks[0].StackStatus",
-                "--output", "text"
-            ]
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
-            if result.returncode == 0:
-                return result.stdout.strip()
-            else:
-                # Stack doesn't exist (deleted or never created)
-                if "does not exist" in result.stderr:
-                    return "GONE"
-                return "UNKNOWN"
-        except subprocess.TimeoutExpired:
-            self.log("Timeout checking CloudFormation stack status", "warning")
-            return "UNKNOWN"
-        except Exception as e:
-            self.log(f"Error checking CloudFormation stack: {e}", "error")
-            return "UNKNOWN"
+        aws = self._get_aws_client(region)
+        return aws.describe_stack_status(stack_name)
 
     def _get_stack_vpc_id(self, stack_name: str, resource_info: Dict = None) -> Optional[str]:
         """Get the VPC ID from a CloudFormation stack."""
         region = "us-west-2"
         if resource_info:
             region = resource_info.get("spec", {}).get("region", region)
-        try:
-            cmd = [
-                "aws", "cloudformation", "list-stack-resources",
-                "--stack-name", stack_name,
-                "--region", region,
-                "--query", "StackResourceSummaries[?ResourceType=='AWS::EC2::VPC'].PhysicalResourceId",
-                "--output", "text"
-            ]
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
-            vpc_id = result.stdout.strip() if result.returncode == 0 else None
-            if vpc_id and vpc_id.startswith("vpc-"):
-                return vpc_id
-            return None
-        except Exception as e:
-            self.log(f"Error getting VPC ID from stack: {e}", "error")
-            return None
+        aws = self._get_aws_client(region)
+        return aws.get_vpc_from_stack(stack_name)
 
     def _check_vpc_blocking_dependencies(self, vpc_id: str, resource_info: Dict = None) -> tuple:
         """Check for VPC dependencies that block CloudFormation deletion.
@@ -341,46 +314,18 @@ class DiagnosticAgent(BaseAgent):
         if resource_info:
             region = resource_info.get("spec", {}).get("region", region)
 
+        aws = self._get_aws_client(region)
         blockers = []
         still_transitioning = False
-        try:
-            # Check for non-default security groups (ROSA creates *-vpce-private-router)
-            sg_cmd = [
-                "aws", "ec2", "describe-security-groups",
-                "--region", region,
-                "--filters", f"Name=vpc-id,Values={vpc_id}",
-                "--query", "SecurityGroups[?GroupName!='default'].[GroupId,GroupName]",
-                "--output", "text"
-            ]
-            sg_result = subprocess.run(sg_cmd, capture_output=True, text=True, timeout=10)
-            if sg_result.returncode == 0 and sg_result.stdout.strip():
-                for line in sg_result.stdout.strip().split('\n'):
-                    parts = line.split('\t')
-                    sg_id = parts[0] if parts else "unknown"
-                    sg_name = parts[1] if len(parts) > 1 else "unknown"
-                    blockers.append(f"SG {sg_id} ({sg_name})")
 
-            # Check for non-deleted VPC endpoints and track their state
-            vpce_cmd = [
-                "aws", "ec2", "describe-vpc-endpoints",
-                "--region", region,
-                "--filters", f"Name=vpc-id,Values={vpc_id}",
-                "--query", "VpcEndpoints[?State!='deleted'].[VpcEndpointId,State]",
-                "--output", "text"
-            ]
-            vpce_result = subprocess.run(vpce_cmd, capture_output=True, text=True, timeout=10)
-            if vpce_result.returncode == 0 and vpce_result.stdout.strip():
-                for line in vpce_result.stdout.strip().split('\n'):
-                    parts = line.split('\t')
-                    vpce_id = parts[0] if parts else "unknown"
-                    vpce_state = parts[1] if len(parts) > 1 else "unknown"
-                    blockers.append(f"VPC endpoint {vpce_id} ({vpce_state})")
-                    # 'deleting' or 'pending' means CAPA is still working
-                    if vpce_state in ("deleting", "pending"):
-                        still_transitioning = True
+        for sg in aws.describe_security_groups_text(vpc_id):
+            blockers.append(f"SG {sg['id']} ({sg['name']})")
 
-        except Exception as e:
-            self.log(f"Error checking VPC dependencies: {e}", "error")
+        for ep in aws.describe_vpc_endpoints(vpc_id):
+            if ep["state"] != "deleted":
+                blockers.append(f"VPC endpoint {ep['id']} ({ep['state']})")
+                if ep["state"] in ("deleting", "pending"):
+                    still_transitioning = True
 
         return blockers, still_transitioning
 
