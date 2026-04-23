@@ -130,7 +130,7 @@
 
     - name: Record patch time
       set_fact:
-        patch_epoch: "{{ now(utc=true) | int }}"
+        patch_epoch: "{{ now(utc=true).strftime('%s') }}"
 
     - name: Display patch result
       debug:
@@ -189,7 +189,7 @@
 
     - name: Calculate total upgrade time
       set_fact:
-        total_seconds: "{{ now(utc=true) | int - patch_epoch | int }}"
+        total_seconds: "{{ now(utc=true).strftime('%s') | int - patch_epoch | int }}"
 
     - name: Display upgrade success
       debug:
