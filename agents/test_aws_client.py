@@ -356,3 +356,90 @@ def test_log_function_called():
          patch("subprocess.run", return_value=_mock_run(returncode=1, stderr="error")):
         client.describe_stack_status("my-stack")
     assert any("debug" in log[1] for log in logs)
+
+
+# ================================================================
+# CLI Fails, Falls Through to boto3
+# ================================================================
+
+def test_cli_fails_falls_through_to_boto3_describe_stack():
+    """Core fallback: CLI available but errors, boto3 picks up."""
+    mock_cfn = MagicMock()
+    mock_cfn.describe_stacks.return_value = {
+        "Stacks": [{"StackStatus": "DELETE_IN_PROGRESS"}]
+    }
+    with patch("agents.aws_client._AWS_CLI_AVAILABLE", True), \
+         patch("agents.aws_client._BOTO3_AVAILABLE", True), \
+         patch("subprocess.run", return_value=_mock_run(returncode=1, stderr="connection error")), \
+         _boto3_client(mock_cfn):
+        client = AWSClient()
+        result = client.describe_stack_status("my-stack")
+        assert result == "DELETE_IN_PROGRESS", f"Expected boto3 fallback, got: {result}"
+
+
+def test_cli_fails_falls_through_to_boto3_delete_sg():
+    """CLI fails on delete, boto3 succeeds."""
+    mock_ec2 = MagicMock()
+    with patch("agents.aws_client._AWS_CLI_AVAILABLE", True), \
+         patch("agents.aws_client._BOTO3_AVAILABLE", True), \
+         patch("subprocess.run", return_value=_mock_run(returncode=1, stderr="cli error")), \
+         _boto3_client(mock_ec2):
+        client = AWSClient()
+        ok, msg = client.delete_security_group("sg-123")
+        assert ok is True
+        mock_ec2.delete_security_group.assert_called_once_with(GroupId="sg-123")
+
+
+def test_cli_fails_falls_through_to_boto3_describe_enis():
+    """CLI fails on describe, boto3 returns results."""
+    mock_ec2 = MagicMock()
+    mock_ec2.describe_network_interfaces.return_value = {
+        "NetworkInterfaces": [{
+            "NetworkInterfaceId": "eni-fallback",
+            "Attachment": {"AttachmentId": "eni-attach-fb"},
+            "Status": "available",
+            "Description": "from boto3"
+        }]
+    }
+    with patch("agents.aws_client._AWS_CLI_AVAILABLE", True), \
+         patch("agents.aws_client._BOTO3_AVAILABLE", True), \
+         patch("subprocess.run", return_value=_mock_run(returncode=1, stderr="timeout")), \
+         _boto3_client(mock_ec2):
+        client = AWSClient()
+        enis = client.describe_network_interfaces("vpc-123")
+        assert len(enis) == 1
+        assert enis[0]["id"] == "eni-fallback"
+
+
+# ================================================================
+# describe_security_groups_text
+# ================================================================
+
+def test_describe_security_groups_text_cli():
+    cli_output = "sg-aaa\tmy-sg-1\nsg-bbb\tmy-sg-2"
+    with patch("agents.aws_client._AWS_CLI_AVAILABLE", True), \
+         patch("agents.aws_client._BOTO3_AVAILABLE", False), \
+         patch("subprocess.run", return_value=_mock_run(stdout=cli_output)):
+        client = AWSClient()
+        sgs = client.describe_security_groups_text("vpc-123")
+        assert len(sgs) == 2
+        assert sgs[0] == {"id": "sg-aaa", "name": "my-sg-1"}
+        assert sgs[1] == {"id": "sg-bbb", "name": "my-sg-2"}
+
+
+def test_describe_security_groups_text_boto3_fallback():
+    mock_ec2 = MagicMock()
+    mock_ec2.describe_security_groups.return_value = {
+        "SecurityGroups": [
+            {"GroupId": "sg-boto3", "GroupName": "rosa-sg"},
+            {"GroupId": "sg-def", "GroupName": "default"},
+        ]
+    }
+    with patch("agents.aws_client._AWS_CLI_AVAILABLE", False), \
+         patch("agents.aws_client._BOTO3_AVAILABLE", True), \
+         _boto3_client(mock_ec2):
+        client = AWSClient()
+        sgs = client.describe_security_groups_text("vpc-123")
+        assert len(sgs) == 1
+        assert sgs[0]["id"] == "sg-boto3"
+        assert sgs[0]["name"] == "rosa-sg"

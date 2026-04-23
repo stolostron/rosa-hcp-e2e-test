@@ -24,7 +24,7 @@ _AWS_CLI_AVAILABLE = shutil.which("aws") is not None
 # Detect boto3 availability once at import time
 try:
     import boto3
-    from botocore.exceptions import ClientError, BotoCoreError
+    from botocore.exceptions import ClientError
     _BOTO3_AVAILABLE = True
 except ImportError:
     _BOTO3_AVAILABLE = False
