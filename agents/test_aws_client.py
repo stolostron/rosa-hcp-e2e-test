@@ -29,13 +29,13 @@ def _mock_client(mock_service):
 
 def test_available_when_boto3_present():
     with patch("agents.aws_client._BOTO3_AVAILABLE", True):
-        client = AWSClient()
+        client = AWSClient(region="us-west-2")
         assert client.available is True
 
 
 def test_unavailable_when_no_boto3():
     with patch("agents.aws_client._BOTO3_AVAILABLE", False):
-        client = AWSClient()
+        client = AWSClient(region="us-west-2")
         assert client.available is False
 
 
@@ -45,19 +45,19 @@ def test_unavailable_when_no_boto3():
 
 def test_describe_stack_status_unavailable():
     with patch("agents.aws_client._BOTO3_AVAILABLE", False):
-        client = AWSClient()
+        client = AWSClient(region="us-west-2")
         assert client.describe_stack_status("my-stack") == "UNAVAILABLE"
 
 
 def test_get_vpc_from_stack_unavailable():
     with patch("agents.aws_client._BOTO3_AVAILABLE", False):
-        client = AWSClient()
+        client = AWSClient(region="us-west-2")
         assert client.get_vpc_from_stack("my-stack") is None
 
 
 def test_delete_stack_unavailable():
     with patch("agents.aws_client._BOTO3_AVAILABLE", False):
-        client = AWSClient()
+        client = AWSClient(region="us-west-2")
         ok, msg = client.delete_stack("my-stack")
         assert ok is False
         assert "not installed" in msg
@@ -65,32 +65,32 @@ def test_delete_stack_unavailable():
 
 def test_describe_network_interfaces_unavailable():
     with patch("agents.aws_client._BOTO3_AVAILABLE", False):
-        assert AWSClient().describe_network_interfaces("vpc-123") == []
+        assert AWSClient(region="us-west-2").describe_network_interfaces("vpc-123") == []
 
 
 def test_describe_security_groups_unavailable():
     with patch("agents.aws_client._BOTO3_AVAILABLE", False):
-        assert AWSClient().describe_security_groups("vpc-123") == []
+        assert AWSClient(region="us-west-2").describe_security_groups("vpc-123") == []
 
 
 def test_describe_vpc_endpoints_unavailable():
     with patch("agents.aws_client._BOTO3_AVAILABLE", False):
-        assert AWSClient().describe_vpc_endpoints("vpc-123") == []
+        assert AWSClient(region="us-west-2").describe_vpc_endpoints("vpc-123") == []
 
 
 def test_describe_subnets_unavailable():
     with patch("agents.aws_client._BOTO3_AVAILABLE", False):
-        assert AWSClient().describe_subnets("vpc-123") == []
+        assert AWSClient(region="us-west-2").describe_subnets("vpc-123") == []
 
 
 def test_describe_internet_gateways_unavailable():
     with patch("agents.aws_client._BOTO3_AVAILABLE", False):
-        assert AWSClient().describe_internet_gateways("vpc-123") == []
+        assert AWSClient(region="us-west-2").describe_internet_gateways("vpc-123") == []
 
 
 def test_mutating_ops_unavailable():
     with patch("agents.aws_client._BOTO3_AVAILABLE", False):
-        client = AWSClient()
+        client = AWSClient(region="us-west-2")
         assert client.detach_network_interface("att-123")[0] is False
         assert client.delete_network_interface("eni-123")[0] is False
         assert client.delete_security_group("sg-123")[0] is False
@@ -110,14 +110,14 @@ def test_describe_stack_status_success():
         "Stacks": [{"StackStatus": "DELETE_IN_PROGRESS"}]
     }
     with _mock_client(mock_cfn):
-        assert AWSClient().describe_stack_status("my-stack") == "DELETE_IN_PROGRESS"
+        assert AWSClient(region="us-west-2").describe_stack_status("my-stack") == "DELETE_IN_PROGRESS"
 
 
 def test_describe_stack_status_gone():
     mock_cfn = MagicMock()
     mock_cfn.describe_stacks.return_value = {"Stacks": []}
     with _mock_client(mock_cfn):
-        assert AWSClient().describe_stack_status("my-stack") == "GONE"
+        assert AWSClient(region="us-west-2").describe_stack_status("my-stack") == "GONE"
 
 
 def test_describe_stack_status_not_found_error():
@@ -127,7 +127,7 @@ def test_describe_stack_status_not_found_error():
         "DescribeStacks"
     )
     with _mock_client(mock_cfn):
-        assert AWSClient().describe_stack_status("my-stack") == "GONE"
+        assert AWSClient(region="us-west-2").describe_stack_status("my-stack") == "GONE"
 
 
 def test_get_vpc_from_stack():
@@ -138,7 +138,7 @@ def test_get_vpc_from_stack():
         ]
     }
     with _mock_client(mock_cfn):
-        assert AWSClient().get_vpc_from_stack("my-stack") == "vpc-abc123"
+        assert AWSClient(region="us-west-2").get_vpc_from_stack("my-stack") == "vpc-abc123"
 
 
 def test_get_vpc_from_stack_no_vpc():
@@ -149,13 +149,13 @@ def test_get_vpc_from_stack_no_vpc():
         ]
     }
     with _mock_client(mock_cfn):
-        assert AWSClient().get_vpc_from_stack("my-stack") is None
+        assert AWSClient(region="us-west-2").get_vpc_from_stack("my-stack") is None
 
 
 def test_delete_stack():
     mock_cfn = MagicMock()
     with _mock_client(mock_cfn):
-        ok, msg = AWSClient().delete_stack("my-stack")
+        ok, msg = AWSClient(region="us-west-2").delete_stack("my-stack")
         assert ok is True
         mock_cfn.delete_stack.assert_called_once_with(StackName="my-stack")
 
@@ -175,7 +175,7 @@ def test_describe_network_interfaces():
         }]
     }
     with _mock_client(mock_ec2):
-        enis = AWSClient().describe_network_interfaces("vpc-123")
+        enis = AWSClient(region="us-west-2").describe_network_interfaces("vpc-123")
         assert len(enis) == 1
         assert enis[0]["id"] == "eni-111"
         assert enis[0]["attachment_id"] == "eni-attach-aaa"
@@ -186,7 +186,7 @@ def test_describe_network_interfaces_with_cluster_filter():
     mock_ec2 = MagicMock()
     mock_ec2.describe_network_interfaces.return_value = {"NetworkInterfaces": []}
     with _mock_client(mock_ec2):
-        AWSClient().describe_network_interfaces("vpc-123", cluster_id="my-cluster")
+        AWSClient(region="us-west-2").describe_network_interfaces("vpc-123", cluster_id="my-cluster")
         filters = mock_ec2.describe_network_interfaces.call_args[1]["Filters"]
         assert len(filters) == 2
         assert filters[1]["Name"] == "tag:cluster.x-k8s.io/cluster-name"
@@ -203,14 +203,14 @@ def test_describe_eni_no_attachment():
         }]
     }
     with _mock_client(mock_ec2):
-        enis = AWSClient().describe_network_interfaces("vpc-123")
+        enis = AWSClient(region="us-west-2").describe_network_interfaces("vpc-123")
         assert enis[0]["attachment_id"] is None
 
 
 def test_detach_network_interface():
     mock_ec2 = MagicMock()
     with _mock_client(mock_ec2):
-        ok, msg = AWSClient().detach_network_interface("eni-attach-aaa")
+        ok, msg = AWSClient(region="us-west-2").detach_network_interface("eni-attach-aaa")
         assert ok is True
         mock_ec2.detach_network_interface.assert_called_once_with(
             AttachmentId="eni-attach-aaa", Force=True
@@ -220,7 +220,7 @@ def test_detach_network_interface():
 def test_delete_network_interface():
     mock_ec2 = MagicMock()
     with _mock_client(mock_ec2):
-        ok, msg = AWSClient().delete_network_interface("eni-111")
+        ok, msg = AWSClient(region="us-west-2").delete_network_interface("eni-111")
         assert ok is True
 
 
@@ -237,7 +237,7 @@ def test_describe_security_groups_filters_default():
         ]
     }
     with _mock_client(mock_ec2):
-        sgs = AWSClient().describe_security_groups("vpc-123")
+        sgs = AWSClient(region="us-west-2").describe_security_groups("vpc-123")
         assert len(sgs) == 1
         assert sgs[0]["id"] == "sg-111"
 
@@ -246,7 +246,7 @@ def test_describe_security_groups_with_cluster_filter():
     mock_ec2 = MagicMock()
     mock_ec2.describe_security_groups.return_value = {"SecurityGroups": []}
     with _mock_client(mock_ec2):
-        AWSClient().describe_security_groups("vpc-123", cluster_id="my-cluster")
+        AWSClient(region="us-west-2").describe_security_groups("vpc-123", cluster_id="my-cluster")
         filters = mock_ec2.describe_security_groups.call_args[1]["Filters"]
         assert any(f["Name"] == "tag:red-hat-clustertype" for f in filters)
 
@@ -260,7 +260,7 @@ def test_describe_security_groups_text():
         ]
     }
     with _mock_client(mock_ec2):
-        sgs = AWSClient().describe_security_groups_text("vpc-123")
+        sgs = AWSClient(region="us-west-2").describe_security_groups_text("vpc-123")
         assert len(sgs) == 1
         assert sgs[0] == {"id": "sg-aaa", "name": "rosa-sg"}
 
@@ -268,7 +268,7 @@ def test_describe_security_groups_text():
 def test_delete_security_group():
     mock_ec2 = MagicMock()
     with _mock_client(mock_ec2):
-        ok, msg = AWSClient().delete_security_group("sg-111")
+        ok, msg = AWSClient(region="us-west-2").delete_security_group("sg-111")
         assert ok is True
 
 
@@ -279,7 +279,7 @@ def test_delete_security_group_dependency_violation():
         "DeleteSecurityGroup"
     )
     with _mock_client(mock_ec2):
-        ok, msg = AWSClient().delete_security_group("sg-123")
+        ok, msg = AWSClient(region="us-west-2").delete_security_group("sg-123")
         assert ok is False
         assert "DependencyViolation" in msg
 
@@ -297,7 +297,7 @@ def test_describe_vpc_endpoints():
         ]
     }
     with _mock_client(mock_ec2):
-        eps = AWSClient().describe_vpc_endpoints("vpc-123")
+        eps = AWSClient(region="us-west-2").describe_vpc_endpoints("vpc-123")
         assert len(eps) == 2
         assert eps[0]["id"] == "vpce-111"
         assert eps[1]["state"] == "deleting"
@@ -306,13 +306,13 @@ def test_describe_vpc_endpoints():
 def test_delete_vpc_endpoints():
     mock_ec2 = MagicMock()
     with _mock_client(mock_ec2):
-        ok, msg = AWSClient().delete_vpc_endpoints(["vpce-111", "vpce-222"])
+        ok, msg = AWSClient(region="us-west-2").delete_vpc_endpoints(["vpce-111", "vpce-222"])
         assert ok is True
         assert "2" in msg
 
 
 def test_delete_vpc_endpoints_empty_list():
-    ok, msg = AWSClient().delete_vpc_endpoints([])
+    ok, msg = AWSClient(region="us-west-2").delete_vpc_endpoints([])
     assert ok is False
     assert "No endpoint" in msg
 
@@ -330,13 +330,13 @@ def test_describe_subnets():
         ]
     }
     with _mock_client(mock_ec2):
-        assert AWSClient().describe_subnets("vpc-123") == ["subnet-aaa", "subnet-bbb"]
+        assert AWSClient(region="us-west-2").describe_subnets("vpc-123") == ["subnet-aaa", "subnet-bbb"]
 
 
 def test_delete_subnet():
     mock_ec2 = MagicMock()
     with _mock_client(mock_ec2):
-        ok, msg = AWSClient().delete_subnet("subnet-aaa")
+        ok, msg = AWSClient(region="us-west-2").delete_subnet("subnet-aaa")
         assert ok is True
 
 
@@ -352,13 +352,13 @@ def test_describe_internet_gateways():
         ]
     }
     with _mock_client(mock_ec2):
-        assert AWSClient().describe_internet_gateways("vpc-123") == ["igw-aaa"]
+        assert AWSClient(region="us-west-2").describe_internet_gateways("vpc-123") == ["igw-aaa"]
 
 
 def test_detach_internet_gateway():
     mock_ec2 = MagicMock()
     with _mock_client(mock_ec2):
-        ok, msg = AWSClient().detach_internet_gateway("igw-aaa", "vpc-123")
+        ok, msg = AWSClient(region="us-west-2").detach_internet_gateway("igw-aaa", "vpc-123")
         assert ok is True
         mock_ec2.detach_internet_gateway.assert_called_once_with(
             InternetGatewayId="igw-aaa", VpcId="vpc-123"
@@ -368,7 +368,7 @@ def test_detach_internet_gateway():
 def test_delete_internet_gateway():
     mock_ec2 = MagicMock()
     with _mock_client(mock_ec2):
-        ok, msg = AWSClient().delete_internet_gateway("igw-aaa")
+        ok, msg = AWSClient(region="us-west-2").delete_internet_gateway("igw-aaa")
         assert ok is True
 
 
@@ -376,8 +376,12 @@ def test_delete_internet_gateway():
 # Region and Logging
 # ================================================================
 
-def test_default_region():
-    assert AWSClient().region == "us-west-2"
+def test_region_is_required():
+    try:
+        AWSClient()
+        assert False, "Should have raised TypeError"
+    except TypeError:
+        pass
 
 
 def test_custom_region():
@@ -388,7 +392,7 @@ def test_log_function_called():
     logs = []
     mock_cfn = MagicMock()
     mock_cfn.describe_stacks.side_effect = Exception("boom")
-    client = AWSClient(log_fn=lambda msg, level: logs.append((msg, level)))
+    client = AWSClient(region="us-west-2", log_fn=lambda msg, level: logs.append((msg, level)))
     with _mock_client(mock_cfn):
         client.describe_stack_status("my-stack")
     assert any("debug" in log[1] for log in logs)

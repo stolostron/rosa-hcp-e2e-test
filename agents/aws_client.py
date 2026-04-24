@@ -26,7 +26,7 @@ except ImportError:
 class AWSClient:
     """AWS operations via boto3."""
 
-    def __init__(self, region: str = "us-west-2", log_fn=None):
+    def __init__(self, region: str, log_fn=None):
         self.region = region
         self._log_fn = log_fn
         self._boto3_clients = {}
