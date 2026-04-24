@@ -148,6 +148,24 @@
         msg: "✅ AWS credentials are present and will be validated during resource creation"
 
 # ================================================================
+# PRE-FLIGHT: Verify OCM role is linked to AWS account
+# ================================================================
+- name: Verify OCM role is linked to AWS account
+  when: create_rosa_roles | bool
+  block:
+    - name: Display OCM role pre-flight check message
+      debug:
+        msg: |
+
+          🔍 PRE-FLIGHT: Checking OCM role linkage
+          ───────────────────────────────────────────────────────────
+          Verifying that an OCM role exists in AWS IAM and is linked
+          to the OCM organization. If missing, will auto-create it.
+
+    - name: Run OCM role pre-flight check
+      include_tasks: preflight_check_ocm_role.yml
+
+# ================================================================
 # STEP 1: Create RosaRoleConfig (if requested)
 # ================================================================
 - name: Create RosaRoleConfig for automated AWS role creation

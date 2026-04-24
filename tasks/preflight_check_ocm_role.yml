@@ -1,0 +1,85 @@
+---
+# Pre-flight check: Verify OCM role exists and is linked to the AWS account.
+# If missing, automatically creates and links it using boto3 + OCM API.
+# This prevents the 45-minute CLUSTERS-MGMT-403 failure during provisioning.
+
+- name: Check for OCM role in AWS IAM
+  shell: |
+    python3 -c "
+    import json, sys
+    try:
+        import boto3
+        iam = boto3.client('iam')
+        paginator = iam.get_paginator('list_roles')
+        for page in paginator.paginate():
+            for role in page['Roles']:
+                if 'OCM-Role' in role['RoleName']:
+                    print(json.dumps({'exists': True, 'arn': role['Arn'], 'name': role['RoleName']}))
+                    sys.exit(0)
+        print(json.dumps({'exists': False}))
+    except Exception as e:
+        print(json.dumps({'exists': False, 'error': str(e)}))
+    "
+  register: ocm_role_check_result
+  changed_when: false
+  environment:
+    AWS_ACCESS_KEY_ID: "{{ AWS_ACCESS_KEY_ID }}"
+    AWS_SECRET_ACCESS_KEY: "{{ AWS_SECRET_ACCESS_KEY }}"
+    AWS_DEFAULT_REGION: "{{ aws_region | default('us-west-2') }}"
+
+- name: Parse OCM role check result
+  set_fact:
+    ocm_role_status: "{{ ocm_role_check_result.stdout | from_json }}"
+
+- name: Display OCM role status
+  debug:
+    msg: >-
+      {% if ocm_role_status.exists %}
+      ✅ OCM role found: {{ ocm_role_status.name }} ({{ ocm_role_status.arn }})
+      {% else %}
+      ⚠️ No OCM role found in AWS IAM — will attempt to create one
+      {% endif %}
+
+- name: Create and link OCM role if missing
+  when: not ocm_role_status.exists
+  block:
+    - name: Auto-create OCM role via OcmRoleManager
+      shell: |
+        python3 -c "
+        import sys, os, logging
+        logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
+        sys.path.insert(0, '{{ playbook_dir }}/..')
+        from agents.domains.rosa_hcp.ocm_role_manager import OcmRoleManager
+        mgr = OcmRoleManager(
+            ocm_client_id=os.environ.get('OCM_CLIENT_ID', ''),
+            ocm_client_secret=os.environ.get('OCM_CLIENT_SECRET', ''),
+            ocm_api_url=os.environ.get('OCM_API_URL', 'https://api.stage.openshift.com'),
+            aws_account_id=os.environ.get('AWS_ACCOUNT_ID', ''),
+        )
+        success, msg = mgr.ensure_ocm_role()
+        print(msg)
+        sys.exit(0 if success else 1)
+        "
+      register: ocm_role_create_result
+      environment:
+        AWS_ACCESS_KEY_ID: "{{ AWS_ACCESS_KEY_ID }}"
+        AWS_SECRET_ACCESS_KEY: "{{ AWS_SECRET_ACCESS_KEY }}"
+        AWS_DEFAULT_REGION: "{{ aws_region | default('us-west-2') }}"
+        AWS_ACCOUNT_ID: "{{ aws_account_id | default('') }}"
+        OCM_CLIENT_ID: "{{ OCM_CLIENT_ID | default('') }}"
+        OCM_CLIENT_SECRET: "{{ OCM_CLIENT_SECRET | default('') }}"
+        OCM_API_URL: "{{ OCM_API_URL | default('https://api.stage.openshift.com') }}"
+
+    - name: Display OCM role creation result
+      debug:
+        msg: "{{ ocm_role_create_result.stdout }}"
+
+    - name: Fail if OCM role creation failed
+      fail:
+        msg: |
+          ❌ OCM role creation/linking failed.
+          {{ ocm_role_create_result.stdout }}
+          {{ ocm_role_create_result.stderr }}
+
+          Ensure OCM_CLIENT_ID and OCM_CLIENT_SECRET are set, and AWS credentials have IAM permissions.
+      when: ocm_role_create_result.rc != 0
