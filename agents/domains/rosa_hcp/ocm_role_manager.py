@@ -258,7 +258,7 @@ class OcmRoleManager:
                 logger.info("OCM role appears to be linked (external_id present)")
                 return True
 
-            logger.warning("OCM role linking via API requires rosa CLI — role was created but may need manual linking")
+            logger.warning("OCM API could not confirm role linkage — role was created but may need manual verification")
             return False
 
         except urllib.error.HTTPError as e:
@@ -294,7 +294,7 @@ class OcmRoleManager:
                         linked = self.link_ocm_role(token, org_id, existing_arn)
                         if linked:
                             return True, f"{msg} — newly linked to organization {org_id}"
-                        return True, f"{msg} — created but may need manual linking via: rosa link ocm-role --role-arn {existing_arn}"
+                        return True, f"{msg} — created but OCM API could not confirm linkage — verify in OCM console"
                 except Exception as e:
                     return True, f"{msg} — could not verify linkage: {e}"
 
@@ -313,7 +313,7 @@ class OcmRoleManager:
             linked = self.link_ocm_role(token, org_id, new_arn)
             if linked:
                 return True, f"Created and linked OCM role: {new_arn}"
-            return True, f"Created OCM role: {new_arn} — may need manual linking via: rosa link ocm-role --role-arn {new_arn}"
+            return True, f"Created OCM role: {new_arn} — OCM API could not confirm linkage — verify in OCM console"
 
         except Exception as e:
             logger.error(f"OCM role management failed: {e}")
