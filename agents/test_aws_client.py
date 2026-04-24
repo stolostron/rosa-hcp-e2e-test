@@ -1,13 +1,11 @@
 #!/usr/bin/env python3
 """
-Tests for the AWS client with CLI-first, boto3-fallback.
+Tests for the AWS client (boto3).
 
 Covers:
-    - Backend detection (CLI, boto3, none)
-    - CLI-first behavior with mocked subprocess
-    - boto3 fallback when CLI unavailable
-    - Graceful failure when neither is available
-    - All CloudFormation and EC2 operations
+    - Availability detection
+    - Graceful failure when boto3 not installed
+    - All CloudFormation and EC2 operations via mocked boto3
 """
 
 import sys
@@ -17,36 +15,27 @@ from unittest.mock import patch, MagicMock
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from agents.aws_client import AWSClient
+from botocore.exceptions import ClientError
+
+
+def _mock_client(mock_service):
+    """Patch _client to return a mock AWS service client."""
+    return patch.object(AWSClient, "_client", return_value=mock_service)
 
 
 # ================================================================
-# Backend Detection
+# Availability
 # ================================================================
 
-def test_backend_reports_cli_when_available():
-    with patch("agents.aws_client._AWS_CLI_AVAILABLE", True), \
-         patch("agents.aws_client._BOTO3_AVAILABLE", True):
+def test_available_when_boto3_present():
+    with patch("agents.aws_client._BOTO3_AVAILABLE", True):
         client = AWSClient()
-        assert client.backend == "cli"
-        assert client.has_aws_cli is True
-        assert client.has_boto3 is True
         assert client.available is True
 
 
-def test_backend_reports_boto3_when_no_cli():
-    with patch("agents.aws_client._AWS_CLI_AVAILABLE", False), \
-         patch("agents.aws_client._BOTO3_AVAILABLE", True):
+def test_unavailable_when_no_boto3():
+    with patch("agents.aws_client._BOTO3_AVAILABLE", False):
         client = AWSClient()
-        assert client.backend == "boto3"
-        assert client.has_aws_cli is False
-        assert client.available is True
-
-
-def test_backend_reports_none_when_nothing_available():
-    with patch("agents.aws_client._AWS_CLI_AVAILABLE", False), \
-         patch("agents.aws_client._BOTO3_AVAILABLE", False):
-        client = AWSClient()
-        assert client.backend == "none"
         assert client.available is False
 
 
@@ -55,391 +44,352 @@ def test_backend_reports_none_when_nothing_available():
 # ================================================================
 
 def test_describe_stack_status_unavailable():
-    with patch("agents.aws_client._AWS_CLI_AVAILABLE", False), \
-         patch("agents.aws_client._BOTO3_AVAILABLE", False):
+    with patch("agents.aws_client._BOTO3_AVAILABLE", False):
         client = AWSClient()
         assert client.describe_stack_status("my-stack") == "UNAVAILABLE"
 
 
 def test_get_vpc_from_stack_unavailable():
-    with patch("agents.aws_client._AWS_CLI_AVAILABLE", False), \
-         patch("agents.aws_client._BOTO3_AVAILABLE", False):
+    with patch("agents.aws_client._BOTO3_AVAILABLE", False):
         client = AWSClient()
         assert client.get_vpc_from_stack("my-stack") is None
 
 
 def test_delete_stack_unavailable():
-    with patch("agents.aws_client._AWS_CLI_AVAILABLE", False), \
-         patch("agents.aws_client._BOTO3_AVAILABLE", False):
+    with patch("agents.aws_client._BOTO3_AVAILABLE", False):
         client = AWSClient()
         ok, msg = client.delete_stack("my-stack")
         assert ok is False
-        assert "No AWS access" in msg
+        assert "not installed" in msg
 
 
 def test_describe_network_interfaces_unavailable():
-    with patch("agents.aws_client._AWS_CLI_AVAILABLE", False), \
-         patch("agents.aws_client._BOTO3_AVAILABLE", False):
-        client = AWSClient()
-        assert client.describe_network_interfaces("vpc-123") == []
+    with patch("agents.aws_client._BOTO3_AVAILABLE", False):
+        assert AWSClient().describe_network_interfaces("vpc-123") == []
 
 
 def test_describe_security_groups_unavailable():
-    with patch("agents.aws_client._AWS_CLI_AVAILABLE", False), \
-         patch("agents.aws_client._BOTO3_AVAILABLE", False):
-        client = AWSClient()
-        assert client.describe_security_groups("vpc-123") == []
+    with patch("agents.aws_client._BOTO3_AVAILABLE", False):
+        assert AWSClient().describe_security_groups("vpc-123") == []
 
 
 def test_describe_vpc_endpoints_unavailable():
-    with patch("agents.aws_client._AWS_CLI_AVAILABLE", False), \
-         patch("agents.aws_client._BOTO3_AVAILABLE", False):
-        client = AWSClient()
-        assert client.describe_vpc_endpoints("vpc-123") == []
+    with patch("agents.aws_client._BOTO3_AVAILABLE", False):
+        assert AWSClient().describe_vpc_endpoints("vpc-123") == []
 
 
 def test_describe_subnets_unavailable():
-    with patch("agents.aws_client._AWS_CLI_AVAILABLE", False), \
-         patch("agents.aws_client._BOTO3_AVAILABLE", False):
-        client = AWSClient()
-        assert client.describe_subnets("vpc-123") == []
+    with patch("agents.aws_client._BOTO3_AVAILABLE", False):
+        assert AWSClient().describe_subnets("vpc-123") == []
 
 
 def test_describe_internet_gateways_unavailable():
-    with patch("agents.aws_client._AWS_CLI_AVAILABLE", False), \
-         patch("agents.aws_client._BOTO3_AVAILABLE", False):
-        client = AWSClient()
-        assert client.describe_internet_gateways("vpc-123") == []
+    with patch("agents.aws_client._BOTO3_AVAILABLE", False):
+        assert AWSClient().describe_internet_gateways("vpc-123") == []
 
 
 def test_mutating_ops_unavailable():
-    with patch("agents.aws_client._AWS_CLI_AVAILABLE", False), \
-         patch("agents.aws_client._BOTO3_AVAILABLE", False):
+    with patch("agents.aws_client._BOTO3_AVAILABLE", False):
         client = AWSClient()
-
-        ok, _ = client.detach_network_interface("eni-attach-123")
-        assert ok is False
-
-        ok, _ = client.delete_network_interface("eni-123")
-        assert ok is False
-
-        ok, _ = client.delete_security_group("sg-123")
-        assert ok is False
-
-        ok, _ = client.delete_vpc_endpoints(["vpce-123"])
-        assert ok is False
-
-        ok, _ = client.delete_subnet("subnet-123")
-        assert ok is False
-
-        ok, _ = client.detach_internet_gateway("igw-123", "vpc-123")
-        assert ok is False
-
-        ok, _ = client.delete_internet_gateway("igw-123")
-        assert ok is False
+        assert client.detach_network_interface("att-123")[0] is False
+        assert client.delete_network_interface("eni-123")[0] is False
+        assert client.delete_security_group("sg-123")[0] is False
+        assert client.delete_vpc_endpoints(["vpce-123"])[0] is False
+        assert client.delete_subnet("subnet-123")[0] is False
+        assert client.detach_internet_gateway("igw-123", "vpc-123")[0] is False
+        assert client.delete_internet_gateway("igw-123")[0] is False
 
 
 # ================================================================
-# CLI-First Behavior
+# CloudFormation
 # ================================================================
 
-def _mock_run(stdout="", stderr="", returncode=0):
-    mock = MagicMock()
-    mock.returncode = returncode
-    mock.stdout = stdout
-    mock.stderr = stderr
-    return mock
-
-
-def test_describe_stack_status_cli_success():
-    with patch("agents.aws_client._AWS_CLI_AVAILABLE", True), \
-         patch("agents.aws_client._BOTO3_AVAILABLE", False), \
-         patch("subprocess.run", return_value=_mock_run(stdout="DELETE_IN_PROGRESS")):
-        client = AWSClient()
-        assert client.describe_stack_status("my-stack") == "DELETE_IN_PROGRESS"
-
-
-def test_describe_stack_status_cli_gone():
-    with patch("agents.aws_client._AWS_CLI_AVAILABLE", True), \
-         patch("agents.aws_client._BOTO3_AVAILABLE", False), \
-         patch("subprocess.run", return_value=_mock_run(returncode=1, stderr="Stack does not exist")):
-        client = AWSClient()
-        assert client.describe_stack_status("my-stack") == "GONE"
-
-
-def test_get_vpc_from_stack_cli():
-    with patch("agents.aws_client._AWS_CLI_AVAILABLE", True), \
-         patch("agents.aws_client._BOTO3_AVAILABLE", False), \
-         patch("subprocess.run", return_value=_mock_run(stdout="vpc-abc123")):
-        client = AWSClient()
-        assert client.get_vpc_from_stack("my-stack") == "vpc-abc123"
-
-
-def test_describe_enis_cli():
-    cli_output = "eni-111\teni-attach-aaa\tavailable\ttest ENI"
-    with patch("agents.aws_client._AWS_CLI_AVAILABLE", True), \
-         patch("agents.aws_client._BOTO3_AVAILABLE", False), \
-         patch("subprocess.run", return_value=_mock_run(stdout=cli_output)):
-        client = AWSClient()
-        enis = client.describe_network_interfaces("vpc-123")
-        assert len(enis) == 1
-        assert enis[0]["id"] == "eni-111"
-        assert enis[0]["attachment_id"] == "eni-attach-aaa"
-        assert enis[0]["status"] == "available"
-
-
-def test_describe_security_groups_cli():
-    cli_output = '[["sg-111", "my-sg", null]]'
-    with patch("agents.aws_client._AWS_CLI_AVAILABLE", True), \
-         patch("agents.aws_client._BOTO3_AVAILABLE", False), \
-         patch("subprocess.run", return_value=_mock_run(stdout=cli_output)):
-        client = AWSClient()
-        sgs = client.describe_security_groups("vpc-123")
-        assert len(sgs) == 1
-        assert sgs[0]["id"] == "sg-111"
-        assert sgs[0]["name"] == "my-sg"
-
-
-def test_describe_vpc_endpoints_cli():
-    cli_output = "vpce-111\tavailable\nvpce-222\tdeleting"
-    with patch("agents.aws_client._AWS_CLI_AVAILABLE", True), \
-         patch("agents.aws_client._BOTO3_AVAILABLE", False), \
-         patch("subprocess.run", return_value=_mock_run(stdout=cli_output)):
-        client = AWSClient()
-        eps = client.describe_vpc_endpoints("vpc-123")
-        assert len(eps) == 2
-        assert eps[0]["id"] == "vpce-111"
-        assert eps[1]["state"] == "deleting"
-
-
-def test_delete_stack_cli_success():
-    with patch("agents.aws_client._AWS_CLI_AVAILABLE", True), \
-         patch("agents.aws_client._BOTO3_AVAILABLE", False), \
-         patch("subprocess.run", return_value=_mock_run()):
-        client = AWSClient()
-        ok, msg = client.delete_stack("my-stack")
-        assert ok is True
-
-
-def test_delete_security_group_dependency_violation_cli():
-    with patch("agents.aws_client._AWS_CLI_AVAILABLE", True), \
-         patch("agents.aws_client._BOTO3_AVAILABLE", False), \
-         patch("subprocess.run", return_value=_mock_run(
-             returncode=1, stderr="DependencyViolation: sg has deps")):
-        client = AWSClient()
-        ok, msg = client.delete_security_group("sg-123")
-        assert ok is False
-        assert "DependencyViolation" in msg
-
-
-# ================================================================
-# boto3 Fallback
-# ================================================================
-
-def _boto3_client(mock_client):
-    """Helper to patch _boto3_client to return a mock AWS service client."""
-    return patch.object(AWSClient, "_boto3_client", return_value=mock_client)
-
-
-def test_describe_stack_status_boto3_fallback():
+def test_describe_stack_status_success():
     mock_cfn = MagicMock()
     mock_cfn.describe_stacks.return_value = {
-        "Stacks": [{"StackStatus": "DELETE_FAILED"}]
+        "Stacks": [{"StackStatus": "DELETE_IN_PROGRESS"}]
     }
-    with patch("agents.aws_client._AWS_CLI_AVAILABLE", False), \
-         patch("agents.aws_client._BOTO3_AVAILABLE", True), \
-         _boto3_client(mock_cfn):
-        client = AWSClient()
-        assert client.describe_stack_status("my-stack") == "DELETE_FAILED"
+    with _mock_client(mock_cfn):
+        assert AWSClient().describe_stack_status("my-stack") == "DELETE_IN_PROGRESS"
 
 
-def test_get_vpc_from_stack_boto3_fallback():
+def test_describe_stack_status_gone():
+    mock_cfn = MagicMock()
+    mock_cfn.describe_stacks.return_value = {"Stacks": []}
+    with _mock_client(mock_cfn):
+        assert AWSClient().describe_stack_status("my-stack") == "GONE"
+
+
+def test_describe_stack_status_not_found_error():
+    mock_cfn = MagicMock()
+    mock_cfn.describe_stacks.side_effect = ClientError(
+        {"Error": {"Code": "ValidationError", "Message": "Stack does not exist"}},
+        "DescribeStacks"
+    )
+    with _mock_client(mock_cfn):
+        assert AWSClient().describe_stack_status("my-stack") == "GONE"
+
+
+def test_get_vpc_from_stack():
     mock_cfn = MagicMock()
     mock_cfn.list_stack_resources.return_value = {
         "StackResourceSummaries": [
-            {"ResourceType": "AWS::EC2::VPC", "PhysicalResourceId": "vpc-boto3"}
+            {"ResourceType": "AWS::EC2::VPC", "PhysicalResourceId": "vpc-abc123"}
         ]
     }
-    with patch("agents.aws_client._AWS_CLI_AVAILABLE", False), \
-         patch("agents.aws_client._BOTO3_AVAILABLE", True), \
-         _boto3_client(mock_cfn):
-        client = AWSClient()
-        assert client.get_vpc_from_stack("my-stack") == "vpc-boto3"
+    with _mock_client(mock_cfn):
+        assert AWSClient().get_vpc_from_stack("my-stack") == "vpc-abc123"
 
 
-def test_describe_enis_boto3_fallback():
-    mock_ec2 = MagicMock()
-    mock_ec2.describe_network_interfaces.return_value = {
-        "NetworkInterfaces": [{
-            "NetworkInterfaceId": "eni-boto3",
-            "Attachment": {"AttachmentId": "eni-attach-boto3"},
-            "Status": "in-use",
-            "Description": "test"
-        }]
-    }
-    with patch("agents.aws_client._AWS_CLI_AVAILABLE", False), \
-         patch("agents.aws_client._BOTO3_AVAILABLE", True), \
-         _boto3_client(mock_ec2):
-        client = AWSClient()
-        enis = client.describe_network_interfaces("vpc-123")
-        assert len(enis) == 1
-        assert enis[0]["id"] == "eni-boto3"
-
-
-def test_describe_security_groups_boto3_fallback():
-    mock_ec2 = MagicMock()
-    mock_ec2.describe_security_groups.return_value = {
-        "SecurityGroups": [
-            {"GroupId": "sg-boto3", "GroupName": "test-sg", "Tags": []},
-            {"GroupId": "sg-default", "GroupName": "default", "Tags": []}
-        ]
-    }
-    with patch("agents.aws_client._AWS_CLI_AVAILABLE", False), \
-         patch("agents.aws_client._BOTO3_AVAILABLE", True), \
-         _boto3_client(mock_ec2):
-        client = AWSClient()
-        sgs = client.describe_security_groups("vpc-123")
-        assert len(sgs) == 1
-        assert sgs[0]["id"] == "sg-boto3"
-
-
-def test_describe_vpc_endpoints_boto3_fallback():
-    mock_ec2 = MagicMock()
-    mock_ec2.describe_vpc_endpoints.return_value = {
-        "VpcEndpoints": [
-            {"VpcEndpointId": "vpce-boto3", "State": "available"}
-        ]
-    }
-    with patch("agents.aws_client._AWS_CLI_AVAILABLE", False), \
-         patch("agents.aws_client._BOTO3_AVAILABLE", True), \
-         _boto3_client(mock_ec2):
-        client = AWSClient()
-        eps = client.describe_vpc_endpoints("vpc-123")
-        assert len(eps) == 1
-        assert eps[0]["id"] == "vpce-boto3"
-
-
-def test_delete_stack_boto3_fallback():
+def test_get_vpc_from_stack_no_vpc():
     mock_cfn = MagicMock()
-    with patch("agents.aws_client._AWS_CLI_AVAILABLE", False), \
-         patch("agents.aws_client._BOTO3_AVAILABLE", True), \
-         _boto3_client(mock_cfn):
-        client = AWSClient()
-        ok, msg = client.delete_stack("my-stack")
+    mock_cfn.list_stack_resources.return_value = {
+        "StackResourceSummaries": [
+            {"ResourceType": "AWS::EC2::Subnet", "PhysicalResourceId": "subnet-123"}
+        ]
+    }
+    with _mock_client(mock_cfn):
+        assert AWSClient().get_vpc_from_stack("my-stack") is None
+
+
+def test_delete_stack():
+    mock_cfn = MagicMock()
+    with _mock_client(mock_cfn):
+        ok, msg = AWSClient().delete_stack("my-stack")
         assert ok is True
         mock_cfn.delete_stack.assert_called_once_with(StackName="my-stack")
 
 
 # ================================================================
-# Region Handling
+# EC2 — Network Interfaces
 # ================================================================
 
-def test_client_uses_specified_region():
-    client = AWSClient(region="eu-west-1")
-    assert client.region == "eu-west-1"
-
-
-def test_default_region():
-    client = AWSClient()
-    assert client.region == "us-west-2"
-
-
-# ================================================================
-# Log Function
-# ================================================================
-
-def test_log_function_called():
-    logs = []
-    client = AWSClient(log_fn=lambda msg, level: logs.append((msg, level)))
-    with patch("agents.aws_client._AWS_CLI_AVAILABLE", True), \
-         patch("agents.aws_client._BOTO3_AVAILABLE", False), \
-         patch("subprocess.run", return_value=_mock_run(returncode=1, stderr="error")):
-        client.describe_stack_status("my-stack")
-    assert any("debug" in log[1] for log in logs)
-
-
-# ================================================================
-# CLI Fails, Falls Through to boto3
-# ================================================================
-
-def test_cli_fails_falls_through_to_boto3_describe_stack():
-    """Core fallback: CLI available but errors, boto3 picks up."""
-    mock_cfn = MagicMock()
-    mock_cfn.describe_stacks.return_value = {
-        "Stacks": [{"StackStatus": "DELETE_IN_PROGRESS"}]
-    }
-    with patch("agents.aws_client._AWS_CLI_AVAILABLE", True), \
-         patch("agents.aws_client._BOTO3_AVAILABLE", True), \
-         patch("subprocess.run", return_value=_mock_run(returncode=1, stderr="connection error")), \
-         _boto3_client(mock_cfn):
-        client = AWSClient()
-        result = client.describe_stack_status("my-stack")
-        assert result == "DELETE_IN_PROGRESS", f"Expected boto3 fallback, got: {result}"
-
-
-def test_cli_fails_falls_through_to_boto3_delete_sg():
-    """CLI fails on delete, boto3 succeeds."""
-    mock_ec2 = MagicMock()
-    with patch("agents.aws_client._AWS_CLI_AVAILABLE", True), \
-         patch("agents.aws_client._BOTO3_AVAILABLE", True), \
-         patch("subprocess.run", return_value=_mock_run(returncode=1, stderr="cli error")), \
-         _boto3_client(mock_ec2):
-        client = AWSClient()
-        ok, msg = client.delete_security_group("sg-123")
-        assert ok is True
-        mock_ec2.delete_security_group.assert_called_once_with(GroupId="sg-123")
-
-
-def test_cli_fails_falls_through_to_boto3_describe_enis():
-    """CLI fails on describe, boto3 returns results."""
+def test_describe_network_interfaces():
     mock_ec2 = MagicMock()
     mock_ec2.describe_network_interfaces.return_value = {
         "NetworkInterfaces": [{
-            "NetworkInterfaceId": "eni-fallback",
-            "Attachment": {"AttachmentId": "eni-attach-fb"},
-            "Status": "available",
-            "Description": "from boto3"
+            "NetworkInterfaceId": "eni-111",
+            "Attachment": {"AttachmentId": "eni-attach-aaa"},
+            "Status": "in-use",
+            "Description": "test ENI"
         }]
     }
-    with patch("agents.aws_client._AWS_CLI_AVAILABLE", True), \
-         patch("agents.aws_client._BOTO3_AVAILABLE", True), \
-         patch("subprocess.run", return_value=_mock_run(returncode=1, stderr="timeout")), \
-         _boto3_client(mock_ec2):
-        client = AWSClient()
-        enis = client.describe_network_interfaces("vpc-123")
+    with _mock_client(mock_ec2):
+        enis = AWSClient().describe_network_interfaces("vpc-123")
         assert len(enis) == 1
-        assert enis[0]["id"] == "eni-fallback"
+        assert enis[0]["id"] == "eni-111"
+        assert enis[0]["attachment_id"] == "eni-attach-aaa"
+        assert enis[0]["status"] == "in-use"
+
+
+def test_describe_network_interfaces_with_cluster_filter():
+    mock_ec2 = MagicMock()
+    mock_ec2.describe_network_interfaces.return_value = {"NetworkInterfaces": []}
+    with _mock_client(mock_ec2):
+        AWSClient().describe_network_interfaces("vpc-123", cluster_id="my-cluster")
+        filters = mock_ec2.describe_network_interfaces.call_args[1]["Filters"]
+        assert len(filters) == 2
+        assert filters[1]["Name"] == "tag:cluster.x-k8s.io/cluster-name"
+        assert filters[1]["Values"] == ["my-cluster"]
+
+
+def test_describe_eni_no_attachment():
+    mock_ec2 = MagicMock()
+    mock_ec2.describe_network_interfaces.return_value = {
+        "NetworkInterfaces": [{
+            "NetworkInterfaceId": "eni-222",
+            "Status": "available",
+            "Description": "orphaned"
+        }]
+    }
+    with _mock_client(mock_ec2):
+        enis = AWSClient().describe_network_interfaces("vpc-123")
+        assert enis[0]["attachment_id"] is None
+
+
+def test_detach_network_interface():
+    mock_ec2 = MagicMock()
+    with _mock_client(mock_ec2):
+        ok, msg = AWSClient().detach_network_interface("eni-attach-aaa")
+        assert ok is True
+        mock_ec2.detach_network_interface.assert_called_once_with(
+            AttachmentId="eni-attach-aaa", Force=True
+        )
+
+
+def test_delete_network_interface():
+    mock_ec2 = MagicMock()
+    with _mock_client(mock_ec2):
+        ok, msg = AWSClient().delete_network_interface("eni-111")
+        assert ok is True
 
 
 # ================================================================
-# describe_security_groups_text
+# EC2 — Security Groups
 # ================================================================
 
-def test_describe_security_groups_text_cli():
-    cli_output = "sg-aaa\tmy-sg-1\nsg-bbb\tmy-sg-2"
-    with patch("agents.aws_client._AWS_CLI_AVAILABLE", True), \
-         patch("agents.aws_client._BOTO3_AVAILABLE", False), \
-         patch("subprocess.run", return_value=_mock_run(stdout=cli_output)):
-        client = AWSClient()
-        sgs = client.describe_security_groups_text("vpc-123")
-        assert len(sgs) == 2
-        assert sgs[0] == {"id": "sg-aaa", "name": "my-sg-1"}
-        assert sgs[1] == {"id": "sg-bbb", "name": "my-sg-2"}
-
-
-def test_describe_security_groups_text_boto3_fallback():
+def test_describe_security_groups_filters_default():
     mock_ec2 = MagicMock()
     mock_ec2.describe_security_groups.return_value = {
         "SecurityGroups": [
-            {"GroupId": "sg-boto3", "GroupName": "rosa-sg"},
+            {"GroupId": "sg-111", "GroupName": "rosa-sg", "Tags": []},
+            {"GroupId": "sg-def", "GroupName": "default", "Tags": []},
+        ]
+    }
+    with _mock_client(mock_ec2):
+        sgs = AWSClient().describe_security_groups("vpc-123")
+        assert len(sgs) == 1
+        assert sgs[0]["id"] == "sg-111"
+
+
+def test_describe_security_groups_with_cluster_filter():
+    mock_ec2 = MagicMock()
+    mock_ec2.describe_security_groups.return_value = {"SecurityGroups": []}
+    with _mock_client(mock_ec2):
+        AWSClient().describe_security_groups("vpc-123", cluster_id="my-cluster")
+        filters = mock_ec2.describe_security_groups.call_args[1]["Filters"]
+        assert any(f["Name"] == "tag:red-hat-clustertype" for f in filters)
+
+
+def test_describe_security_groups_text():
+    mock_ec2 = MagicMock()
+    mock_ec2.describe_security_groups.return_value = {
+        "SecurityGroups": [
+            {"GroupId": "sg-aaa", "GroupName": "rosa-sg"},
             {"GroupId": "sg-def", "GroupName": "default"},
         ]
     }
-    with patch("agents.aws_client._AWS_CLI_AVAILABLE", False), \
-         patch("agents.aws_client._BOTO3_AVAILABLE", True), \
-         _boto3_client(mock_ec2):
-        client = AWSClient()
-        sgs = client.describe_security_groups_text("vpc-123")
+    with _mock_client(mock_ec2):
+        sgs = AWSClient().describe_security_groups_text("vpc-123")
         assert len(sgs) == 1
-        assert sgs[0]["id"] == "sg-boto3"
-        assert sgs[0]["name"] == "rosa-sg"
+        assert sgs[0] == {"id": "sg-aaa", "name": "rosa-sg"}
+
+
+def test_delete_security_group():
+    mock_ec2 = MagicMock()
+    with _mock_client(mock_ec2):
+        ok, msg = AWSClient().delete_security_group("sg-111")
+        assert ok is True
+
+
+def test_delete_security_group_dependency_violation():
+    mock_ec2 = MagicMock()
+    mock_ec2.delete_security_group.side_effect = ClientError(
+        {"Error": {"Code": "DependencyViolation", "Message": "has deps"}},
+        "DeleteSecurityGroup"
+    )
+    with _mock_client(mock_ec2):
+        ok, msg = AWSClient().delete_security_group("sg-123")
+        assert ok is False
+        assert "DependencyViolation" in msg
+
+
+# ================================================================
+# EC2 — VPC Endpoints
+# ================================================================
+
+def test_describe_vpc_endpoints():
+    mock_ec2 = MagicMock()
+    mock_ec2.describe_vpc_endpoints.return_value = {
+        "VpcEndpoints": [
+            {"VpcEndpointId": "vpce-111", "State": "available"},
+            {"VpcEndpointId": "vpce-222", "State": "deleting"},
+        ]
+    }
+    with _mock_client(mock_ec2):
+        eps = AWSClient().describe_vpc_endpoints("vpc-123")
+        assert len(eps) == 2
+        assert eps[0]["id"] == "vpce-111"
+        assert eps[1]["state"] == "deleting"
+
+
+def test_delete_vpc_endpoints():
+    mock_ec2 = MagicMock()
+    with _mock_client(mock_ec2):
+        ok, msg = AWSClient().delete_vpc_endpoints(["vpce-111", "vpce-222"])
+        assert ok is True
+        assert "2" in msg
+
+
+def test_delete_vpc_endpoints_empty_list():
+    ok, msg = AWSClient().delete_vpc_endpoints([])
+    assert ok is False
+    assert "No endpoint" in msg
+
+
+# ================================================================
+# EC2 — Subnets
+# ================================================================
+
+def test_describe_subnets():
+    mock_ec2 = MagicMock()
+    mock_ec2.describe_subnets.return_value = {
+        "Subnets": [
+            {"SubnetId": "subnet-aaa"},
+            {"SubnetId": "subnet-bbb"},
+        ]
+    }
+    with _mock_client(mock_ec2):
+        assert AWSClient().describe_subnets("vpc-123") == ["subnet-aaa", "subnet-bbb"]
+
+
+def test_delete_subnet():
+    mock_ec2 = MagicMock()
+    with _mock_client(mock_ec2):
+        ok, msg = AWSClient().delete_subnet("subnet-aaa")
+        assert ok is True
+
+
+# ================================================================
+# EC2 — Internet Gateways
+# ================================================================
+
+def test_describe_internet_gateways():
+    mock_ec2 = MagicMock()
+    mock_ec2.describe_internet_gateways.return_value = {
+        "InternetGateways": [
+            {"InternetGatewayId": "igw-aaa"}
+        ]
+    }
+    with _mock_client(mock_ec2):
+        assert AWSClient().describe_internet_gateways("vpc-123") == ["igw-aaa"]
+
+
+def test_detach_internet_gateway():
+    mock_ec2 = MagicMock()
+    with _mock_client(mock_ec2):
+        ok, msg = AWSClient().detach_internet_gateway("igw-aaa", "vpc-123")
+        assert ok is True
+        mock_ec2.detach_internet_gateway.assert_called_once_with(
+            InternetGatewayId="igw-aaa", VpcId="vpc-123"
+        )
+
+
+def test_delete_internet_gateway():
+    mock_ec2 = MagicMock()
+    with _mock_client(mock_ec2):
+        ok, msg = AWSClient().delete_internet_gateway("igw-aaa")
+        assert ok is True
+
+
+# ================================================================
+# Region and Logging
+# ================================================================
+
+def test_default_region():
+    assert AWSClient().region == "us-west-2"
+
+
+def test_custom_region():
+    assert AWSClient(region="eu-west-1").region == "eu-west-1"
+
+
+def test_log_function_called():
+    logs = []
+    mock_cfn = MagicMock()
+    mock_cfn.describe_stacks.side_effect = Exception("boom")
+    client = AWSClient(log_fn=lambda msg, level: logs.append((msg, level)))
+    with _mock_client(mock_cfn):
+        client.describe_stack_status("my-stack")
+    assert any("debug" in log[1] for log in logs)
+
