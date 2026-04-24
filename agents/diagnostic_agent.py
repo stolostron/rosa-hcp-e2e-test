@@ -30,7 +30,7 @@ class DiagnosticAgent(BaseAgent):
         self.current_diagnosis = None
         self._aws = None
 
-    def _get_aws_client(self, region: str = "us-west-2") -> AWSClient:
+    def _get_aws_client(self, region: str) -> AWSClient:
         if self._aws is None or self._aws.region != region:
             self._aws = AWSClient(region=region, log_fn=self.log)
         return self._aws
