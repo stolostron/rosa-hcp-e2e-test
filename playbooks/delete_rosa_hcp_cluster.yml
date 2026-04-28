@@ -135,6 +135,6 @@
           oc get rosacontrolplane,rosamachinepool,rosanetwork,rosaroleconfig -n {{ capi_namespace }}
 
           Check AWS Cleanup:
-          rosa list clusters --region {{ aws_region | default('us-west-2') }}
+          oc get rosacontrolplane -n {{ capi_namespace }} -o json | jq '.items[].metadata.name'
 
           🎉 Cleanup successful!

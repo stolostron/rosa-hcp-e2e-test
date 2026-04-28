@@ -1,13 +1,13 @@
 
 - name: Wait for ROSA Control Plane version upgrade to be complete.
-  shell: rosa describe cluster --cluster=tfitzger-rosa-hcp-xyz-test -o yaml | grep openshift_version
+  shell: >
+    oc get rosacontrolplane -n {{ capi_namespace | default('ns-rosa-hcp') }} -o json |
+    jq -r '.items[].spec.version'
   register: rcp_version
   until: requested_version in rcp_version.stdout
   retries: "{{ 100 if retry_count is undefined else retry_count|int }}"
   delay: "{{ 30 if delay is undefined else delay|int }}"
   ignore_errors: true
-
-#  until: '"ready" | string in rcp_status.stdout'
 
 - name: Print the ROSA control plane version upgrade is complete.
   debug:

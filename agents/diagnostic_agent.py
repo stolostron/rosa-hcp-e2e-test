@@ -258,7 +258,7 @@ class DiagnosticAgent(BaseAgent):
                 "confidence": 0.4,
                 "evidence": [
                     f"CloudFormation stack {stack_name} status: {cfn_status}",
-                    "aws CLI may not be available — cannot verify stack deletion status",
+                    "boto3 may not be available — cannot verify stack deletion status",
                 ],
                 "recommended_fix": "log_and_continue",
                 "fix_parameters": {}
@@ -269,7 +269,7 @@ class DiagnosticAgent(BaseAgent):
 
         Priority:
         1. Read from ROSANetwork K8s resource .status.stackStatus (no AWS deps)
-        2. Fall back to AWS (CLI or boto3)
+        2. Fall back to AWS (boto3)
 
         Returns one of: DELETE_IN_PROGRESS, DELETE_FAILED, DELETE_COMPLETE, GONE,
         UNKNOWN, UNAVAILABLE, or the raw stack status string.
@@ -284,7 +284,7 @@ class DiagnosticAgent(BaseAgent):
                 self.log(f"CloudFormation status from K8s resource: {k8s_stack_status}", "debug")
                 return k8s_stack_status
 
-        # 2. Fall back to AWS (CLI first, then boto3)
+        # 2. Fall back to AWS (boto3)
         region = "us-west-2"
         if resource_info:
             region = resource_info.get("spec", {}).get("region", region)
@@ -332,64 +332,153 @@ class DiagnosticAgent(BaseAgent):
     def _diagnose_stuck_rosacontrolplane(self, context: Dict) -> Dict:
         """Diagnose ROSAControlPlane stuck in deletion state.
 
-        Unlike other resources, removing ROSAControlPlane finalizers is dangerous
-        because the CAPA controller's finalizer handler calls `rosa delete cluster`
-        and waits for the HCP control plane to fully tear down. If we remove the
-        finalizer prematurely, the K8s resource disappears but the ROSA cluster's
-        control-plane-operator keeps running and recreates VPC resources (endpoints,
-        security groups), which blocks the subsequent ROSANetwork/CloudFormation
-        deletion.
-
-        Only recommend finalizer removal if the ROSA cluster is fully gone.
+        Never removes ROSAControlPlane finalizers — the CAPA controller's finalizer
+        handler calls the OCM API to delete the cluster and orchestrates AWS resource
+        cleanup. Removing the finalizer prematurely leaves orphaned VPC resources
+        that block ROSANetwork/CloudFormation deletion.
         """
         resource_name, namespace = self._extract_resource_info(context, "rosacontrolplane")
 
         # Check if the ROSA cluster is still known to ROSA/OCM
         rosa_status = self._get_rosa_cluster_status(resource_name)
 
-        if rosa_status == "gone":
-            # Cluster fully deleted in ROSA — safe to remove finalizers
-            self.log(f"ROSA cluster {resource_name} is fully gone — safe to remove finalizers", "info")
-            result = self._diagnose_stuck_resource(context, "rosacontrolplane", "rosacontrolplane_stuck_deletion")
-            result["root_cause"] = "ROSA cluster fully removed — cleaning up remaining K8s resource"
-            return result
-        else:
-            # Cluster still exists (ready, installing, uninstalling, error, unknown) —
-            # do NOT remove finalizers. The CAPA controller needs its finalizer to
-            # properly orchestrate cluster deletion via OCM.
-            self.log(
-                f"ROSA cluster {resource_name} is still {rosa_status} — "
-                f"waiting for ROSA to finish before removing finalizers", "info"
-            )
-            return {
-                "issue_type": "rosacontrolplane_stuck_deletion",
-                "root_cause": f"ROSA cluster is still {rosa_status} — waiting for full removal",
-                "severity": "low",
-                "confidence": 0.5,
-                "evidence": [f"rosa describe cluster shows state: {rosa_status}"],
-                "recommended_fix": "log_and_continue",
-                "fix_parameters": {}
-            }
+        self.log(
+            f"ROSA cluster {resource_name} status: {rosa_status} — "
+            f"never removing ROSAControlPlane finalizers (CAPA controller handles cleanup)", "info"
+        )
+        return {
+            "issue_type": "rosacontrolplane_stuck_deletion",
+            "root_cause": f"ROSA cluster status: {rosa_status} — CAPA controller managing deletion",
+            "severity": "low",
+            "confidence": 0.4,
+            "evidence": [f"OCM API cluster state: {rosa_status}"],
+            "recommended_fix": "log_and_continue",
+            "fix_parameters": {}
+        }
+
+    def _resolve_ocm_credentials(self) -> tuple:
+        """Resolve OCM credentials from env vars or K8s secrets.
+
+        Returns (client_id, client_secret, api_url) or ('', '', url) if unavailable.
+        """
+        import base64
+        import os
+
+        client_id = os.environ.get("OCM_CLIENT_ID", "")
+        client_secret = os.environ.get("OCM_CLIENT_SECRET", "")
+        api_url = os.environ.get("OCM_API_URL", "https://api.stage.openshift.com").rstrip("/")
+
+        if client_id and client_secret:
+            return client_id, client_secret, api_url
+
+        for ns in ["multicluster-engine", os.environ.get("CAPI_NAMESPACE", "ns-rosa-hcp")]:
+            try:
+                result = subprocess.run(
+                    ["oc", "get", "secret", "rosa-creds-secret", "-n", ns,
+                     "-o", "jsonpath={.data.ocmClientID}|{.data.ocmClientSecret}|{.data.ocmApiUrl}"],
+                    capture_output=True, text=True, timeout=10,
+                )
+                if result.returncode == 0 and "|" in result.stdout:
+                    parts = result.stdout.split("|")
+                    try:
+                        client_id = base64.b64decode(parts[0]).decode("utf-8") if parts[0] else ""
+                        client_secret = base64.b64decode(parts[1]).decode("utf-8") if len(parts) > 1 and parts[1] else ""
+                        if len(parts) > 2 and parts[2]:
+                            api_url = base64.b64decode(parts[2]).decode("utf-8").rstrip("/")
+                    except Exception as e:
+                        self.log(f"Failed to decode credentials from secret in {ns}: {e}", "warning")
+                        continue
+                    if client_id and client_secret:
+                        return client_id, client_secret, api_url
+            except FileNotFoundError:
+                self.log("oc CLI not available, using environment variables for OCM credentials", "debug")
+                break
+            except subprocess.TimeoutExpired:
+                self.log(f"Timeout reading rosa-creds-secret from {ns}", "warning")
+            except Exception:
+                pass
+
+        return "", "", api_url
 
     def _get_rosa_cluster_status(self, cluster_name: str) -> str:
-        """Check ROSA cluster status via rosa CLI.
+        """Check ROSA cluster status via OCM API.
 
         Returns: 'gone', 'uninstalling', 'error', 'ready', 'installing', or 'unknown'.
         """
+        import urllib.error
+        import urllib.parse
+        import urllib.request
+
+        STATE_MAP = {
+            "ready": "ready",
+            "installing": "installing",
+            "uninstalling": "uninstalling",
+            "error": "error",
+            "pending": "installing",
+            "hibernating": "ready",
+        }
+
         try:
-            cmd = ["rosa", "describe", "cluster", "--cluster", cluster_name, "-o", "json"]
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
-            if result.returncode != 0:
-                stderr = result.stderr.lower()
-                if "not found" in stderr or "there is no cluster" in stderr:
-                    return "gone"
+            ocm_client_id, ocm_client_secret, ocm_api_url = self._resolve_ocm_credentials()
+
+            if not ocm_client_id or not ocm_client_secret:
+                self.log("OCM credentials not available for cluster status check", "warning")
                 return "unknown"
-            import json as _json
-            cluster_info = _json.loads(result.stdout)
-            state = cluster_info.get("status", {}).get("state", "unknown")
+
+            sso_url = "https://sso.redhat.com/auth/realms/redhat-external/protocol/openid-connect/token"
+            token_data = urllib.parse.urlencode({
+                "grant_type": "client_credentials",
+                "client_id": ocm_client_id,
+                "client_secret": ocm_client_secret,
+            }).encode()
+            token_req = urllib.request.Request(sso_url, data=token_data,
+                                               headers={"Content-Type": "application/x-www-form-urlencoded"})
+            with urllib.request.urlopen(token_req, timeout=15) as resp:
+                token_result = json.loads(resp.read().decode())
+            access_token = token_result.get("access_token", "")
+
+            if not access_token:
+                self.log(f"OCM token request failed: {token_result.get('error_description', 'no access_token')}", "warning")
+                return "unknown"
+
+            search = urllib.parse.quote(f"name='{cluster_name}'")
+            cluster_url = f"{ocm_api_url}/api/clusters_mgmt/v1/clusters?search={search}"
+            cluster_req = urllib.request.Request(cluster_url,
+                                                 headers={"Authorization": f"Bearer {access_token}",
+                                                          "Accept": "application/json"})
+            with urllib.request.urlopen(cluster_req, timeout=15) as resp:
+                clusters_result = json.loads(resp.read().decode())
+
+            items = clusters_result.get("items", [])
+            if not items:
+                self.log(f"OCM cluster {cluster_name} not found — returning 'gone'", "info")
+                return "gone"
+
+            if len(items) > 1:
+                self.log(f"OCM search for '{cluster_name}' returned {len(items)} matches, using exact match", "warning")
+                exact = [c for c in items if c.get("name") == cluster_name]
+                if exact:
+                    items = exact
+
+            raw_state = items[0].get("status", {}).get("state", "unknown")
+            state = STATE_MAP.get(raw_state, "unknown")
+            if raw_state not in STATE_MAP and raw_state != "unknown":
+                self.log(f"Unexpected OCM cluster state '{raw_state}' for {cluster_name}, treating as 'unknown'", "warning")
+            self.log(f"OCM cluster {cluster_name} state: {raw_state} -> {state}", "debug")
             return state
-        except subprocess.TimeoutExpired:
-            self.log("Timeout checking ROSA cluster status", "warning")
+
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                return "gone"
+            if e.code in (401, 403):
+                self.log(f"OCM authentication failed (HTTP {e.code})", "error")
+            elif e.code == 429:
+                self.log("OCM API rate limited", "warning")
+            else:
+                self.log(f"OCM API error checking cluster status: {e.code}", "error")
+            return "unknown"
+        except urllib.error.URLError as e:
+            self.log(f"Network error reaching OCM API: {e.reason}", "error")
             return "unknown"
         except Exception as e:
             self.log(f"Error checking ROSA cluster status: {e}", "error")
