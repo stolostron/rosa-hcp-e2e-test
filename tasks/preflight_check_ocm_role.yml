@@ -55,12 +55,14 @@
             ocm_client_secret=os.environ.get('OCM_CLIENT_SECRET', ''),
             ocm_api_url=os.environ.get('OCM_API_URL', 'https://api.stage.openshift.com'),
             aws_account_id=os.environ.get('AWS_ACCOUNT_ID', ''),
+            installer_role_arn=os.environ.get('RH_INSTALLER_ROLE_ARN', ''),
         )
         success, msg = mgr.ensure_ocm_role()
         print(msg)
         sys.exit(0 if success else 1)
         "
       register: ocm_role_create_result
+      changed_when: ocm_role_create_result.rc == 0
       environment:
         AWS_ACCESS_KEY_ID: "{{ AWS_ACCESS_KEY_ID }}"
         AWS_SECRET_ACCESS_KEY: "{{ AWS_SECRET_ACCESS_KEY }}"
@@ -69,6 +71,7 @@
         OCM_CLIENT_ID: "{{ OCM_CLIENT_ID | default('') }}"
         OCM_CLIENT_SECRET: "{{ OCM_CLIENT_SECRET | default('') }}"
         OCM_API_URL: "{{ OCM_API_URL | default('https://api.stage.openshift.com') }}"
+        RH_INSTALLER_ROLE_ARN: "{{ rh_installer_role_arn | default('') }}"
 
     - name: Display OCM role creation result
       debug:

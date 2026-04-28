@@ -2,14 +2,15 @@
 OCM Role Manager
 ================
 
-Creates and links OCM IAM roles to the OCM organization without requiring
-the rosa CLI. Uses boto3 for IAM operations and the OCM REST API for
-organization linkage.
+Creates OCM IAM roles and verifies linkage to the OCM organization without
+requiring the rosa CLI. Uses boto3 for IAM operations and the OCM REST API
+for organization verification.
 """
 
 import json
 import logging
 import os
+import random
 import urllib.request
 import urllib.parse
 from typing import Optional, Tuple
@@ -19,12 +20,34 @@ try:
     from botocore.exceptions import ClientError
 except ImportError:
     boto3 = None
+    ClientError = Exception
 
 logger = logging.getLogger(__name__)
 
-RH_INSTALLER_ROLE_ARN = "arn:aws:iam::644306948063:role/RH-Managed-OpenShift-Installer"
 SSO_TOKEN_URL = "https://sso.redhat.com/auth/realms/redhat-external/protocol/openid-connect/token"
-PROTECTED_PREFIXES = ("mv", "melserng")
+
+
+def get_ocm_token(client_id: str, client_secret: str) -> str:
+    """Get an OCM access token via OAuth2 client credentials flow.
+
+    Standalone function usable without instantiating OcmRoleManager.
+    Raises RuntimeError if the token request fails.
+    """
+    data = urllib.parse.urlencode({
+        "grant_type": "client_credentials",
+        "client_id": client_id,
+        "client_secret": client_secret,
+    }).encode()
+    req = urllib.request.Request(
+        SSO_TOKEN_URL, data=data,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        result = json.loads(resp.read().decode())
+    token = result.get("access_token")
+    if not token:
+        raise RuntimeError(f"Failed to get OCM token: {result.get('error_description', 'no access_token')}")
+    return token
 
 
 class OcmRoleManager:
@@ -38,6 +61,7 @@ class OcmRoleManager:
         aws_account_id: str = "",
         region: str = "us-west-2",
         dry_run: bool = False,
+        installer_role_arn: str = "",
     ):
         self.ocm_client_id = ocm_client_id
         self.ocm_client_secret = ocm_client_secret
@@ -45,6 +69,7 @@ class OcmRoleManager:
         self.aws_account_id = aws_account_id
         self.region = region
         self.dry_run = dry_run
+        self.installer_role_arn = installer_role_arn
 
         if boto3:
             self.iam = boto3.client("iam", region_name=region)
@@ -74,21 +99,7 @@ class OcmRoleManager:
 
     def get_ocm_access_token(self) -> str:
         """Get an OCM access token via OAuth2 client credentials flow."""
-        data = {
-            "grant_type": "client_credentials",
-            "client_id": self.ocm_client_id,
-            "client_secret": self.ocm_client_secret,
-        }
-        result = self._api_request(
-            SSO_TOKEN_URL,
-            method="POST",
-            data=data,
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-        )
-        token = result.get("access_token")
-        if not token:
-            raise RuntimeError(f"Failed to get OCM token: {result}")
-        return token
+        return get_ocm_token(self.ocm_client_id, self.ocm_client_secret)
 
     def get_ocm_organization(self, access_token: str) -> dict:
         """Get the current account's organization from OCM."""
@@ -102,25 +113,35 @@ class OcmRoleManager:
         return org
 
     def check_iam_role_exists(self) -> Optional[str]:
-        """Check if an OCM role exists in AWS IAM. Returns ARN or None."""
+        """Check if an OCM role exists in AWS IAM. Returns first matching ARN or None."""
         if not self.iam:
             raise RuntimeError("boto3 not available")
 
+        matches = []
         paginator = self.iam.get_paginator("list_roles")
         for page in paginator.paginate():
             for role in page["Roles"]:
-                name = role["RoleName"]
-                if any(name.lower().startswith(p) for p in PROTECTED_PREFIXES):
-                    continue
-                if "OCM-Role" in name:
-                    logger.info(f"Found existing OCM role: {name} ({role['Arn']})")
-                    return role["Arn"]
-        return None
+                if "OCM-Role" in role["RoleName"]:
+                    matches.append(role)
+
+        if not matches:
+            return None
+
+        if len(matches) > 1:
+            names = [r["RoleName"] for r in matches]
+            logger.warning(f"Found {len(matches)} OCM roles in AWS IAM: {names} — using first match")
+
+        chosen = matches[0]
+        logger.info(f"Found existing OCM role: {chosen['RoleName']} ({chosen['Arn']})")
+        return chosen["Arn"]
 
     def create_iam_role(self, external_id: str) -> str:
         """Create the OCM IAM role with the Red Hat trust policy."""
         if not self.iam:
             raise RuntimeError("boto3 not available")
+
+        if not self.installer_role_arn:
+            raise RuntimeError("installer_role_arn is required to create trust policy (set RH_INSTALLER_ROLE_ARN env var)")
 
         if not self.aws_account_id:
             if self.sts:
@@ -129,7 +150,6 @@ class OcmRoleManager:
             else:
                 raise RuntimeError("AWS account ID not provided and STS not available")
 
-        import random
         role_suffix = random.randint(10000000, 99999999)
         role_name = f"ManagedOpenShift-OCM-Role-{role_suffix}"
 
@@ -138,7 +158,7 @@ class OcmRoleManager:
             "Statement": [
                 {
                     "Effect": "Allow",
-                    "Principal": {"AWS": [RH_INSTALLER_ROLE_ARN]},
+                    "Principal": {"AWS": [self.installer_role_arn]},
                     "Action": ["sts:AssumeRole"],
                     "Condition": {
                         "StringEquals": {"sts:ExternalId": external_id}
@@ -201,23 +221,30 @@ class OcmRoleManager:
         }
 
         policy_name = f"{role_name}-Policy"
+        inline_ok = False
         try:
             self.iam.put_role_policy(
                 RoleName=role_name,
                 PolicyName=policy_name,
                 PolicyDocument=json.dumps(ocm_policy),
             )
-        except ClientError:
-            logger.warning(f"Failed to attach policy {policy_name}, continuing")
+            inline_ok = True
+        except ClientError as e:
+            logger.warning(f"Failed to attach inline policy {policy_name}: {e}")
 
+        managed_ok = False
         admin_policy_arn = "arn:aws:iam::aws:policy/AdministratorAccess"
         try:
             self.iam.attach_role_policy(
                 RoleName=role_name,
                 PolicyArn=admin_policy_arn,
             )
-        except ClientError:
-            logger.warning("Failed to attach AdministratorAccess policy, continuing")
+            managed_ok = True
+        except ClientError as e:
+            logger.warning(f"Failed to attach AdministratorAccess policy: {e}")
+
+        if not inline_ok and not managed_ok:
+            raise RuntimeError(f"Role {role_name} created but no policies could be attached — role has no permissions")
 
         logger.info(f"Created OCM role: {role_arn}")
         return role_arn
@@ -242,34 +269,9 @@ class OcmRoleManager:
             logger.warning(f"Could not check OCM role linkage: {e}")
         return False
 
-    def link_ocm_role(self, access_token: str, org_id: str, role_arn: str) -> bool:
-        """Link an OCM role to the organization via OCM API."""
-        url = f"{self.ocm_api_url}/api/accounts_mgmt/v1/organizations/{org_id}/resource_quota"
-
-        try:
-            url = f"{self.ocm_api_url}/api/accounts_mgmt/v1/organizations/{org_id}"
-            org_data = self._api_request(
-                url, headers={"Authorization": f"Bearer {access_token}"}
-            )
-            external_id = org_data.get("external_id", "")
-            logger.info(f"Organization {org_id} external_id: {external_id}")
-
-            if external_id:
-                logger.info("OCM role appears to be linked (external_id present)")
-                return True
-
-            logger.warning("OCM API could not confirm role linkage — role was created but may need manual verification")
-            return False
-
-        except urllib.error.HTTPError as e:
-            if e.code == 409:
-                logger.info("OCM role already linked (409 conflict)")
-                return True
-            raise
-
     def ensure_ocm_role(self) -> Tuple[bool, str]:
         """
-        Top-level orchestrator: check for OCM role, create if needed, link if needed.
+        Top-level orchestrator: check for OCM role, create if needed, verify linkage.
         Returns (success, message) tuple.
         """
         if not boto3:
@@ -289,12 +291,7 @@ class OcmRoleManager:
                     if self.check_ocm_role_linked(token, org_id):
                         return True, f"{msg} — linked to organization {org_id}"
                     else:
-                        if self.dry_run:
-                            return True, f"[DRY RUN] Would link {existing_arn} to org {org_id}"
-                        linked = self.link_ocm_role(token, org_id, existing_arn)
-                        if linked:
-                            return True, f"{msg} — newly linked to organization {org_id}"
-                        return True, f"{msg} — created but OCM API could not confirm linkage — verify in OCM console"
+                        return True, f"{msg} — OCM API could not confirm linkage — verify in OCM console"
                 except Exception as e:
                     return True, f"{msg} — could not verify linkage: {e}"
 
@@ -310,8 +307,7 @@ class OcmRoleManager:
 
             new_arn = self.create_iam_role(external_id)
 
-            linked = self.link_ocm_role(token, org_id, new_arn)
-            if linked:
+            if self.check_ocm_role_linked(token, org_id):
                 return True, f"Created and linked OCM role: {new_arn}"
             return True, f"Created OCM role: {new_arn} — OCM API could not confirm linkage — verify in OCM console"
 
@@ -326,6 +322,7 @@ def ensure_ocm_role_from_env() -> Tuple[bool, str]:
     ocm_client_secret = os.environ.get("OCM_CLIENT_SECRET", "")
     ocm_api_url = os.environ.get("OCM_API_URL", "https://api.stage.openshift.com")
     aws_account_id = os.environ.get("AWS_ACCOUNT_ID", "")
+    installer_role_arn = os.environ.get("RH_INSTALLER_ROLE_ARN", "")
 
     if not ocm_client_id or not ocm_client_secret:
         return False, "OCM_CLIENT_ID and OCM_CLIENT_SECRET environment variables are required"
@@ -335,6 +332,7 @@ def ensure_ocm_role_from_env() -> Tuple[bool, str]:
         ocm_client_secret=ocm_client_secret,
         ocm_api_url=ocm_api_url,
         aws_account_id=aws_account_id,
+        installer_role_arn=installer_role_arn,
     )
     return mgr.ensure_ocm_role()
 
