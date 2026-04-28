@@ -3,8 +3,8 @@ AWS Client using boto3
 ======================
 
 Wraps AWS operations used by the agent framework. Uses boto3 for all
-CloudFormation and EC2 API calls. If boto3 is not installed, methods
-return safe defaults.
+CloudFormation, EC2, IAM, and STS API calls. If boto3 is not installed,
+methods return safe defaults.
 
 Author: Tina Fitzgerald
 Created: April 23, 2026
@@ -351,3 +351,99 @@ class AWSClient:
             return True, f"Deleted IGW {igw_id}"
         except Exception as e:
             return False, f"Failed to delete IGW {igw_id}: {e}"
+
+    # ================================================================
+    # IAM — Roles and OIDC Providers
+    # ================================================================
+
+    def get_role(self, role_name: str) -> Optional[Dict]:
+        """Get IAM role details. Returns the Role dict or None."""
+        if not self.available:
+            return None
+
+        try:
+            iam = self._client("iam")
+            resp = iam.get_role(RoleName=role_name)
+            return resp.get("Role")
+        except ClientError as e:
+            if e.response["Error"]["Code"] == "NoSuchEntity":
+                self._log(f"IAM role {role_name} not found", "debug")
+            else:
+                self._log(f"get-role error: {e}", "debug")
+        except Exception as e:
+            self._log(f"get-role error: {e}", "debug")
+
+        return None
+
+    def list_attached_role_policies(self, role_name: str) -> List[Dict]:
+        """List policies attached to an IAM role.
+
+        Returns list of dicts with keys: PolicyName, PolicyArn
+        """
+        if not self.available:
+            return []
+
+        try:
+            iam = self._client("iam")
+            resp = iam.list_attached_role_policies(RoleName=role_name)
+            return resp.get("AttachedPolicies", [])
+        except Exception as e:
+            self._log(f"list-attached-role-policies error: {e}", "debug")
+
+        return []
+
+    def get_open_id_connect_provider(self, arn: str) -> Optional[Dict]:
+        """Get OIDC provider details. Returns the provider dict or None."""
+        if not self.available:
+            return None
+
+        try:
+            iam = self._client("iam")
+            resp = iam.get_open_id_connect_provider(OpenIDConnectProviderArn=arn)
+            resp.pop("ResponseMetadata", None)
+            return resp
+        except ClientError as e:
+            if e.response["Error"]["Code"] == "NoSuchEntity":
+                self._log(f"OIDC provider {arn} not found", "debug")
+            else:
+                self._log(f"get-open-id-connect-provider error: {e}", "debug")
+        except Exception as e:
+            self._log(f"get-open-id-connect-provider error: {e}", "debug")
+
+        return None
+
+    def list_open_id_connect_provider_tags(self, arn: str) -> List[Dict]:
+        """List tags on an OIDC provider.
+
+        Returns list of dicts with keys: Key, Value
+        """
+        if not self.available:
+            return []
+
+        try:
+            iam = self._client("iam")
+            resp = iam.list_open_id_connect_provider_tags(OpenIDConnectProviderArn=arn)
+            return resp.get("Tags", [])
+        except Exception as e:
+            self._log(f"list-open-id-connect-provider-tags error: {e}", "debug")
+
+        return []
+
+    # ================================================================
+    # STS
+    # ================================================================
+
+    def get_caller_identity(self) -> Optional[Dict]:
+        """Get caller identity (account, ARN, user ID). Returns dict or None."""
+        if not self.available:
+            return None
+
+        try:
+            sts = self._client("sts")
+            resp = sts.get_caller_identity()
+            resp.pop("ResponseMetadata", None)
+            return resp
+        except Exception as e:
+            self._log(f"get-caller-identity error: {e}", "debug")
+
+        return None

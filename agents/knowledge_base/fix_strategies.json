@@ -12,14 +12,14 @@
       "Retry VPC/stack deletion"
     ],
     "commands": [
-      "aws ec2 describe-network-interfaces --region {region} --filters Name=vpc-id,Values={vpc_id}",
-      "aws ec2 describe-security-groups --region {region} --filters Name=vpc-id,Values={vpc_id}",
-      "aws ec2 detach-network-interface --region {region} --attachment-id {attachment_id}",
-      "aws ec2 delete-network-interface --region {region} --network-interface-id {eni_id}",
-      "aws ec2 delete-security-group --region {region} --group-id {sg_id}"
+      "python3 -c \"import boto3; ec2=boto3.client('ec2',region_name='{region}'); print(ec2.describe_network_interfaces(Filters=[{'Name':'vpc-id','Values':['{vpc_id}']}]))\"",
+      "python3 -c \"import boto3; ec2=boto3.client('ec2',region_name='{region}'); print(ec2.describe_security_groups(Filters=[{'Name':'vpc-id','Values':['{vpc_id}']}]))\"",
+      "python3 -c \"import boto3; ec2=boto3.client('ec2',region_name='{region}'); ec2.detach_network_interface(AttachmentId='{attachment_id}',Force=True)\"",
+      "python3 -c \"import boto3; ec2=boto3.client('ec2',region_name='{region}'); ec2.delete_network_interface(NetworkInterfaceId='{eni_id}')\"",
+      "python3 -c \"import boto3; ec2=boto3.client('ec2',region_name='{region}'); ec2.delete_security_group(GroupId='{sg_id}')\""
     ],
     "prerequisites": [
-      "AWS CLI access",
+      "boto3 installed",
       "AWS credentials with EC2 permissions",
       "VPC ID from CloudFormation stack"
     ],
@@ -38,13 +38,13 @@
       "Retry stack deletion"
     ],
     "commands": [
-      "aws cloudformation describe-stacks --region {region} --stack-name {stack_name}",
-      "aws cloudformation describe-stack-events --region {region} --stack-name {stack_name}",
-      "aws ec2 describe-security-groups --region {region} --filters Name=vpc-id,Values={vpc_id}",
-      "aws ec2 delete-security-group --region {region} --group-id {sg_id}"
+      "python3 -c \"import boto3; cfn=boto3.client('cloudformation',region_name='{region}'); print(cfn.describe_stacks(StackName='{stack_name}'))\"",
+      "python3 -c \"import boto3; cfn=boto3.client('cloudformation',region_name='{region}'); print(cfn.describe_stack_events(StackName='{stack_name}'))\"",
+      "python3 -c \"import boto3; ec2=boto3.client('ec2',region_name='{region}'); print(ec2.describe_security_groups(Filters=[{'Name':'vpc-id','Values':['{vpc_id}']}]))\"",
+      "python3 -c \"import boto3; ec2=boto3.client('ec2',region_name='{region}'); ec2.delete_security_group(GroupId='{sg_id}')\""
     ],
     "prerequisites": [
-      "AWS CLI access",
+      "boto3 installed",
       "AWS credentials with appropriate permissions"
     ],
     "success_criteria": "CloudFormation stack deleted successfully",
@@ -62,14 +62,14 @@
       "Retry operation"
     ],
     "commands": [
-      "rosa whoami",
-      "rosa login --token={new_token}"
+      "python3 -c \"import boto3; print(boto3.client('sts').get_caller_identity())\"",
+      "Check OCM_CLIENT_ID and OCM_CLIENT_SECRET environment variables"
     ],
     "prerequisites": [
       "Valid OCM account",
-      "Access to obtain new OCM token"
+      "OCM client credentials (OCM_CLIENT_ID, OCM_CLIENT_SECRET)"
     ],
-    "success_criteria": "'rosa whoami' succeeds",
+    "success_criteria": "OCM API token request succeeds",
     "rollback": "Keep old token until new one is verified",
     "notes": "OCM tokens typically expire after 24 hours. Consider using client credentials for automation."
   },
@@ -139,8 +139,7 @@
       "Retry operation"
     ],
     "commands": [
-      "aws service-quotas get-service-quota --service-code ec2 --quota-code {quota_code}",
-      "rosa verify quota"
+      "python3 -c \"import boto3; sq=boto3.client('service-quotas'); print(sq.get_service_quota(ServiceCode='ec2',QuotaCode='{quota_code}'))\""
     ],
     "prerequisites": [
       "AWS account access",
@@ -161,12 +160,12 @@
       "Ensure subnets are tagged correctly"
     ],
     "commands": [
-      "aws ec2 describe-vpcs --vpc-ids {vpc_id}",
-      "aws ec2 describe-subnets --filters Name=vpc-id,Values={vpc_id}",
-      "aws ec2 describe-route-tables --filters Name=vpc-id,Values={vpc_id}"
+      "python3 -c \"import boto3; ec2=boto3.client('ec2'); print(ec2.describe_vpcs(VpcIds=['{vpc_id}']))\"",
+      "python3 -c \"import boto3; ec2=boto3.client('ec2'); print(ec2.describe_subnets(Filters=[{'Name':'vpc-id','Values':['{vpc_id}']}]))\"",
+      "python3 -c \"import boto3; ec2=boto3.client('ec2'); print(ec2.describe_route_tables(Filters=[{'Name':'vpc-id','Values':['{vpc_id}']}]))\""
     ],
     "prerequisites": [
-      "AWS CLI access",
+      "boto3 installed",
       "Network architecture documentation"
     ],
     "success_criteria": "All network components properly configured and accessible",
@@ -181,16 +180,15 @@
       "Verify AWS credentials are valid",
       "Check ROSA-required IAM roles exist",
       "Verify trust relationships",
-      "Test permissions with 'rosa verify permissions'"
+      "Test permissions with boto3 STS get_caller_identity"
     ],
     "commands": [
-      "aws sts get-caller-identity",
-      "rosa verify permissions",
-      "aws iam get-role --role-name {role_name}",
-      "aws iam list-attached-role-policies --role-name {role_name}"
+      "python3 -c \"import boto3; print(boto3.client('sts').get_caller_identity())\"",
+      "python3 -c \"import boto3; print(boto3.client('iam').get_role(RoleName='{role_name}'))\"",
+      "python3 -c \"import boto3; print(boto3.client('iam').list_attached_role_policies(RoleName='{role_name}'))\""
     ],
     "prerequisites": [
-      "AWS CLI access",
+      "boto3 installed",
       "IAM permissions to view roles and policies"
     ],
     "success_criteria": "All required IAM roles exist with correct permissions",
