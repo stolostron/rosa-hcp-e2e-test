@@ -1,0 +1,26 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+inheritance: true
+reviews:
+  high_level_summary: true
+  high_level_summary_in_walkthrough: true
+  poem: false
+  path_instructions:
+    - path: '**'
+      instructions: >-
+        -Focus on major issues impacting performance, readability, maintainability and security.
+        Avoid nitpicks and avoid verbosity.
+  auto_review:
+    ignore_title_keywords:
+      - WIP
+    # To exclude labels, be sure to negate the label with ‘!’.
+    # Non-negated values turn this into an allowlist.
+    labels:
+      - '!work-in-progress'
+    ignore_usernames:
+      - MergeBot3000
+Knowledge_base:
+  # We currently have Data Retention turned off, which is required for some knowledge base features.
+  opt_out: true
+  web_search:
+    enabled: false
+
