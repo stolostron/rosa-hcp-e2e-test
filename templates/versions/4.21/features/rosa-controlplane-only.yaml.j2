@@ -72,7 +72,10 @@ spec:
 
   rosaClusterName: {{ cluster_name }}
   domainPrefix: {{ domain_prefix | default(rosa_role_prefix) | default(cluster_name) }}
-  version: "{{ rcp_version | default(openshift_version) | default('4.20.10') }}"
+  version: "{{ rcp_version | default(openshift_version) | default('4.21.0') }}"
+{% if fips is defined and fips | bool %}
+  fips: "Enabled"
+{% endif %}
   region: {{ aws_region }}
 {% if channel_group is defined and channel_group %}
   channelGroup: {{ channel_group }}

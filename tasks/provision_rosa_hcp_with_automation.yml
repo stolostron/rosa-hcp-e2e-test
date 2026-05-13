@@ -266,13 +266,13 @@
     - name: Determine which template to use
       set_fact:
         cluster_template_name: >-
-          {%- if (create_rosa_roles | bool) or (create_rosa_network | bool) -%}
+          {%- if (requested_features is defined and requested_features | length > 0) or (create_rosa_roles | bool) or (create_rosa_network | bool) -%}
           rosa-controlplane-only
           {%- else -%}
           rosa-control-plane
           {%- endif -%}
         selected_template_category: >-
-          {%- if (create_rosa_roles | bool) or (create_rosa_network | bool) -%}
+          {%- if (requested_features is defined and requested_features | length > 0) or (create_rosa_roles | bool) or (create_rosa_network | bool) -%}
           features
           {%- else -%}
           cluster-configs
