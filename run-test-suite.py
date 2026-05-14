@@ -11,9 +11,6 @@ Usage:
     ./run-test-suite.py 10-configure-mce-environment -e name_prefix=xyz
     ./run-test-suite.py 10-configure-mce-environment --dry-run
     ./run-test-suite.py 10-configure-mce-environment -vv  # Verbose output
-    ./run-test-suite.py 20-rosa-hcp-provision --feature no-cni --feature external-oidc
-    ./run-test-suite.py --list-features
-    ./run-test-suite.py --list-features --ocp-version 4.22
     ./run-test-suite.py --all
     ./run-test-suite.py --tag rosa-hcp
     ./run-test-suite.py --list
@@ -1031,45 +1028,6 @@ Examples:
         help="Run AI agents in dry-run mode (detect and diagnose but don't apply fixes)"
     )
 
-    parser.add_argument(
-        "--feature",
-        action="append",
-        dest="features",
-        metavar="FEATURE",
-        help="Enable a cluster feature (can be used multiple times). "
-             "Use --list-features to see available features. "
-             "Examples: --feature no-cni --feature external-oidc --feature autoscaler"
-    )
-
-    parser.add_argument(
-        "--list-features",
-        action="store_true",
-        help="List all available cluster features and exit"
-    )
-
-    parser.add_argument(
-        "--ocp-version",
-        type=str,
-        dest="ocp_version",
-        help="OpenShift version for feature filtering (used with --list-features). "
-             "Example: --list-features --ocp-version 4.22"
-    )
-
-    parser.add_argument(
-        "--feature-group",
-        dest="feature_group",
-        metavar="GROUP",
-        help="Enable a preset group of features. "
-             "Use --list-groups to see available groups. "
-             "Examples: --feature-group day1-combo"
-    )
-
-    parser.add_argument(
-        "--list-groups",
-        action="store_true",
-        help="List all available feature groups and exit"
-    )
-
     args = parser.parse_args()
 
     # Parse extra vars from command line
@@ -1081,111 +1039,6 @@ Examples:
                 extra_vars[key] = value
             else:
                 print(f"{Colors.YELLOW}Warning: Ignoring invalid extra var format: {var}{Colors.ENDC}")
-
-    # Handle --list-features
-    if args.list_features:
-        from feature_manager import FeatureManager
-        try:
-            fm = FeatureManager(Path.cwd())
-        except FileNotFoundError as e:
-            print(f"{Colors.RED}Error: {e}{Colors.ENDC}")
-            return 1
-        features = fm.list_features(version=args.ocp_version)
-        print(f"\n{Colors.BOLD}Available Cluster Features:{Colors.ENDC}")
-        if args.ocp_version:
-            print(f"  (filtered for OpenShift {args.ocp_version})")
-        print()
-        for f in features:
-            alias = f.get("cli_alias", "")
-            alias_str = f" (--feature {alias})" if alias else ""
-            print(f"  {Colors.CYAN}{f['id']}{Colors.ENDC}{alias_str}")
-            print(f"    {f['description']}")
-            print(f"    Type: {f['type']}  Default: {f['default']}  Phase: {f['phase']}")
-            if f.get("min_version"):
-                print(f"    Available from: OpenShift {f['min_version']}")
-            print()
-        return 0
-
-    # Handle --list-groups
-    if args.list_groups:
-        from feature_manager import FeatureManager
-        try:
-            fm = FeatureManager(Path.cwd())
-        except FileNotFoundError as e:
-            print(f"{Colors.RED}Error: {e}{Colors.ENDC}")
-            return 1
-        groups = fm.list_groups()
-        print(f"\n{Colors.BOLD}Available Feature Groups:{Colors.ENDC}\n")
-        for g in groups:
-            features = g["features"]
-            feat_str = ", ".join(features) if features else "(default provisioning — no extra features)"
-            print(f"  {Colors.CYAN}{g['name']}{Colors.ENDC}")
-            print(f"    {g['description']}")
-            print(f"    Features: {feat_str}")
-            print()
-        return 0
-
-    # Expand --feature-group into --feature flags
-    if args.feature_group:
-        from feature_manager import FeatureManager
-        try:
-            fm = FeatureManager(Path.cwd())
-        except FileNotFoundError as e:
-            print(f"{Colors.RED}Error: {e}{Colors.ENDC}")
-            return 1
-        group_features = fm.resolve_group(args.feature_group)
-        if group_features is None:
-            available = ", ".join(g["name"] for g in fm.list_groups())
-            print(f"{Colors.RED}Unknown feature group: '{args.feature_group}'. Available: {available}{Colors.ENDC}")
-            return 1
-        if group_features:
-            if args.features is None:
-                args.features = []
-            args.features.extend(group_features)
-            args.features = list(dict.fromkeys(args.features))
-            print(f"\n{Colors.CYAN}Feature group '{args.feature_group}': {', '.join(group_features)}{Colors.ENDC}")
-        else:
-            print(f"\n{Colors.CYAN}Feature group '{args.feature_group}': using default provisioning{Colors.ENDC}")
-
-    # Process --feature flags into extra_vars
-    if args.features:
-        from feature_manager import FeatureManager
-        try:
-            fm = FeatureManager(Path.cwd())
-        except FileNotFoundError as e:
-            print(f"{Colors.RED}Error: {e}{Colors.ENDC}")
-            return 1
-
-        resolved = [fm.resolve_alias(f) for f in args.features]
-        resolved = fm.auto_resolve_deps(resolved)
-
-        # Read default version from vars.yml if not specified via -e
-        default_version = "4.21"
-        try:
-            import yaml
-            vars_path = Path.cwd() / "vars" / "vars.yml"
-            if vars_path.exists():
-                with open(vars_path) as vf:
-                    vars_data = yaml.safe_load(vf)
-                    default_version = vars_data.get("openshift_version", default_version)
-        except Exception:
-            pass
-        version = extra_vars.get("openshift_version", default_version)
-        errors = fm.validate_features(resolved, version)
-        if errors:
-            for err in errors:
-                print(f"{Colors.RED}Feature error: {err}{Colors.ENDC}")
-            return 1
-
-        feature_vars = fm.resolve_to_extra_vars(resolved)
-        merged = {**feature_vars, **extra_vars}
-        extra_vars = merged
-
-        print(f"\n{Colors.CYAN}Features enabled: {', '.join(args.features)}{Colors.ENDC}")
-        if set(resolved) != set(fm.resolve_alias(f) for f in args.features):
-            auto_added = set(resolved) - set(fm.resolve_alias(f) for f in args.features)
-            print(f"{Colors.CYAN}Auto-added dependencies: {', '.join(auto_added)}{Colors.ENDC}")
-        print()
 
     # Initialize runner
     runner = TestSuiteRunner(

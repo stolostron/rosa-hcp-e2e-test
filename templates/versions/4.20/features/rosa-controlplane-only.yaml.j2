@@ -74,13 +74,7 @@ spec:
   domainPrefix: {{ domain_prefix | default(rosa_role_prefix) | default(cluster_name) }}
   version: "{{ rcp_version | default(openshift_version) | default('4.20.10') }}"
   region: {{ aws_region }}
-{% if channel_group is defined and channel_group %}
-  channelGroup: {{ channel_group }}
-{% endif %}
-
-{% if private is defined and private | bool %}
-  endpointAccess: Private
-{% endif %}
+  channelGroup: {{ channel_group | default('stable') }}
 
   defaultMachinePoolSpec:
     instanceType: {{ machine_pool.instance_type | default('m5.xlarge') }}
@@ -94,61 +88,11 @@ spec:
     automated: "true"
     network-automation: "true"
     role-automation: "true"
-{% if additional_tags is defined and additional_tags %}
-{% for key, value in additional_tags.items() %}
-    {{ key }}: "{{ value }}"
-{% endfor %}
-{% endif %}
 
   network:
     machineCIDR: {{ cluster_network.machine_cidr | default('10.0.0.0/16') }}
-{% if no_cni is defined and no_cni | bool %}
-    networkType: Other
-{% endif %}
     podCIDR: {{ cluster_network.pod_cidr | default('10.128.0.0/14') }}
     serviceCIDR: {{ cluster_network.service_cidr | default('172.30.0.0/16') }}
-
-{% if external_oidc is defined and external_oidc | bool %}
-  enableExternalAuthProviders: true
-{% endif %}
-
-{% if etcd_encryption_kms_arn is defined and etcd_encryption_kms_arn %}
-  etcdEncryptionKMSARN: {{ etcd_encryption_kms_arn }}
-{% endif %}
-
-{% if user_agent is defined and user_agent %}
-  userAgent: {{ user_agent }}
-{% endif %}
-
-{% if http_proxy is defined and http_proxy | bool %}
-  proxy:
-    httpProxy: {{ http_proxy_url | default('') }}
-    httpsProxy: {{ https_proxy_url | default('') }}
-    noProxy: {{ no_proxy | default('') }}
-{% endif %}
-
-{% if additional_security_groups is defined and additional_security_groups %}
-  additionalSecurityGroups:
-{% for sg in additional_security_groups %}
-    - {{ sg }}
-{% endfor %}
-{% endif %}
-
-{% if image_registry_config is defined and image_registry_config | bool %}
-  clusterRegistryConfig:
-    allowedRegistriesForImport:
-      - domainName: "{{ registry_domain | default('trusted-registry.com') }}"
-        insecure: false
-    registrySources:
-      allowedRegistries:
-        - "{{ allowed_registry | default('allowed-registry.com') }}"
-{% endif %}
-
-{% if cluster_autoscaler_expander is defined and cluster_autoscaler_expander | bool %}
-  autoscaler:
-    expanders:
-      - LeastWaste
-{% endif %}
 
   # ======================================
   # LOG FORWARDING CONFIGURATION
@@ -235,19 +179,5 @@ spec:
   nodePoolName: {{ (rosa_role_prefix | default(domain_prefix) | default('test'))[:4] | regex_replace('-$', '') }}-np
   instanceType: {{ machine_pool.instance_type | default('m5.xlarge') }}
   version: {{ openshift_version }}
-{% if root_volume_size is defined and root_volume_size %}
-  rootVolume:
-    size: {{ root_volume_size }}
-{% endif %}
-{% if parallel_node_upgrade is defined and parallel_node_upgrade | bool %}
-  updateConfig:
-    rollingUpdate:
-      maxSurge: {{ max_surge | default(1) }}
-      maxUnavailable: {{ max_unavailable | default(0) }}
-{% endif %}
-{% if additional_security_groups is defined and additional_security_groups %}
-  additionalSecurityGroups:
-{% for sg in additional_security_groups %}
-    - {{ sg }}
-{% endfor %}
-{% endif %}
+  # Note: subnet assignment will be automatic via ROSANetwork reference
+  # nodePoolName uses 4-char prefix + '-np' to stay under 15-byte limit

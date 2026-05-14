@@ -72,17 +72,6 @@
         cluster_name: "test-rosa-hcp-{{ 999999 | random }}"
       when: cluster_name is not defined
 
-    - name: Validate cluster name length
-      fail:
-        msg: |
-          Cluster name '{{ cluster_name }}' is too long ({{ cluster_name | length }} chars).
-          Maximum is 40 characters to allow room for suffixes (-network-stack, -roles, etc.).
-          Current name: {{ cluster_name }}
-
-          If using name_prefix, try a shorter prefix.
-          If using cluster_name directly, shorten it to 40 chars or less.
-      when: cluster_name | length > 40
-
     - name: Set default capi namespace
       set_fact:
         capi_namespace: "ns-rosa-hcp"

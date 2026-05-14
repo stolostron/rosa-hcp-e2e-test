@@ -45,6 +45,56 @@ metadata:
     automation.acm.redhat.com/role-automation: "true"
 spec: {}
 ---
+# ROSANetwork for automated VPC and subnet creation
+# FIXED: Removed unsupported credentialsSecretRef, changed tags to stackTags, added required stackName and region
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+kind: ROSANetwork
+metadata:
+  name: {{ cluster_name }}-network
+  namespace: {{ capi_namespace }}
+  labels:
+    cluster.x-k8s.io/cluster-name: {{ cluster_name }}
+    automation.acm.redhat.com/test-case: "ACM-21174-Combined"
+    automation.acm.redhat.com/created-by: "ansible-automation"
+spec:
+  identityRef:
+    kind: AWSClusterControllerIdentity
+    name: {{ rosa_network_config.identity_name | default('default') }}
+  region: {{ aws_region }}
+  cidrBlock: {{ rosa_network_config.cidr_block | default('10.0.0.0/16') }}
+  stackName: {{ cluster_name }}-network-stack
+  availabilityZones:
+  {% for az in rosa_network_config.availability_zones -%}
+  - {{ az }}
+  {% endfor -%}
+  stackTags:
+    Environment: {{ environment_tag | default('test') }}
+    TestCase: "ACM-21174-Combined"
+    CreatedBy: "ansible-automation"
+    Purpose: "combined-automation-testing"
+---
+# ROSARoleConfig for automated AWS IAM role creation
+# FIXED: Removed unsupported credentialsSecretRef field
+# Default: ALWAYS CREATED for automated role management
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+kind: ROSARoleConfig
+metadata:
+  name: {{ cluster_name }}-roles
+  namespace: {{ capi_namespace }}
+  labels:
+    cluster.x-k8s.io/cluster-name: {{ cluster_name }}
+    automation.acm.redhat.com/test-case: "ACM-21174-Combined"
+    automation.acm.redhat.com/created-by: "ansible-automation"
+spec:
+  identityRef:
+    kind: AWSClusterControllerIdentity
+    name: {{ rosa_role_config.identity_name | default('default') }}
+  accountRoleConfig:
+    prefix: "{{ rosa_role_config.prefix | default(cluster_name_prefix) }}"
+    version: {{ rosa_role_config.version | default(openshift_version) }}
+  operatorRoleConfig:
+    prefix: "{{ rosa_role_config.prefix | default(cluster_name_prefix) }}"
+---
 apiVersion: controlplane.cluster.x-k8s.io/v1beta2
 kind: ROSAControlPlane
 metadata:
@@ -70,29 +120,15 @@ spec:
 
   rosaClusterName: {{ cluster_name }}
   domainPrefix: {{ domain_prefix | default(rosa_role_prefix) | default(cluster_name) }}
-  version: "{{ rcp_version | default(openshift_version) | default('4.21.0') }}"
-{% if fips is defined and fips | bool %}
-  fips: "Enabled"
-{% endif %}
+  version: "{{ rcp_version | default(openshift_version) | default('4.20.10') }}"
   region: {{ aws_region }}
-{% if channel is defined and channel %}
-  channel: {{ channel }}
-{% endif %}
-{% if channel_group is defined and channel_group %}
-  channelGroup: {{ channel_group }}
-{% endif %}
-
-{% if private is defined and private | bool %}
-  endpointAccess: Private
-{% else %}
-  endpointAccess: Public
-{% endif %}
+  channelGroup: {{ channel_group | default('stable') }}
 
   defaultMachinePoolSpec:
     instanceType: {{ machine_pool.instance_type | default('m5.xlarge') }}
     autoscaling:
-      maxReplicas: {{ machine_pool.max_replicas | default(availability_zones_list | default(['us-west-2a']) | length * 2) }}
-      minReplicas: {{ machine_pool.min_replicas | default(availability_zones_list | default(['us-west-2a']) | length) }}
+      maxReplicas: {{ machine_pool.max_replicas | default(2) }}
+      minReplicas: {{ machine_pool.min_replicas | default(2) }}
 
   additionalTags:
     env: {{ environment_tag | default('test') }}
@@ -100,68 +136,19 @@ spec:
     automated: "true"
     network-automation: "true"
     role-automation: "{{ 'true' if rosa_role_config is defined and rosa_role_config.enabled | default(false) else 'false' }}"
-{% if additional_tags is defined and additional_tags %}
-{% for key, value in additional_tags.items() %}
-    {{ key }}: "{{ value }}"
-{% endfor %}
-{% endif %}
 
   network:
     machineCIDR: {{ cluster_network.machine_cidr | default('10.0.0.0/16') }}
-{% if no_cni is defined and no_cni | bool %}
-    networkType: Other
-{% endif %}
     podCIDR: {{ cluster_network.pod_cidr | default('10.128.0.0/14') }}
     serviceCIDR: {{ cluster_network.service_cidr | default('172.30.0.0/16') }}
-
-{% if external_oidc is defined and external_oidc | bool %}
-  enableExternalAuthProviders: true
-{% endif %}
-
-{% if etcd_encryption_kms_arn is defined and etcd_encryption_kms_arn %}
-  etcdEncryptionKMSARN: {{ etcd_encryption_kms_arn }}
-{% endif %}
-
-{% if user_agent is defined and user_agent %}
-  userAgent: {{ user_agent }}
-{% endif %}
-
-{% if http_proxy is defined and http_proxy | bool %}
-  proxy:
-    httpProxy: {{ http_proxy_url | default('') }}
-    httpsProxy: {{ https_proxy_url | default('') }}
-    noProxy: {{ no_proxy | default('') }}
-{% endif %}
-
-{% if additional_security_groups is defined and additional_security_groups %}
-  additionalSecurityGroups:
-{% for sg in additional_security_groups %}
-    - {{ sg }}
-{% endfor %}
-{% endif %}
-
-{% if image_registry_config is defined and image_registry_config | bool %}
-  clusterRegistryConfig:
-    allowedRegistriesForImport:
-      - domainName: "{{ registry_domain | default('trusted-registry.com') }}"
-        insecure: false
-    registrySources:
-      allowedRegistries:
-        - "{{ allowed_registry | default('allowed-registry.com') }}"
-{% endif %}
-
-{% if cluster_autoscaler_expander is defined and cluster_autoscaler_expander | bool %}
-  autoscaler:
-    expanders:
-      - LeastWaste
-{% endif %}
 
   # ======================================
   # LOG FORWARDING CONFIGURATION
   # PR: https://github.com/kubernetes-sigs/cluster-api-provider-aws/pull/5786
   # ======================================
-  {% if log_forward_enabled is defined and log_forward_enabled | bool %}
-  {% if log_forward_cloudwatch_role_arn is defined or log_forward_cloudwatch_log_group is defined %}
+  {% if log_forward_enabled | default(false) %}
+  # CloudWatch log forwarding configuration
+  {% if log_forward_cloudwatch_role_arn or log_forward_cloudwatch_log_group %}
   cloudWatchlogForwarder:
     # Applications to forward (valid values: application, infrastructure, audit-webhook)
     {% if log_forward_applications is defined and log_forward_applications %}
@@ -180,7 +167,8 @@ spec:
     {% endif %}
   {% endif %}
 
-  {% if log_forward_s3_bucket is defined or log_forward_s3_prefix is defined %}
+  # S3 log forwarding configuration (separate from CloudWatch)
+  {% if log_forward_s3_bucket or log_forward_s3_prefix %}
   s3LogForwarder:
     # Applications to forward (valid values: application, infrastructure, audit-webhook)
     {% if log_forward_applications is defined and log_forward_applications %}
@@ -214,7 +202,7 @@ metadata:
     automation.acm.redhat.com/role-automation: "true"
 spec:
   clusterName: {{ cluster_name }}
-  replicas: {{ machine_pool.replicas | default(availability_zones_list | default(['us-west-2a']) | length) }}
+  replicas: {{ machine_pool.replicas | default(2) }}
   template:
     spec:
       clusterName: {{ cluster_name }}
@@ -239,19 +227,5 @@ spec:
   nodePoolName: {{ (rosa_role_prefix | default(domain_prefix) | default('test'))[:4] | regex_replace('-$', '') }}-np
   instanceType: {{ machine_pool.instance_type | default('m5.xlarge') }}
   version: {{ openshift_version }}
-{% if root_volume_size is defined and root_volume_size %}
-  rootVolume:
-    size: {{ root_volume_size }}
-{% endif %}
-{% if parallel_node_upgrade is defined and parallel_node_upgrade | bool %}
-  updateConfig:
-    rollingUpdate:
-      maxSurge: {{ max_surge | default(1) }}
-      maxUnavailable: {{ max_unavailable | default(0) }}
-{% endif %}
-{% if additional_security_groups is defined and additional_security_groups %}
-  additionalSecurityGroups:
-{% for sg in additional_security_groups %}
-    - {{ sg }}
-{% endfor %}
-{% endif %}
+  # Note: subnet assignment will be automatic via ROSANetwork
+  # nodePoolName uses 4-char prefix + '-np' to stay under 15-byte limit
