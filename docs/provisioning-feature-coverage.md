@@ -93,5 +93,5 @@ Usage:
 
 Jenkins:
 ```
-CLUSTER_FEATURES=private,no-cni,external-oidc
+CLUSTER_FEATURES=no-cni,external-oidc,autoscaler
 ```
