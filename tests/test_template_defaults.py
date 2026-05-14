@@ -22,7 +22,7 @@ BASE_DIR = Path(__file__).parent.parent
 TEMPLATES_BASE = BASE_DIR / "templates" / "versions"
 
 # Versions with feature templates
-TEMPLATE_VERSIONS = ["4.20", "4.21"]
+TEMPLATE_VERSIONS = ["4.20", "4.21", "4.22"]
 
 
 def _collect_j2_templates():
@@ -129,19 +129,18 @@ def test_machinepool_replicas_greater_than_zero(template):
 
 
 # ================================================================
-# API Version: MachinePool uses v1beta1
+# API Version: MachinePool uses v1beta1 or v1beta2
+# Older templates (4.18-4.20) use v1beta1, newer (4.21+) use v1beta2
 # ================================================================
 
 @pytest.mark.parametrize("template", ALL_J2_TEMPLATES, ids=_template_id)
-def test_machinepool_uses_v1beta1(template):
+def test_machinepool_uses_valid_cluster_api(template):
     text = template.read_text()
-    # Find MachinePool resource blocks (kind: MachinePool with cluster.x-k8s.io API)
-    # These should use v1beta1
     pattern = r'apiVersion:\s*(cluster\.x-k8s\.io/v\w+)\s*\nkind:\s*MachinePool'
     matches = re.findall(pattern, text)
     for api_version in matches:
-        assert api_version == "cluster.x-k8s.io/v1beta1", \
-            f"{template.name}: MachinePool should use cluster.x-k8s.io/v1beta1, " \
+        assert api_version in ("cluster.x-k8s.io/v1beta1", "cluster.x-k8s.io/v1beta2"), \
+            f"{template.name}: MachinePool should use cluster.x-k8s.io/v1beta1 or v1beta2, " \
             f"got {api_version}"
 
 

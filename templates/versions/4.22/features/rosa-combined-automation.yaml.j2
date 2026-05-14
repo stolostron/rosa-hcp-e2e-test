@@ -4,7 +4,7 @@ metadata:
   name: {{ cluster_name }}
   namespace: {{ capi_namespace }}
   labels:
-    automation.acm.redhat.com/test-case: "ACM-21174-ControlPlane"
+    automation.acm.redhat.com/test-case: "ACM-21174-Combined"
     automation.acm.redhat.com/network-automation: "true"
     automation.acm.redhat.com/role-automation: "true"
 spec:
@@ -16,13 +16,13 @@ metadata:
   name: {{ cluster_name }}
   namespace: {{ capi_namespace }}
   labels:
-    automation.acm.redhat.com/test-case: "ACM-21174-ControlPlane"
+    automation.acm.redhat.com/test-case: "ACM-21174-Combined"
     automation.acm.redhat.com/network-automation: "true"
     automation.acm.redhat.com/role-automation: "true"
 spec:
   clusterNetwork:
     pods:
-      cidrBlocks: ["{{ cluster_network.pod_cidr | default('10.128.0.0/14') }}"]
+      cidrBlocks: ["{{ cluster_network.pod_cidr | default('192.168.0.0/16') }}"]
   infrastructureRef:
     apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
     kind: ROSACluster
@@ -40,13 +40,11 @@ metadata:
   name: {{ cluster_name }}
   namespace: {{ capi_namespace }}
   labels:
-    automation.acm.redhat.com/test-case: "ACM-21174-ControlPlane"
+    automation.acm.redhat.com/test-case: "ACM-21174-Combined"
     automation.acm.redhat.com/network-automation: "true"
     automation.acm.redhat.com/role-automation: "true"
 spec: {}
 ---
-# ROSAControlPlane references separately created ROSANetwork and ROSARoleConfig
-# No inline resource definitions - prevents immutable field update errors
 apiVersion: controlplane.cluster.x-k8s.io/v1beta2
 kind: ROSAControlPlane
 metadata:
@@ -58,42 +56,48 @@ metadata:
 {{ cluster_description | indent(6, first=True) }}
   {% endif -%}
   labels:
-    automation.acm.redhat.com/test-case: "ACM-21174-ControlPlane"
+    automation.acm.redhat.com/test-case: "ACM-21174-Combined"
     automation.acm.redhat.com/network-automation: "true"
     automation.acm.redhat.com/role-automation: "true"
 spec:
-  # Network automation reference
   rosaNetworkRef:
     name: {{ cluster_name }}-network
 
-  # Role automation reference
   rosaRoleConfigRef:
     name: {{ cluster_name }}-roles
 
   rosaClusterName: {{ cluster_name }}
   domainPrefix: {{ domain_prefix | default(rosa_role_prefix) | default(cluster_name) }}
-  version: "{{ rcp_version | default(openshift_version) | default('4.20.10') }}"
+  version: "{{ rcp_version | default(openshift_version) | default('4.22.0') }}"
+{% if fips is defined and fips | bool %}
+  fips: "Enabled"
+{% endif %}
   region: {{ aws_region }}
+{% if channel is defined and channel %}
+  channel: {{ channel }}
+{% endif %}
 {% if channel_group is defined and channel_group %}
   channelGroup: {{ channel_group }}
 {% endif %}
 
 {% if private is defined and private | bool %}
   endpointAccess: Private
+{% else %}
+  endpointAccess: Public
 {% endif %}
 
   defaultMachinePoolSpec:
     instanceType: {{ machine_pool.instance_type | default('m5.xlarge') }}
     autoscaling:
-      maxReplicas: {{ machine_pool.max_replicas | default(2) }}
-      minReplicas: {{ machine_pool.min_replicas | default(2) }}
+      maxReplicas: {{ machine_pool.max_replicas | default(availability_zones_list | default(['us-west-2a']) | length * 2) }}
+      minReplicas: {{ machine_pool.min_replicas | default(availability_zones_list | default(['us-west-2a']) | length) }}
 
   additionalTags:
     env: {{ environment_tag | default('test') }}
-    purpose: {{ purpose_tag | default('rosa-hcp-automation-testing') }}
+    purpose: {{ purpose_tag | default('acm21174-combined-testing') }}
     automated: "true"
     network-automation: "true"
-    role-automation: "true"
+    role-automation: "{{ 'true' if rosa_role_config is defined and rosa_role_config.enabled | default(false) else 'false' }}"
 {% if additional_tags is defined and additional_tags %}
 {% for key, value in additional_tags.items() %}
     {{ key }}: "{{ value }}"
@@ -150,54 +154,40 @@ spec:
       - LeastWaste
 {% endif %}
 
-  # ======================================
-  # LOG FORWARDING CONFIGURATION
-  # PR: https://github.com/kubernetes-sigs/cluster-api-provider-aws/pull/5786
-  # ======================================
-  {% if log_forward_enabled | default(false) %}
-  # CloudWatch log forwarding configuration
-  {% if log_forward_cloudwatch_role_arn or log_forward_cloudwatch_log_group %}
+{% if log_forward_enabled is defined and log_forward_enabled | bool %}
+{% if log_forward_cloudwatch_role_arn is defined or log_forward_cloudwatch_log_group is defined %}
   cloudWatchlogForwarder:
-    # Applications to forward (valid values: application, infrastructure, audit-webhook)
-    {% if log_forward_applications is defined and log_forward_applications %}
+{% if log_forward_applications is defined and log_forward_applications %}
     applications:
-    {% for app in log_forward_applications %}
+{% for app in log_forward_applications %}
       - {{ app }}
-    {% endfor %}
-    {% endif %}
-
-    # CloudWatch configuration
-    {% if log_forward_cloudwatch_role_arn is defined and log_forward_cloudwatch_role_arn %}
+{% endfor %}
+{% endif %}
+{% if log_forward_cloudwatch_role_arn is defined and log_forward_cloudwatch_role_arn %}
     cloudWatchLogRoleArn: {{ log_forward_cloudwatch_role_arn | trim }}
-    {% endif %}
-    {% if log_forward_cloudwatch_log_group is defined and log_forward_cloudwatch_log_group %}
+{% endif %}
+{% if log_forward_cloudwatch_log_group is defined and log_forward_cloudwatch_log_group %}
     cloudWatchLogGroupName: {{ log_forward_cloudwatch_log_group | trim }}
-    {% endif %}
-  {% endif %}
+{% endif %}
+{% endif %}
 
-  # S3 log forwarding configuration (separate from CloudWatch)
-  {% if log_forward_s3_bucket or log_forward_s3_prefix %}
+{% if log_forward_s3_bucket is defined or log_forward_s3_prefix is defined %}
   s3LogForwarder:
-    # Applications to forward (valid values: application, infrastructure, audit-webhook)
-    {% if log_forward_applications is defined and log_forward_applications %}
+{% if log_forward_applications is defined and log_forward_applications %}
     applications:
-    {% for app in log_forward_applications %}
+{% for app in log_forward_applications %}
       - {{ app }}
-    {% endfor %}
-    {% endif %}
-
-    # S3 configuration
-    {% if log_forward_s3_bucket is defined and log_forward_s3_bucket %}
+{% endfor %}
+{% endif %}
+{% if log_forward_s3_bucket is defined and log_forward_s3_bucket %}
     s3ConfigBucketName: {{ log_forward_s3_bucket | trim }}
-    {% endif %}
-    {% if log_forward_s3_prefix is defined and log_forward_s3_prefix %}
+{% endif %}
+{% if log_forward_s3_prefix is defined and log_forward_s3_prefix %}
     s3ConfigBucketPrefix: {{ log_forward_s3_prefix | trim }}
-    {% endif %}
-  {% endif %}
-  {% endif %}
+{% endif %}
+{% endif %}
+{% endif %}
 
-  # References to automation resources created separately
-  # No inline ROSANetwork or ROSARoleConfig definitions
 ---
 apiVersion: cluster.x-k8s.io/v1beta1
 kind: MachinePool
@@ -205,12 +195,12 @@ metadata:
   name: {{ cluster_name }}
   namespace: {{ capi_namespace }}
   labels:
-    automation.acm.redhat.com/test-case: "ACM-21174-ControlPlane"
+    automation.acm.redhat.com/test-case: "ACM-21174-Combined"
     automation.acm.redhat.com/network-automation: "true"
     automation.acm.redhat.com/role-automation: "true"
 spec:
   clusterName: {{ cluster_name }}
-  replicas: {{ machine_pool.replicas | default(2) }}
+  replicas: {{ machine_pool.replicas | default(availability_zones_list | default(['us-west-2a']) | length) }}
   template:
     spec:
       clusterName: {{ cluster_name }}
@@ -228,7 +218,7 @@ metadata:
   name: {{ cluster_name }}
   namespace: {{ capi_namespace }}
   labels:
-    automation.acm.redhat.com/test-case: "ACM-21174-ControlPlane"
+    automation.acm.redhat.com/test-case: "ACM-21174-Combined"
     automation.acm.redhat.com/network-automation: "true"
     automation.acm.redhat.com/role-automation: "true"
 spec:

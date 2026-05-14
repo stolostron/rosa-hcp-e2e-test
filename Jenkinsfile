@@ -95,6 +95,7 @@ pipeline {
         string(name:'OCM_CLIENT_SECRET', defaultValue: '', description: 'OCM client secret for ROSA provisioning')
         string(name:'TEST_GIT_BRANCH', defaultValue: 'main', description: 'Git branch to test (for reference/documentation)')
         string(name:'NAME_PREFIX', defaultValue: 'jnk', description: 'Cluster name prefix (creates {prefix}-rosa-hcp)')
+        string(name:'CLUSTER_FEATURES', defaultValue: '', description: 'Comma-separated cluster features (e.g., no-cni,external-oidc,autoscaler). Run --list-features to see options.')
         booleanParam(name:'RUN_UPGRADE_TESTS', defaultValue: false, description: 'Run control plane and machine pool upgrade tests after provisioning')
         booleanParam(name:'CLEANUP_AFTER_TEST', defaultValue: true, description: 'Delete cluster after successful provisioning (E2E test)')
     }
@@ -193,6 +194,7 @@ pipeline {
                 OCP_HUB_CLUSTER_USER = "${params.OCP_HUB_CLUSTER_USER}"
                 OCP_HUB_CLUSTER_PASSWORD = "${params.OCP_HUB_CLUSTER_PASSWORD}"
                 MCE_NAMESPACE = "${params.MCE_NAMESPACE}"
+                CLUSTER_FEATURES = "${params.CLUSTER_FEATURES}"
             }
             steps {
                 script {
@@ -206,10 +208,17 @@ pipeline {
                         ]) {
                             sh '''
                                 cd rosa-hcp-e2e-test
+                                # Build feature flags from CLUSTER_FEATURES parameter
+                                FEATURE_FLAGS=""
+                                if [ -n "${CLUSTER_FEATURES}" ]; then
+                                    for feature in $(echo "${CLUSTER_FEATURES}" | tr ',' ' '); do
+                                        FEATURE_FLAGS="${FEATURE_FLAGS} --feature ${feature}"
+                                    done
+                                fi
                                 # Execute the ROSA HCP provisioning test suite with maximum verbosity
                                 # Pass Jenkins parameters and credentials as Ansible extra vars
                                 # AI agents enabled for autonomous issue detection and remediation
-                                ./run-test-suite.py 20-rosa-hcp-provision --format junit -vvv --ai-agent \
+                                ./run-test-suite.py 20-rosa-hcp-provision --format junit -vvv --ai-agent ${FEATURE_FLAGS} \
                                   -e OCP_HUB_API_URL="${OCP_HUB_API_URL}" \
                                   -e OCP_HUB_CLUSTER_USER="${OCP_HUB_CLUSTER_USER}" \
                                   -e OCP_HUB_CLUSTER_PASSWORD="${OCP_HUB_CLUSTER_PASSWORD}" \
