@@ -136,7 +136,17 @@ Features are defined declaratively in `templates/schemas/feature-registry.yml`. 
 5. Add a conditional block in the `rosa-controlplane-only.yaml.j2` templates (4.20, 4.21, 4.22)
 6. Add a `feature_availability` entry in `version-compatibility.yml` if version-restricted
 
-No Python code changes required.
+No Python code changes required. Or use `./add-feature.py` to automate all 6 steps.
+
+## Verifying Features After Provisioning
+
+After provisioning a cluster with `--feature` flags, verify the features were applied:
+
+```bash
+./run-test-suite.py 21-verify-feature-flags -e cluster_name=my-cluster
+```
+
+This reads the live ROSAControlPlane and ROSAMachinePool specs and asserts each feature is present. Features that weren't enabled are reported as SKIP (not FAIL).
 
 ## Features Not Yet Available via `--feature`
 
