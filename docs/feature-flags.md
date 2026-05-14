@@ -102,6 +102,29 @@ CLUSTER_FEATURES=no-cni,external-oidc
 
 This expands to `--feature no-cni --feature external-oidc` in the provision stage.
 
+## Feature Groups
+
+Feature groups are named presets that bundle common feature combinations:
+
+```bash
+# List available groups
+./run-test-suite.py --list-groups
+
+# Run with a group
+./run-test-suite.py 20-rosa-hcp-provision --feature-group day1-combo -e name_prefix=test
+
+# Combine a group with individual features
+./run-test-suite.py 20-rosa-hcp-provision --feature-group day1-combo --feature etcd-kms \
+  -e etcd_encryption_kms_arn=arn:... -e name_prefix=test
+```
+
+| Group | Features | Coverage |
+|-------|----------|----------|
+| `day1-basic` | *(none — uses default provisioning)* | STS, Tags, AZs, DomainPrefix, Autoscaling, Long Name |
+| `day1-combo` | no-cni, autoscaler, image-registry, parallel-upgrade, disk-size, user-agent | day1-basic + 6 features = 13/21 |
+| `day1-security` | etcd-kms, fips | Requires AWS KMS key |
+| `day1-networking` | external-oidc, log-forwarding | Requires OIDC provider + CloudWatch |
+
 ## Feature Registry
 
 Features are defined declaratively in `templates/schemas/feature-registry.yml`. Adding a new feature requires:

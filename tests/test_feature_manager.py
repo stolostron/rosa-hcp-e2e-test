@@ -186,6 +186,52 @@ class TestGetFeature:
         assert feat is None
 
 
+class TestFeatureGroups:
+    def test_list_groups(self, fm):
+        groups = fm.list_groups()
+        assert len(groups) >= 4
+        names = [g["name"] for g in groups]
+        assert "day1-basic" in names
+        assert "day1-combo" in names
+
+    def test_resolve_basic_group(self, fm):
+        features = fm.resolve_group("day1-basic")
+        assert features == []
+
+    def test_resolve_combo_group(self, fm):
+        features = fm.resolve_group("day1-combo")
+        assert len(features) > 0
+        assert "no_cni" in features
+        assert "disk_size" in features
+
+    def test_resolve_unknown_group(self, fm):
+        result = fm.resolve_group("nonexistent")
+        assert result is None
+
+    def test_combo_group_plus_extra_feature(self, fm):
+        group_features = fm.resolve_group("day1-combo")
+        combined = group_features + ["etcd_kms"]
+        resolved = fm.auto_resolve_deps(combined)
+        assert "no_cni" in resolved
+        assert "etcd_kms" in resolved
+        assert len(resolved) == len(set(resolved))
+
+    def test_group_and_individual_feature_dedup(self, fm):
+        """Simulate --feature-group day1-combo --feature no-cni (no_cni in both)."""
+        group_features = fm.resolve_group("day1-combo")
+        individual = ["no_cni"]
+        merged = individual + group_features
+        deduped = list(dict.fromkeys(merged))
+        assert deduped.count("no_cni") == 1
+        assert len(deduped) == len(group_features)
+
+    def test_group_features_are_valid_cli_features(self, fm):
+        for group in fm.list_groups():
+            for feat in group["features"]:
+                assert feat in fm._cli_features, \
+                    f"Group '{group['name']}' contains '{feat}' which is not in cli_features"
+
+
 class TestLoadErrors:
     def test_missing_schema_file(self, tmp_path):
         with pytest.raises(FileNotFoundError, match="Schema file not found"):

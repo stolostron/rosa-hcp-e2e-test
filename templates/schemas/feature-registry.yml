@@ -66,11 +66,11 @@ cli_aliases:
 # private_network: requires private-only subnets in ROSANetwork (not yet implemented)
 # instance_type: template uses machine_pool.instance_type, not settable via flat extra var
 # default_autoscaling: template uses machine_pool.min_replicas/max_replicas, not flat var
+# proxy_enabled: N/A priority per test matrix
 cli_features:
   - no_cni
   - external_oidc
   - etcd_kms
-  - proxy_enabled
   - additional_tags
   - domain_prefix
   - channel_group
@@ -93,6 +93,36 @@ dependencies:
 
 # Mutual exclusion rules: features that cannot be combined
 mutual_exclusions: []
+
+# Feature groups: named presets for --feature-group
+# day1-basic uses default provisioning (no extra features needed)
+# Other groups add --feature flags on top of the defaults
+feature_groups:
+  day1-basic:
+    description: "Default provisioning (STS, Tags, AZs, DomainPrefix, Autoscaling, Long Name)"
+    features: []
+
+  day1-combo:
+    description: "All non-default Day1 features (includes day1-basic defaults)"
+    features:
+      - no_cni
+      - cluster_autoscaler_expander
+      - image_registry
+      - parallel_upgrade
+      - disk_size
+      - user_agent
+
+  day1-security:
+    description: "Security features (requires AWS KMS key tagged with red-hat:true)"
+    features:
+      - etcd_kms
+      - fips
+
+  day1-networking:
+    description: "Network/auth features (requires OIDC provider and CloudWatch setup)"
+    features:
+      - external_oidc
+      - audit_logging
 
 suites:
   - id: cluster-config

@@ -1055,6 +1055,21 @@ Examples:
              "Example: --list-features --ocp-version 4.22"
     )
 
+    parser.add_argument(
+        "--feature-group",
+        dest="feature_group",
+        metavar="GROUP",
+        help="Enable a preset group of features. "
+             "Use --list-groups to see available groups. "
+             "Examples: --feature-group day1-combo"
+    )
+
+    parser.add_argument(
+        "--list-groups",
+        action="store_true",
+        help="List all available feature groups and exit"
+    )
+
     args = parser.parse_args()
 
     # Parse extra vars from command line
@@ -1090,6 +1105,47 @@ Examples:
                 print(f"    Available from: OpenShift {f['min_version']}")
             print()
         return 0
+
+    # Handle --list-groups
+    if args.list_groups:
+        from feature_manager import FeatureManager
+        try:
+            fm = FeatureManager(Path.cwd())
+        except FileNotFoundError as e:
+            print(f"{Colors.RED}Error: {e}{Colors.ENDC}")
+            return 1
+        groups = fm.list_groups()
+        print(f"\n{Colors.BOLD}Available Feature Groups:{Colors.ENDC}\n")
+        for g in groups:
+            features = g["features"]
+            feat_str = ", ".join(features) if features else "(default provisioning — no extra features)"
+            print(f"  {Colors.CYAN}{g['name']}{Colors.ENDC}")
+            print(f"    {g['description']}")
+            print(f"    Features: {feat_str}")
+            print()
+        return 0
+
+    # Expand --feature-group into --feature flags
+    if args.feature_group:
+        from feature_manager import FeatureManager
+        try:
+            fm = FeatureManager(Path.cwd())
+        except FileNotFoundError as e:
+            print(f"{Colors.RED}Error: {e}{Colors.ENDC}")
+            return 1
+        group_features = fm.resolve_group(args.feature_group)
+        if group_features is None:
+            available = ", ".join(g["name"] for g in fm.list_groups())
+            print(f"{Colors.RED}Unknown feature group: '{args.feature_group}'. Available: {available}{Colors.ENDC}")
+            return 1
+        if group_features:
+            if args.features is None:
+                args.features = []
+            args.features.extend(group_features)
+            args.features = list(dict.fromkeys(args.features))
+            print(f"\n{Colors.CYAN}Feature group '{args.feature_group}': {', '.join(group_features)}{Colors.ENDC}")
+        else:
+            print(f"\n{Colors.CYAN}Feature group '{args.feature_group}': using default provisioning{Colors.ENDC}")
 
     # Process --feature flags into extra_vars
     if args.features:

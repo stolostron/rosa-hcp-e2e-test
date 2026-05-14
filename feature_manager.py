@@ -26,6 +26,8 @@ class FeatureManager:
         self._mutual_exclusions = self._registry.get("mutual_exclusions", [])
         self._feature_availability = self._compat.get("feature_availability", {})
 
+        self._feature_groups = self._registry.get("feature_groups", {})
+
         self._features: Dict[str, dict] = {}
         for suite in self._registry.get("suites", []):
             for feat in suite.get("features", []):
@@ -122,6 +124,22 @@ class FeatureManager:
                 extra_vars[f"feature_{name}_enabled"] = "true"
 
         return extra_vars
+
+    def resolve_group(self, group_name: str) -> Optional[List[str]]:
+        group = self._feature_groups.get(group_name)
+        if group is None:
+            return None
+        return list(group.get("features", []))
+
+    def list_groups(self) -> List[dict]:
+        results = []
+        for name, group in self._feature_groups.items():
+            results.append({
+                "name": name,
+                "description": group.get("description", ""),
+                "features": group.get("features", []),
+            })
+        return results
 
     def list_features(self, version: Optional[str] = None) -> List[dict]:
         results = []
