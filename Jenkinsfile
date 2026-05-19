@@ -12,12 +12,12 @@
 //   5. Upgrade ROSA Control Plane (suite 25) - Only runs if provisioning passes (optional)
 //   6. Upgrade ROSA Machine Pool (suite 26) - Only runs if CP upgrade passes (optional)
 //   7. Delete ROSA HCP Cluster (suite 30) - Only runs if provisioning passes (optional)
-//   8. Restore HyperShift (suite 41) - Always runs as final stage, re-enables HyperShift
+//   8. Restore HyperShift (suite 41) - Runs if RESTORE_HYPERSHIFT=true (default), re-enables HyperShift
 //
 // HyperShift State Management:
 //   Suite 10 automatically disables HyperShift and enables CAPI/CAPA.
-//   The final stage always restores HyperShift via suite 41, regardless of
-//   test outcome, so the shared cluster is left in its expected state.
+//   By default, suite 41 restores HyperShift after testing. Set
+//   RESTORE_HYPERSHIFT=false to leave CAPI/CAPA enabled for further testing.
 //
 // Test Suites:
 //   10-configure-mce-environment             - Disable HyperShift, enable CAPI/CAPA (RHACM4K-61722)
@@ -27,7 +27,7 @@
 //   25-rosa-hcp-upgrade-control-plane        - Upgrade control plane (runs if 20 passes, optional)
 //   26-rosa-hcp-upgrade-machine-pool         - Upgrade machine pool (runs if 25 passes, optional)
 //   30-rosa-hcp-delete                       - Delete ROSA HCP cluster (runs if 20 passes, optional)
-//   41-disable-capi-enable-hypershift        - Restore HyperShift (always runs as final stage)
+//   41-disable-capi-enable-hypershift        - Restore HyperShift (runs if RESTORE_HYPERSHIFT=true)
 //   05-verify-mce-environment                - Verify MCE environment (manual/separate)
 //
 // Credentials Required:
@@ -55,7 +55,7 @@
 //   - Stage 5 (Upgrade ROSA CP): Only runs if Stage 2 succeeds AND RUN_UPGRADE_TESTS=true
 //   - Stage 6 (Upgrade ROSA MP): Only runs if Stage 5 succeeds AND RUN_UPGRADE_TESTS=true
 //   - Stage 7 (Delete): Only runs if provisioning succeeded AND CLEANUP_AFTER_TEST=true (runs even if upgrades fail)
-//   - Stage 8 (Restore HyperShift): Always runs — disables CAPI/CAPA, re-enables HyperShift
+//   - Stage 8 (Restore HyperShift): Runs if RESTORE_HYPERSHIFT=true (default) — disables CAPI/CAPA, re-enables HyperShift
 //   - Stage 9 (Archive): Archives all test results as JUnit XML for Jenkins reporting
 //
 // Test Results:
