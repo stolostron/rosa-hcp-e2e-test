@@ -12,12 +12,12 @@
 //   5. Upgrade ROSA Control Plane (suite 25) - Only runs if provisioning passes (optional)
 //   6. Upgrade ROSA Machine Pool (suite 26) - Only runs if CP upgrade passes (optional)
 //   7. Delete ROSA HCP Cluster (suite 30) - Only runs if provisioning passes (optional)
-//   8. Restore HyperShift (suite 41) - Always runs as final stage, re-enables HyperShift
+//   8. Restore HyperShift (suite 41) - Runs if RESTORE_HYPERSHIFT=true (default), re-enables HyperShift
 //
 // HyperShift State Management:
 //   Suite 10 automatically disables HyperShift and enables CAPI/CAPA.
-//   The final stage always restores HyperShift via suite 41, regardless of
-//   test outcome, so the shared cluster is left in its expected state.
+//   By default, suite 41 restores HyperShift after testing. Set
+//   RESTORE_HYPERSHIFT=false to leave CAPI/CAPA enabled for further testing.
 //
 // Test Suites:
 //   10-configure-mce-environment             - Disable HyperShift, enable CAPI/CAPA (RHACM4K-61722)
@@ -27,7 +27,7 @@
 //   25-rosa-hcp-upgrade-control-plane        - Upgrade control plane (runs if 20 passes, optional)
 //   26-rosa-hcp-upgrade-machine-pool         - Upgrade machine pool (runs if 25 passes, optional)
 //   30-rosa-hcp-delete                       - Delete ROSA HCP cluster (runs if 20 passes, optional)
-//   41-disable-capi-enable-hypershift        - Restore HyperShift (always runs as final stage)
+//   41-disable-capi-enable-hypershift        - Restore HyperShift (runs if RESTORE_HYPERSHIFT=true)
 //   05-verify-mce-environment                - Verify MCE environment (manual/separate)
 //
 // Credentials Required:
@@ -55,8 +55,8 @@
 //   - Stage 5 (Upgrade ROSA CP): Only runs if Stage 2 succeeds AND RUN_UPGRADE_TESTS=true
 //   - Stage 6 (Upgrade ROSA MP): Only runs if Stage 5 succeeds AND RUN_UPGRADE_TESTS=true
 //   - Stage 7 (Delete): Only runs if provisioning succeeded AND CLEANUP_AFTER_TEST=true (runs even if upgrades fail)
-//   - Stage 8 (Restore HyperShift): Always runs — disables CAPI/CAPA, re-enables HyperShift
-//   - All test results archived as JUnit XML for Jenkins reporting
+//   - Stage 8 (Restore HyperShift): Runs if RESTORE_HYPERSHIFT=true (default) — disables CAPI/CAPA, re-enables HyperShift
+//   - Stage 9 (Archive): Archives all test results as JUnit XML for Jenkins reporting
 //
 // Test Results:
 //   - JUnit XML: test-results/**/*.xml (only format generated)
@@ -97,6 +97,7 @@ pipeline {
         string(name:'NAME_PREFIX', defaultValue: 'jnk', description: 'Cluster name prefix (creates {prefix}-rosa-hcp)')
         booleanParam(name:'RUN_UPGRADE_TESTS', defaultValue: false, description: 'Run control plane and machine pool upgrade tests after provisioning')
         booleanParam(name:'CLEANUP_AFTER_TEST', defaultValue: true, description: 'Delete cluster after successful provisioning (E2E test)')
+        booleanParam(name:'RESTORE_HYPERSHIFT', defaultValue: true, description: 'Restore HyperShift and disable CAPI/CAPA after test (uncheck to leave CAPI enabled)')
     }
     stages {
         stage('Clone the ROSA HCP E2E Test Repository') {
@@ -454,18 +455,10 @@ pipeline {
                 }
             }
         }
-        stage('Archive the CAPI/CAPA Artifacts') {
-            steps {
-                script {
-                   // Archive artifacts from both old (results/) and new (test-results/) systems, including AI agent logs
-                   archiveArtifacts artifacts: 'rosa-hcp-e2e-test/results/**/*.xml, rosa-hcp-e2e-test/test-results/**/*.xml, rosa-hcp-e2e-test/agents/knowledge_base/intervention_log.json', allowEmptyArchive: true, followSymlinks: false
-
-                   // Publish JUnit test results from both systems
-                   junit allowEmptyResults: true, testResults: 'rosa-hcp-e2e-test/results/**/*.xml, rosa-hcp-e2e-test/test-results/**/*.xml'
-                }
-            }
-        }
         stage('Restore HyperShift') {
+            when {
+                expression { params.RESTORE_HYPERSHIFT == true }
+            }
             environment {
                 OCP_HUB_API_URL = "${params.OCP_HUB_API_URL}"
                 OCP_HUB_CLUSTER_USER = "${params.OCP_HUB_CLUSTER_USER}"
@@ -489,6 +482,17 @@ pipeline {
                         echo "WARNING: Failed to restore HyperShift — cluster may need manual intervention"
                         echo "Run manually: ./run-test-suite.py 41-disable-capi-enable-hypershift"
                     }
+                }
+            }
+        }
+        stage('Archive the CAPI/CAPA Artifacts') {
+            steps {
+                script {
+                   // Archive artifacts from both old (results/) and new (test-results/) systems, including AI agent logs
+                   archiveArtifacts artifacts: 'rosa-hcp-e2e-test/results/**/*.xml, rosa-hcp-e2e-test/test-results/**/*.xml, rosa-hcp-e2e-test/agents/knowledge_base/intervention_log.json', allowEmptyArchive: true, followSymlinks: false
+
+                   // Publish JUnit test results from both systems
+                   junit allowEmptyResults: true, testResults: 'rosa-hcp-e2e-test/results/**/*.xml, rosa-hcp-e2e-test/test-results/**/*.xml'
                 }
             }
         }
