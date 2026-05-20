@@ -52,7 +52,7 @@
 //
 // Pipeline Behavior:
 //   - Stage 1 (Configure): If fails → skips to Restore HyperShift stage
-//   - Stage 2 (Validate Features): Only runs if CLUSTER_FEATURES is set; dry-run fails fast on bad input
+//   - Stage 2 (Validate Features): Only runs if CLUSTER_FEATURES is set; validates input only (no cluster connection)
 //   - Stage 3 (Provision): Only runs if Stage 1 succeeds (and Stage 2 if features set)
 //   - Stage 4 (Verify Features): Only runs if Stage 3 succeeds AND CLUSTER_FEATURES is set
 //   - Stage 5 (Add ROSA MachinePool): Only runs if Stage 3 succeeds
@@ -201,10 +201,6 @@ pipeline {
                 }
             }
             environment {
-                OCP_HUB_API_URL = "${params.OCP_HUB_API_URL}"
-                OCP_HUB_CLUSTER_USER = "${params.OCP_HUB_CLUSTER_USER}"
-                OCP_HUB_CLUSTER_PASSWORD = "${params.OCP_HUB_CLUSTER_PASSWORD}"
-                MCE_NAMESPACE = "${params.MCE_NAMESPACE}"
                 CLUSTER_FEATURES = "${params.CLUSTER_FEATURES}"
                 EXTRA_FEATURE_VARS = "${params.EXTRA_FEATURE_VARS}"
                 ETCD_KMS_ARN = "${params.ETCD_KMS_ARN}"
@@ -226,17 +222,12 @@ pipeline {
                             fi
                             if [ -n "${EXTRA_FEATURE_VARS}" ]; then
                                 for var in ${EXTRA_FEATURE_VARS}; do
-                                    EXTRA_VARS="${EXTRA_VARS} -e ${var}"
+                                    EXTRA_VARS="${EXTRA_VARS} -e \"${var}\""
                                 done
                             fi
-                            # Dry-run validates feature names, version compatibility, and dependencies
-                            # then runs ansible in check mode (no changes) to verify template rendering
-                            ./run-test-suite.py 20-rosa-hcp-provision --dry-run ${FEATURE_FLAGS} \
-                              -e OCP_HUB_API_URL="${OCP_HUB_API_URL}" \
-                              -e OCP_HUB_CLUSTER_USER="${OCP_HUB_CLUSTER_USER}" \
-                              -e OCP_HUB_CLUSTER_PASSWORD="${OCP_HUB_CLUSTER_PASSWORD}" \
-                              -e MCE_NAMESPACE="${MCE_NAMESPACE}" \
-                              -e name_prefix="${NAME_PREFIX}" \
+                            # Validate feature names, version compatibility, dependencies, and
+                            # required inputs — no cluster connection needed, exits before ansible
+                            ./run-test-suite.py 20-rosa-hcp-provision --validate-only ${FEATURE_FLAGS} \
                               ${EXTRA_VARS}
                         '''
                         echo "Feature validation passed for: ${CLUSTER_FEATURES}"
