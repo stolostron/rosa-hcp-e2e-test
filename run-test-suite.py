@@ -1072,6 +1072,13 @@ Examples:
         help="Filter features by OpenShift version (e.g., 4.20)"
     )
 
+    parser.add_argument(
+        "--validate-only",
+        action="store_true",
+        help="Validate feature flags and inputs only (no ansible execution). "
+             "Exits 0 if valid, 1 if errors found."
+    )
+
     args = parser.parse_args()
 
     # Parse extra vars from command line
@@ -1196,6 +1203,14 @@ Examples:
             auto_added = set(resolved) - set(fm.resolve_alias(f) for f in args.features)
             print(f"{Colors.CYAN}Auto-added dependencies: {', '.join(auto_added)}{Colors.ENDC}")
         print()
+
+    # --validate-only: exit after feature validation without running ansible
+    if args.validate_only:
+        if not args.features and not args.feature_group:
+            print(f"{Colors.GREEN}No features to validate — input OK{Colors.ENDC}")
+        else:
+            print(f"{Colors.GREEN}Feature validation PASSED{Colors.ENDC}")
+        return 0
 
     # Initialize runner
     runner = TestSuiteRunner(
