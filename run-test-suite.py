@@ -238,8 +238,20 @@ class TestSuiteRunner:
                 all_vars["dry_run"] = "true"
 
             # Add merged variables to command
+            # Complex types (dicts/lists) are passed as a JSON blob so ansible
+            # parses them correctly; simple types use key=value form.
+            complex_vars = {}
             for key, value in all_vars.items():
-                cmd.extend(["-e", f"{key}={value}"])
+                val_str = str(value)
+                if val_str.startswith('{') or val_str.startswith('['):
+                    try:
+                        complex_vars[key] = json.loads(val_str)
+                    except json.JSONDecodeError:
+                        cmd.extend(["-e", f"{key}={value}"])
+                else:
+                    cmd.extend(["-e", f"{key}={value}"])
+            if complex_vars:
+                cmd.extend(["-e", json.dumps(complex_vars)])
 
             # Set timeout if specified
             timeout = playbook.get("timeout", None)
@@ -1039,6 +1051,119 @@ Examples:
                 extra_vars[key] = value
             else:
                 print(f"{Colors.YELLOW}Warning: Ignoring invalid extra var format: {var}{Colors.ENDC}")
+
+    # Handle --list-features
+    if args.list_features:
+        from feature_manager import FeatureManager
+        try:
+            fm = FeatureManager(Path.cwd())
+        except FileNotFoundError as e:
+            print(f"{Colors.RED}Error: {e}{Colors.ENDC}")
+            return 1
+        features = fm.list_features(version=args.ocp_version)
+        print(f"\n{Colors.BOLD}Available Cluster Features:{Colors.ENDC}")
+        if args.ocp_version:
+            print(f"  (filtered for OpenShift {args.ocp_version})")
+        print()
+        for f in features:
+            alias = f.get("cli_alias", "")
+            alias_str = f" (--feature {alias})" if alias else ""
+            print(f"  {Colors.CYAN}{f['id']}{Colors.ENDC}{alias_str}")
+            print(f"    {f['description']}")
+            print(f"    Type: {f['type']}  Default: {f['default']}  Phase: {f['phase']}")
+            if f.get("min_version"):
+                print(f"    Available from: OpenShift {f['min_version']}")
+            print()
+        return 0
+
+    # Handle --list-groups
+    if args.list_groups:
+        from feature_manager import FeatureManager
+        try:
+            fm = FeatureManager(Path.cwd())
+        except FileNotFoundError as e:
+            print(f"{Colors.RED}Error: {e}{Colors.ENDC}")
+            return 1
+        groups = fm.list_groups()
+        print(f"\n{Colors.BOLD}Available Feature Groups:{Colors.ENDC}\n")
+        for g in groups:
+            features = g["features"]
+            feat_str = ", ".join(features) if features else "(default provisioning — no extra features)"
+            print(f"  {Colors.CYAN}{g['name']}{Colors.ENDC}")
+            print(f"    {g['description']}")
+            print(f"    Features: {feat_str}")
+            print()
+        return 0
+
+    # Expand --feature-group into --feature flags
+    if args.feature_group:
+        from feature_manager import FeatureManager
+        try:
+            fm = FeatureManager(Path.cwd())
+        except FileNotFoundError as e:
+            print(f"{Colors.RED}Error: {e}{Colors.ENDC}")
+            return 1
+        group_features = fm.resolve_group(args.feature_group)
+        if group_features is None:
+            available = ", ".join(g["name"] for g in fm.list_groups())
+            print(f"{Colors.RED}Unknown feature group: '{args.feature_group}'. Available: {available}{Colors.ENDC}")
+            return 1
+        if group_features:
+            if args.features is None:
+                args.features = []
+            args.features.extend(group_features)
+            args.features = list(dict.fromkeys(args.features))
+            print(f"\n{Colors.CYAN}Feature group '{args.feature_group}': {', '.join(group_features)}{Colors.ENDC}")
+        else:
+            print(f"\n{Colors.CYAN}Feature group '{args.feature_group}': using default provisioning{Colors.ENDC}")
+
+    # Process --feature flags into extra_vars
+    if args.features:
+        from feature_manager import FeatureManager
+        try:
+            fm = FeatureManager(Path.cwd())
+        except FileNotFoundError as e:
+            print(f"{Colors.RED}Error: {e}{Colors.ENDC}")
+            return 1
+
+        resolved = [fm.resolve_alias(f) for f in args.features]
+        resolved = fm.auto_resolve_deps(resolved)
+
+        # Read default version from vars.yml if not specified via -e
+        default_version = "4.21"
+        try:
+            import yaml
+            vars_path = Path.cwd() / "vars" / "vars.yml"
+            if vars_path.exists():
+                with open(vars_path) as vf:
+                    vars_data = yaml.safe_load(vf)
+                    default_version = vars_data.get("openshift_version", default_version)
+        except Exception:
+            pass
+        version = extra_vars.get("openshift_version", default_version)
+        errors = fm.validate_features(resolved, version)
+        if errors:
+            for err in errors:
+                print(f"{Colors.RED}Feature error: {err}{Colors.ENDC}")
+            return 1
+
+        feature_vars = fm.resolve_to_extra_vars(resolved)
+
+        input_warnings = fm.check_required_inputs(resolved, extra_vars)
+        for warn in input_warnings:
+            print(f"{Colors.YELLOW}Warning: {warn}{Colors.ENDC}")
+        if input_warnings and os.environ.get('CI'):
+            print(f"{Colors.RED}Error: Required feature inputs missing in CI mode{Colors.ENDC}")
+            return 1
+
+        merged = {**feature_vars, **extra_vars}
+        extra_vars = merged
+
+        print(f"\n{Colors.CYAN}Features enabled: {', '.join(args.features)}{Colors.ENDC}")
+        if set(resolved) != set(fm.resolve_alias(f) for f in args.features):
+            auto_added = set(resolved) - set(fm.resolve_alias(f) for f in args.features)
+            print(f"{Colors.CYAN}Auto-added dependencies: {', '.join(auto_added)}{Colors.ENDC}")
+        print()
 
     # Initialize runner
     runner = TestSuiteRunner(

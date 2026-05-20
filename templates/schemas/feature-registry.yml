@@ -179,6 +179,9 @@ suites:
         mutable: true
         applies_to: [create, apply]
         default: {}
+        ci_default:
+          Team: PICS
+          Jira: RHACM4K-61815
         k8s_field: ".spec.additionalTags"
         resource: ROSAControlPlane
 
@@ -216,6 +219,7 @@ suites:
         mutable: true
         applies_to: [create, apply]
         default: []
+        requires_input: true
         k8s_field: ".spec.additionalSecurityGroups"
         resource: ROSAControlPlane
 
@@ -226,6 +230,7 @@ suites:
         mutable: false
         applies_to: [create]
         default: ""
+        requires_input: true
         k8s_field: ".spec.etcdEncryptionKMSARN"
         resource: ROSAControlPlane
         placeholder: "arn:aws:kms:..."
@@ -274,6 +279,7 @@ suites:
         mutable: true
         applies_to: [create, apply]
         default: 1
+        ci_default: 2
         k8s_field: ".spec.strategy.rollingUpdate.maxSurge"
         resource: ROSAMachinePool
 
@@ -359,6 +365,7 @@ suites:
         mutable: false
         applies_to: [create]
         default: 300
+        ci_default: 500
         k8s_field: ".spec.rootVolume.size"
         resource: ROSAMachinePool
 
@@ -449,6 +456,7 @@ suites:
         mutable: true
         applies_to: [create, apply]
         default: ""
+        ci_default: "capa-e2e-test"
         k8s_field: ".spec.userAgent"
         resource: ROSAControlPlane
 

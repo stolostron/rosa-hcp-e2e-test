@@ -102,6 +102,13 @@ class FeatureManager:
 
         return errors
 
+    @staticmethod
+    def _serialize_value(value, feat_type: str) -> str:
+        if feat_type in ("key_value", "list", "range"):
+            import json
+            return json.dumps(value)
+        return str(value)
+
     def resolve_to_extra_vars(self, feature_names: List[str]) -> dict:
         extra_vars = {}
         extra_vars["requested_features"] = ",".join(feature_names)
@@ -114,16 +121,27 @@ class FeatureManager:
             if feat_type == "boolean":
                 extra_vars[var_name] = "true"
             else:
-                # Non-boolean features (select, string, number, etc.) need their
-                # value passed via -e. Setting the var_map variable to the default
-                # ensures the template conditional activates; the user can override
-                # with -e key=value.
+                ci_default = feat.get("ci_default")
                 default = feat.get("default")
-                if default is not None and default != "" and default != {} and default != []:
-                    extra_vars[var_name] = str(default)
+                effective = ci_default if ci_default is not None else default
+                if effective is not None and effective != "" and effective != {} and effective != []:
+                    extra_vars[var_name] = self._serialize_value(effective, feat_type)
                 extra_vars[f"feature_{name}_enabled"] = "true"
 
         return extra_vars
+
+    def check_required_inputs(self, feature_names: List[str], extra_vars: dict) -> List[str]:
+        warnings = []
+        for name in feature_names:
+            feat = self._features.get(name, {})
+            if feat.get("requires_input", False):
+                var_name = self._var_map.get(name, name)
+                if var_name not in extra_vars:
+                    warnings.append(
+                        f"Feature '{name}' requires a value via -e {var_name}=<value>. "
+                        f"No test default is available."
+                    )
+        return warnings
 
     def resolve_group(self, group_name: str) -> Optional[List[str]]:
         group = self._feature_groups.get(group_name)

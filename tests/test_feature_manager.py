@@ -106,12 +106,28 @@ class TestExtraVarResolution:
         result = fm.resolve_to_extra_vars(["etcd_kms"])
         assert "feature_etcd_kms_enabled" in result
 
-    def test_non_boolean_with_default_sets_var(self, fm):
+    def test_ci_default_overrides_empty_default(self, fm):
         result = fm.resolve_to_extra_vars(["disk_size"])
-        assert result["root_volume_size"] == "300"
+        assert result["root_volume_size"] == "500"
         assert result["feature_disk_size_enabled"] == "true"
 
-    def test_non_boolean_without_default_skips_var(self, fm):
+    def test_ci_default_user_agent(self, fm):
+        result = fm.resolve_to_extra_vars(["user_agent"])
+        assert result["user_agent"] == "capa-e2e-test"
+
+    def test_ci_default_tags(self, fm):
+        import json
+        result = fm.resolve_to_extra_vars(["additional_tags"])
+        assert "additional_tags" in result
+        tags = json.loads(result["additional_tags"])
+        assert tags["Team"] == "PICS"
+        assert tags["Jira"] == "RHACM4K-61815"
+
+    def test_ci_default_parallel_upgrade(self, fm):
+        result = fm.resolve_to_extra_vars(["parallel_upgrade"])
+        assert result["parallel_node_upgrade"] == "2"
+
+    def test_requires_input_skips_var(self, fm):
         result = fm.resolve_to_extra_vars(["etcd_kms"])
         assert "etcd_encryption_kms_arn" not in result
 
@@ -119,6 +135,32 @@ class TestExtraVarResolution:
         result = fm.resolve_to_extra_vars(["security_groups"])
         assert "additional_security_groups" not in result
         assert "feature_security_groups_enabled" in result
+
+
+class TestRequiredInputs:
+    def test_etcd_kms_requires_input(self, fm):
+        warnings = fm.check_required_inputs(["etcd_kms"], {})
+        assert len(warnings) == 1
+        assert "requires a value" in warnings[0]
+
+    def test_etcd_kms_satisfied(self, fm):
+        warnings = fm.check_required_inputs(
+            ["etcd_kms"],
+            {"etcd_encryption_kms_arn": "arn:aws:kms:us-west-2:123:key/abc"}
+        )
+        assert warnings == []
+
+    def test_security_groups_requires_input(self, fm):
+        warnings = fm.check_required_inputs(["security_groups"], {})
+        assert len(warnings) == 1
+
+    def test_boolean_feature_no_warning(self, fm):
+        warnings = fm.check_required_inputs(["no_cni"], {})
+        assert warnings == []
+
+    def test_ci_default_feature_no_warning(self, fm):
+        warnings = fm.check_required_inputs(["disk_size"], {})
+        assert warnings == []
 
 
 class TestListFeatures:
