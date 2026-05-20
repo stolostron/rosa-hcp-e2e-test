@@ -1040,6 +1040,38 @@ Examples:
         help="Run AI agents in dry-run mode (detect and diagnose but don't apply fixes)"
     )
 
+    parser.add_argument(
+        "--feature",
+        dest="features",
+        action="append",
+        help="Enable a cluster feature (can be used multiple times, e.g., --feature no-cni --feature tags)"
+    )
+
+    parser.add_argument(
+        "--feature-group",
+        type=str,
+        help="Enable a preset group of features (e.g., day1-combo)"
+    )
+
+    parser.add_argument(
+        "--list-features",
+        action="store_true",
+        help="List all available cluster features"
+    )
+
+    parser.add_argument(
+        "--list-groups",
+        action="store_true",
+        help="List all available feature groups"
+    )
+
+    parser.add_argument(
+        "--ocp-version",
+        type=str,
+        default=None,
+        help="Filter features by OpenShift version (e.g., 4.20)"
+    )
+
     args = parser.parse_args()
 
     # Parse extra vars from command line
