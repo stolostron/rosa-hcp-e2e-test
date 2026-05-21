@@ -95,8 +95,12 @@ pipeline {
         string(name:'OCM_CLIENT_SECRET', defaultValue: '', description: 'OCM client secret for ROSA provisioning')
         string(name:'TEST_GIT_BRANCH', defaultValue: 'main', description: 'Git branch to test (for reference/documentation)')
         string(name:'NAME_PREFIX', defaultValue: 'jnk', description: 'Cluster name prefix (creates {prefix}-rosa-hcp)')
+        string(name:'CLUSTER_FEATURES', defaultValue: '', description: 'Comma-separated cluster features (e.g., no-cni,external-oidc,autoscaler). Run --list-features to see options.')
+        string(name:'EXTRA_FEATURE_VARS', defaultValue: '', description: 'Additional feature vars as key=value pairs separated by spaces (e.g., root_volume_size=500 user_agent=my-agent)')
+        string(name:'ETCD_KMS_ARN', defaultValue: '', description: 'AWS KMS ARN for etcd encryption (required when CLUSTER_FEATURES includes etcd-kms)')
         booleanParam(name:'RUN_UPGRADE_TESTS', defaultValue: false, description: 'Run control plane and machine pool upgrade tests after provisioning')
         booleanParam(name:'CLEANUP_AFTER_TEST', defaultValue: true, description: 'Delete cluster after successful provisioning (E2E test)')
+        booleanParam(name:'RESTORE_HYPERSHIFT', defaultValue: true, description: 'Restore HyperShift and disable CAPI/CAPA after test (uncheck to leave CAPI enabled)')
     }
     stages {
         stage('Clone the ROSA HCP E2E Test Repository') {
