@@ -323,13 +323,20 @@ pipeline {
                 OCP_HUB_CLUSTER_USER = "${params.OCP_HUB_CLUSTER_USER}"
                 OCP_HUB_CLUSTER_PASSWORD = "${params.OCP_HUB_CLUSTER_PASSWORD}"
                 MCE_NAMESPACE = "${params.MCE_NAMESPACE}"
+                CLUSTER_FEATURES = "${params.CLUSTER_FEATURES}"
             }
             steps {
                 script {
                     try {
                         sh '''
                             cd rosa-hcp-e2e-test
-                            ./run-test-suite.py 21-verify-feature-flags --format junit -vvv --ai-agent \
+                            # Build feature flags so requested_features flows to the verify playbook
+                            # (CLUSTER_FEATURES guaranteed non-empty by stage when guard)
+                            FEATURE_FLAGS=""
+                            for feature in $(echo "${CLUSTER_FEATURES}" | tr ',' ' '); do
+                                FEATURE_FLAGS="${FEATURE_FLAGS} --feature ${feature}"
+                            done
+                            ./run-test-suite.py 21-verify-feature-flags --format junit -vvv --ai-agent ${FEATURE_FLAGS} \
                               -e OCP_HUB_API_URL="${OCP_HUB_API_URL}" \
                               -e OCP_HUB_CLUSTER_USER="${OCP_HUB_CLUSTER_USER}" \
                               -e OCP_HUB_CLUSTER_PASSWORD="${OCP_HUB_CLUSTER_PASSWORD}" \
