@@ -1,0 +1,243 @@
+apiVersion: cluster.open-cluster-management.io/v1
+kind: ManagedCluster
+metadata:
+  name: {{ cluster_name }}
+  namespace: {{ capi_namespace }}
+  labels:
+    automation.acm.redhat.com/test-case: "ACM-21174-Combined"
+    automation.acm.redhat.com/network-automation: "true"
+    automation.acm.redhat.com/role-automation: "true"
+spec:
+  hubAcceptsClient: true
+---
+apiVersion: cluster.x-k8s.io/v1beta1
+kind: Cluster
+metadata:
+  name: {{ cluster_name }}
+  namespace: {{ capi_namespace }}
+  labels:
+    automation.acm.redhat.com/test-case: "ACM-21174-Combined"
+    automation.acm.redhat.com/network-automation: "true"
+    automation.acm.redhat.com/role-automation: "true"
+spec:
+  clusterNetwork:
+    pods:
+      cidrBlocks: ["{{ cluster_network.pod_cidr | default('192.168.0.0/16') }}"]
+  infrastructureRef:
+    apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+    kind: ROSACluster
+    name: {{ cluster_name }}
+    namespace: {{ capi_namespace }}
+  controlPlaneRef:
+    apiVersion: controlplane.cluster.x-k8s.io/v1beta2
+    kind: ROSAControlPlane
+    name: {{ cluster_name }}
+    namespace: {{ capi_namespace }}
+---
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+kind: ROSACluster
+metadata:
+  name: {{ cluster_name }}
+  namespace: {{ capi_namespace }}
+  labels:
+    automation.acm.redhat.com/test-case: "ACM-21174-Combined"
+    automation.acm.redhat.com/network-automation: "true"
+    automation.acm.redhat.com/role-automation: "true"
+spec: {}
+---
+apiVersion: controlplane.cluster.x-k8s.io/v1beta2
+kind: ROSAControlPlane
+metadata:
+  name: {{ cluster_name }}
+  namespace: {{ capi_namespace }}
+  {% if cluster_description is defined and cluster_description -%}
+  annotations:
+    cluster.x-k8s.io/description: |
+{{ cluster_description | indent(6, first=True) }}
+  {% endif -%}
+  labels:
+    automation.acm.redhat.com/test-case: "ACM-21174-Combined"
+    automation.acm.redhat.com/network-automation: "true"
+    automation.acm.redhat.com/role-automation: "true"
+spec:
+  rosaNetworkRef:
+    name: {{ cluster_name }}-network
+
+  rosaRoleConfigRef:
+    name: {{ cluster_name }}-roles
+
+  rosaClusterName: {{ cluster_name }}
+  domainPrefix: {{ domain_prefix | default(rosa_role_prefix) | default(cluster_name) }}
+  version: "{{ rcp_version | default(openshift_version) | default('4.22.0') }}"
+{% if fips is defined and fips | bool %}
+  fips: "Enabled"
+{% endif %}
+  region: {{ aws_region }}
+{% if channel is defined and channel %}
+  channel: {{ channel }}
+{% endif %}
+{% if channel_group is defined and channel_group %}
+  channelGroup: {{ channel_group }}
+{% endif %}
+
+{% if private is defined and private | bool %}
+  endpointAccess: Private
+{% else %}
+  endpointAccess: Public
+{% endif %}
+
+  defaultMachinePoolSpec:
+    instanceType: {{ machine_pool.instance_type | default('m5.xlarge') }}
+    autoscaling:
+      maxReplicas: {{ machine_pool.max_replicas | default(availability_zones_list | default(['us-west-2a']) | length * 2) }}
+      minReplicas: {{ machine_pool.min_replicas | default(availability_zones_list | default(['us-west-2a']) | length) }}
+
+  additionalTags:
+    env: {{ environment_tag | default('test') }}
+    purpose: {{ purpose_tag | default('acm21174-combined-testing') }}
+    automated: "true"
+    network-automation: "true"
+    role-automation: "{{ 'true' if rosa_role_config is defined and rosa_role_config.enabled | default(false) else 'false' }}"
+{% if additional_tags is defined and additional_tags %}
+{% for key, value in additional_tags.items() %}
+    {{ key }}: "{{ value }}"
+{% endfor %}
+{% endif %}
+
+  network:
+    machineCIDR: {{ cluster_network.machine_cidr | default('10.0.0.0/16') }}
+{% if no_cni is defined and no_cni | bool %}
+    networkType: Other
+{% endif %}
+    podCIDR: {{ cluster_network.pod_cidr | default('10.128.0.0/14') }}
+    serviceCIDR: {{ cluster_network.service_cidr | default('172.30.0.0/16') }}
+
+{% if external_oidc is defined and external_oidc | bool %}
+  enableExternalAuthProviders: true
+{% endif %}
+
+{% if etcd_encryption_kms_arn is defined and etcd_encryption_kms_arn %}
+  etcdEncryptionKMSARN: {{ etcd_encryption_kms_arn }}
+{% endif %}
+
+{% if user_agent is defined and user_agent %}
+  userAgent: {{ user_agent }}
+{% endif %}
+
+{% if http_proxy is defined and http_proxy | bool %}
+  proxy:
+    httpProxy: {{ http_proxy_url | default('') }}
+    httpsProxy: {{ https_proxy_url | default('') }}
+    noProxy: {{ no_proxy | default('') }}
+{% endif %}
+
+{% if additional_security_groups is defined and additional_security_groups %}
+  additionalSecurityGroups:
+{% for sg in additional_security_groups %}
+    - {{ sg }}
+{% endfor %}
+{% endif %}
+
+{% if image_registry_config is defined and image_registry_config | bool %}
+  clusterRegistryConfig:
+    allowedRegistriesForImport:
+      - domainName: "{{ registry_domain | default('trusted-registry.com') }}"
+        insecure: false
+    registrySources:
+      allowedRegistries:
+        - "{{ allowed_registry | default('allowed-registry.com') }}"
+{% endif %}
+
+{% if cluster_autoscaler_expander is defined and cluster_autoscaler_expander | bool %}
+  autoscaler:
+    expanders:
+      - LeastWaste
+{% endif %}
+
+{% if log_forward_enabled is defined and log_forward_enabled | bool %}
+{% if log_forward_cloudwatch_role_arn is defined or log_forward_cloudwatch_log_group is defined %}
+  cloudWatchlogForwarder:
+{% if log_forward_applications is defined and log_forward_applications %}
+    applications:
+{% for app in log_forward_applications %}
+      - {{ app }}
+{% endfor %}
+{% endif %}
+{% if log_forward_cloudwatch_role_arn is defined and log_forward_cloudwatch_role_arn %}
+    cloudWatchLogRoleArn: {{ log_forward_cloudwatch_role_arn | trim }}
+{% endif %}
+{% if log_forward_cloudwatch_log_group is defined and log_forward_cloudwatch_log_group %}
+    cloudWatchLogGroupName: {{ log_forward_cloudwatch_log_group | trim }}
+{% endif %}
+{% endif %}
+
+{% if log_forward_s3_bucket is defined or log_forward_s3_prefix is defined %}
+  s3LogForwarder:
+{% if log_forward_applications is defined and log_forward_applications %}
+    applications:
+{% for app in log_forward_applications %}
+      - {{ app }}
+{% endfor %}
+{% endif %}
+{% if log_forward_s3_bucket is defined and log_forward_s3_bucket %}
+    s3ConfigBucketName: {{ log_forward_s3_bucket | trim }}
+{% endif %}
+{% if log_forward_s3_prefix is defined and log_forward_s3_prefix %}
+    s3ConfigBucketPrefix: {{ log_forward_s3_prefix | trim }}
+{% endif %}
+{% endif %}
+{% endif %}
+
+---
+apiVersion: cluster.x-k8s.io/v1beta1
+kind: MachinePool
+metadata:
+  name: {{ cluster_name }}
+  namespace: {{ capi_namespace }}
+  labels:
+    automation.acm.redhat.com/test-case: "ACM-21174-Combined"
+    automation.acm.redhat.com/network-automation: "true"
+    automation.acm.redhat.com/role-automation: "true"
+spec:
+  clusterName: {{ cluster_name }}
+  replicas: {{ machine_pool.replicas | default(availability_zones_list | default(['us-west-2a']) | length) }}
+  template:
+    spec:
+      clusterName: {{ cluster_name }}
+      bootstrap:
+        dataSecretName: ""
+      infrastructureRef:
+        name: {{ cluster_name }}
+        apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+        kind: ROSAMachinePool
+        namespace: {{ capi_namespace }}
+---
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+kind: ROSAMachinePool
+metadata:
+  name: {{ cluster_name }}
+  namespace: {{ capi_namespace }}
+  labels:
+    automation.acm.redhat.com/test-case: "ACM-21174-Combined"
+    automation.acm.redhat.com/network-automation: "true"
+    automation.acm.redhat.com/role-automation: "true"
+spec:
+  nodePoolName: {{ (rosa_role_prefix | default(domain_prefix) | default('test'))[:4] | regex_replace('-$', '') }}-np
+  instanceType: {{ machine_pool.instance_type | default('m5.xlarge') }}
+  version: {{ openshift_version }}
+{% if root_volume_size is defined and root_volume_size %}
+  rootVolume:
+    size: {{ root_volume_size }}
+{% endif %}
+{% if parallel_node_upgrade is defined and parallel_node_upgrade | bool %}
+  updateConfig:
+    rollingUpdate:
+      maxSurge: {{ max_surge | default(1) }}
+      maxUnavailable: {{ max_unavailable | default(0) }}
+{% endif %}
+{% if additional_security_groups is defined and additional_security_groups %}
+  additionalSecurityGroups:
+{% for sg in additional_security_groups %}
+    - {{ sg }}
+{% endfor %}
+{% endif %}
