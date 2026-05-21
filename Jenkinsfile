@@ -6,28 +6,31 @@
 // ============================================================================
 // Pipeline Flow:
 //   1. Configure MCE Environment (suite 10) - Disable HyperShift, enable CAPI/CAPA
-//   2. Provision ROSA HCP Cluster (suite 20) - Only runs if configuration passes
-//   3. Add ROSA MachinePool (suite 27) - Only runs if provisioning passes
-//   4. Delete ROSA MachinePool (suite 28) - Only runs if add ROSA machinepool passes
-//   5. Upgrade ROSA Control Plane (suite 25) - Only runs if provisioning passes (optional)
-//   6. Upgrade ROSA Machine Pool (suite 26) - Only runs if CP upgrade passes (optional)
-//   7. Delete ROSA HCP Cluster (suite 30) - Only runs if provisioning passes (optional)
-//   8. Restore HyperShift (suite 41) - Always runs as final stage, re-enables HyperShift
+//   2. Validate Feature Flags (dry-run) - Only runs if CLUSTER_FEATURES is set, fails fast on bad input
+//   3. Provision ROSA HCP Cluster (suite 20) - Only runs if configuration passes
+//   4. Verify Feature Flags (suite 21) - Only runs if provisioning passes AND CLUSTER_FEATURES is set
+//   5. Add ROSA MachinePool (suite 27) - Only runs if provisioning passes
+//   6. Delete ROSA MachinePool (suite 28) - Only runs if add ROSA machinepool passes
+//   7. Upgrade ROSA Control Plane (suite 25) - Only runs if provisioning passes (optional)
+//   8. Upgrade ROSA Machine Pool (suite 26) - Only runs if CP upgrade passes (optional)
+//   9. Delete ROSA HCP Cluster (suite 30) - Only runs if provisioning passes (optional)
+//  10. Restore HyperShift (suite 41) - Runs if RESTORE_HYPERSHIFT=true (default), re-enables HyperShift
 //
 // HyperShift State Management:
 //   Suite 10 automatically disables HyperShift and enables CAPI/CAPA.
-//   The final stage always restores HyperShift via suite 41, regardless of
-//   test outcome, so the shared cluster is left in its expected state.
+//   By default, suite 41 restores HyperShift after testing. Set
+//   RESTORE_HYPERSHIFT=false to leave CAPI/CAPA enabled for further testing.
 //
 // Test Suites:
 //   10-configure-mce-environment             - Disable HyperShift, enable CAPI/CAPA (RHACM4K-61722)
 //   20-rosa-hcp-provision                    - Provision ROSA HCP cluster (runs if 10 passes)
+//   21-verify-feature-flags                  - Verify features applied to cluster (runs if 20 passes + features set)
 //   27-rosa-hcp-add-machinepool              - Add a ROSA MachinePool (runs if 20 passes)
 //   28-rosa-hcp-delete-machinepool           - Delete the ROSA MachinePool (runs if 27 passes)
 //   25-rosa-hcp-upgrade-control-plane        - Upgrade control plane (runs if 20 passes, optional)
 //   26-rosa-hcp-upgrade-machine-pool         - Upgrade machine pool (runs if 25 passes, optional)
 //   30-rosa-hcp-delete                       - Delete ROSA HCP cluster (runs if 20 passes, optional)
-//   41-disable-capi-enable-hypershift        - Restore HyperShift (always runs as final stage)
+//   41-disable-capi-enable-hypershift        - Restore HyperShift (runs if RESTORE_HYPERSHIFT=true)
 //   05-verify-mce-environment                - Verify MCE environment (manual/separate)
 //
 // Credentials Required:
@@ -49,14 +52,16 @@
 //
 // Pipeline Behavior:
 //   - Stage 1 (Configure): If fails → skips to Restore HyperShift stage
-//   - Stage 2 (Provision): Only runs if Stage 1 succeeds
-//   - Stage 3 (Add ROSA MachinePool): Only runs if Stage 2 succeeds
-//   - Stage 4 (Delete ROSA MachinePool): Only runs if Stage 3 succeeds
-//   - Stage 5 (Upgrade ROSA CP): Only runs if Stage 2 succeeds AND RUN_UPGRADE_TESTS=true
-//   - Stage 6 (Upgrade ROSA MP): Only runs if Stage 5 succeeds AND RUN_UPGRADE_TESTS=true
-//   - Stage 7 (Delete): Only runs if provisioning succeeded AND CLEANUP_AFTER_TEST=true (runs even if upgrades fail)
-//   - Stage 8 (Restore HyperShift): Always runs — disables CAPI/CAPA, re-enables HyperShift
-//   - All test results archived as JUnit XML for Jenkins reporting
+//   - Stage 2 (Validate Features): Only runs if CLUSTER_FEATURES is set; validates input only (no cluster connection)
+//   - Stage 3 (Provision): Only runs if Stage 1 succeeds (and Stage 2 if features set)
+//   - Stage 4 (Verify Features): Only runs if Stage 3 succeeds AND CLUSTER_FEATURES is set
+//   - Stage 5 (Add ROSA MachinePool): Only runs if Stage 3 succeeds
+//   - Stage 6 (Delete ROSA MachinePool): Only runs if Stage 5 succeeds
+//   - Stage 7 (Upgrade ROSA CP): Only runs if Stage 3 succeeds AND RUN_UPGRADE_TESTS=true
+//   - Stage 8 (Upgrade ROSA MP): Only runs if Stage 7 succeeds AND RUN_UPGRADE_TESTS=true
+//   - Stage 9 (Delete): Only runs if provisioning succeeded AND CLEANUP_AFTER_TEST=true (runs even if upgrades fail)
+//   - Stage 10 (Restore HyperShift): Runs if RESTORE_HYPERSHIFT=true (default) — disables CAPI/CAPA, re-enables HyperShift
+//   - Stage 11 (Archive): Archives all test results as JUnit XML for Jenkins reporting
 //
 // Test Results:
 //   - JUnit XML: test-results/**/*.xml (only format generated)
@@ -188,6 +193,53 @@ pipeline {
                 }
             }
         }
+        stage('Validate Feature Flags') {
+            when {
+                allOf {
+                    expression { currentBuild.result != 'FAILURE' }
+                    expression { params.CLUSTER_FEATURES != '' }
+                }
+            }
+            environment {
+                CLUSTER_FEATURES = "${params.CLUSTER_FEATURES}"
+                EXTRA_FEATURE_VARS = "${params.EXTRA_FEATURE_VARS}"
+                ETCD_KMS_ARN = "${params.ETCD_KMS_ARN}"
+            }
+            steps {
+                script {
+                    try {
+                        sh '''
+                            cd rosa-hcp-e2e-test
+                            # Build feature flags from CLUSTER_FEATURES parameter
+                            FEATURE_FLAGS=""
+                            for feature in $(echo "${CLUSTER_FEATURES}" | tr ',' ' '); do
+                                FEATURE_FLAGS="${FEATURE_FLAGS} --feature ${feature}"
+                            done
+                            # Build extra vars from EXTRA_FEATURE_VARS and ETCD_KMS_ARN
+                            EXTRA_VARS=""
+                            if [ -n "${ETCD_KMS_ARN}" ]; then
+                                EXTRA_VARS="${EXTRA_VARS} -e etcd_encryption_kms_arn=${ETCD_KMS_ARN}"
+                            fi
+                            if [ -n "${EXTRA_FEATURE_VARS}" ]; then
+                                for var in ${EXTRA_FEATURE_VARS}; do
+                                    EXTRA_VARS="${EXTRA_VARS} -e \"${var}\""
+                                done
+                            fi
+                            # Validate feature names, version compatibility, dependencies, and
+                            # required inputs — no cluster connection needed, exits before ansible
+                            ./run-test-suite.py 20-rosa-hcp-provision --validate-only ${FEATURE_FLAGS} \
+                              ${EXTRA_VARS}
+                        '''
+                        echo "Feature validation passed for: ${CLUSTER_FEATURES}"
+                    }
+                    catch (ex) {
+                        echo "Feature validation FAILED for: ${CLUSTER_FEATURES}"
+                        echo 'Check feature names with: ./run-test-suite.py --list-features'
+                        currentBuild.result = 'FAILURE'
+                    }
+                }
+            }
+        }
         stage('Provision a ROSA HCP Cluster') {
             when {
                 expression { currentBuild.result != 'FAILURE' }
@@ -197,6 +249,9 @@ pipeline {
                 OCP_HUB_CLUSTER_USER = "${params.OCP_HUB_CLUSTER_USER}"
                 OCP_HUB_CLUSTER_PASSWORD = "${params.OCP_HUB_CLUSTER_PASSWORD}"
                 MCE_NAMESPACE = "${params.MCE_NAMESPACE}"
+                CLUSTER_FEATURES = "${params.CLUSTER_FEATURES}"
+                EXTRA_FEATURE_VARS = "${params.EXTRA_FEATURE_VARS}"
+                ETCD_KMS_ARN = "${params.ETCD_KMS_ARN}"
             }
             steps {
                 script {
@@ -210,10 +265,27 @@ pipeline {
                         ]) {
                             sh '''
                                 cd rosa-hcp-e2e-test
+                                # Build feature flags from CLUSTER_FEATURES parameter
+                                FEATURE_FLAGS=""
+                                if [ -n "${CLUSTER_FEATURES}" ]; then
+                                    for feature in $(echo "${CLUSTER_FEATURES}" | tr ',' ' '); do
+                                        FEATURE_FLAGS="${FEATURE_FLAGS} --feature ${feature}"
+                                    done
+                                fi
+                                # Build extra vars from EXTRA_FEATURE_VARS and ETCD_KMS_ARN
+                                EXTRA_VARS=""
+                                if [ -n "${ETCD_KMS_ARN}" ]; then
+                                    EXTRA_VARS="${EXTRA_VARS} -e etcd_encryption_kms_arn=${ETCD_KMS_ARN}"
+                                fi
+                                if [ -n "${EXTRA_FEATURE_VARS}" ]; then
+                                    for var in ${EXTRA_FEATURE_VARS}; do
+                                        EXTRA_VARS="${EXTRA_VARS} -e \"${var}\""
+                                    done
+                                fi
                                 # Execute the ROSA HCP provisioning test suite with maximum verbosity
                                 # Pass Jenkins parameters and credentials as Ansible extra vars
                                 # AI agents enabled for autonomous issue detection and remediation
-                                ./run-test-suite.py 20-rosa-hcp-provision --format junit -vvv --ai-agent \
+                                ./run-test-suite.py 20-rosa-hcp-provision --format junit -vvv --ai-agent ${FEATURE_FLAGS} \
                                   -e OCP_HUB_API_URL="${OCP_HUB_API_URL}" \
                                   -e OCP_HUB_CLUSTER_USER="${OCP_HUB_CLUSTER_USER}" \
                                   -e OCP_HUB_CLUSTER_PASSWORD="${OCP_HUB_CLUSTER_PASSWORD}" \
@@ -224,7 +296,8 @@ pipeline {
                                   -e AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY}" \
                                   -e AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID}" \
                                   -e AWS_REGION="us-west-2" \
-                                  -e name_prefix="${NAME_PREFIX}"
+                                  -e name_prefix="${NAME_PREFIX}" \
+                                  ${EXTRA_VARS}
                             '''
                         }
                         // Archive provisioning test results, including AI agent logs
@@ -234,6 +307,47 @@ pipeline {
                     catch (ex) {
                         echo 'ROSA HCP Provisioning Tests failed'
                         currentBuild.result = 'FAILURE'
+                    }
+                }
+            }
+        }
+        stage('Verify Feature Flags') {
+            when {
+                allOf {
+                    expression { currentBuild.result != 'FAILURE' }
+                    expression { params.CLUSTER_FEATURES != '' }
+                }
+            }
+            environment {
+                OCP_HUB_API_URL = "${params.OCP_HUB_API_URL}"
+                OCP_HUB_CLUSTER_USER = "${params.OCP_HUB_CLUSTER_USER}"
+                OCP_HUB_CLUSTER_PASSWORD = "${params.OCP_HUB_CLUSTER_PASSWORD}"
+                MCE_NAMESPACE = "${params.MCE_NAMESPACE}"
+                CLUSTER_FEATURES = "${params.CLUSTER_FEATURES}"
+            }
+            steps {
+                script {
+                    try {
+                        sh '''
+                            cd rosa-hcp-e2e-test
+                            # Build feature flags so requested_features flows to the verify playbook
+                            # (CLUSTER_FEATURES guaranteed non-empty by stage when guard)
+                            FEATURE_FLAGS=""
+                            for feature in $(echo "${CLUSTER_FEATURES}" | tr ',' ' '); do
+                                FEATURE_FLAGS="${FEATURE_FLAGS} --feature ${feature}"
+                            done
+                            ./run-test-suite.py 21-verify-feature-flags --format junit -vvv --ai-agent ${FEATURE_FLAGS} \
+                              -e OCP_HUB_API_URL="${OCP_HUB_API_URL}" \
+                              -e OCP_HUB_CLUSTER_USER="${OCP_HUB_CLUSTER_USER}" \
+                              -e OCP_HUB_CLUSTER_PASSWORD="${OCP_HUB_CLUSTER_PASSWORD}" \
+                              -e MCE_NAMESPACE="${MCE_NAMESPACE}" \
+                              -e cluster_name="${NAME_PREFIX}-rosa-hcp"
+                        '''
+                        archiveArtifacts artifacts: 'rosa-hcp-e2e-test/test-results/**/*.xml', allowEmptyArchive: true, followSymlinks: false, fingerprint: true
+                    }
+                    catch (ex) {
+                        echo 'Feature flag verification failed — features may not have been applied correctly'
+                        currentBuild.result = 'UNSTABLE'
                     }
                 }
             }
@@ -458,18 +572,10 @@ pipeline {
                 }
             }
         }
-        stage('Archive the CAPI/CAPA Artifacts') {
-            steps {
-                script {
-                   // Archive artifacts from both old (results/) and new (test-results/) systems, including AI agent logs
-                   archiveArtifacts artifacts: 'rosa-hcp-e2e-test/results/**/*.xml, rosa-hcp-e2e-test/test-results/**/*.xml, rosa-hcp-e2e-test/agents/knowledge_base/intervention_log.json', allowEmptyArchive: true, followSymlinks: false
-
-                   // Publish JUnit test results from both systems
-                   junit allowEmptyResults: true, testResults: 'rosa-hcp-e2e-test/results/**/*.xml, rosa-hcp-e2e-test/test-results/**/*.xml'
-                }
-            }
-        }
         stage('Restore HyperShift') {
+            when {
+                expression { params.RESTORE_HYPERSHIFT == true }
+            }
             environment {
                 OCP_HUB_API_URL = "${params.OCP_HUB_API_URL}"
                 OCP_HUB_CLUSTER_USER = "${params.OCP_HUB_CLUSTER_USER}"
@@ -493,6 +599,17 @@ pipeline {
                         echo "WARNING: Failed to restore HyperShift — cluster may need manual intervention"
                         echo "Run manually: ./run-test-suite.py 41-disable-capi-enable-hypershift"
                     }
+                }
+            }
+        }
+        stage('Archive the CAPI/CAPA Artifacts') {
+            steps {
+                script {
+                   // Archive artifacts from both old (results/) and new (test-results/) systems, including AI agent logs
+                   archiveArtifacts artifacts: 'rosa-hcp-e2e-test/results/**/*.xml, rosa-hcp-e2e-test/test-results/**/*.xml, rosa-hcp-e2e-test/agents/knowledge_base/intervention_log.json', allowEmptyArchive: true, followSymlinks: false
+
+                   // Publish JUnit test results from both systems
+                   junit allowEmptyResults: true, testResults: 'rosa-hcp-e2e-test/results/**/*.xml, rosa-hcp-e2e-test/test-results/**/*.xml'
                 }
             }
         }
