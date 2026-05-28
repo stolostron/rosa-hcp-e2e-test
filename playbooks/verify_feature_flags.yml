@@ -1,0 +1,416 @@
+---
+- name: Verify feature flags on provisioned ROSA HCP cluster
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - ../vars/vars.yml
+  vars:
+    capi_namespace: "{{ capi_namespace | default('ns-rosa-hcp') }}"
+    features_passed: 0
+    features_failed: 0
+    features_skipped: 0
+
+  tasks:
+    # ================================================================
+    # SETUP: Login and get cluster resources
+    # ================================================================
+    - name: Set cluster credentials
+      set_fact:
+        ocp_user: "{{ OCP_HUB_CLUSTER_USER }}"
+        ocp_password: "{{ OCP_HUB_CLUSTER_PASSWORD }}"
+        api_url: "{{ OCP_HUB_API_URL }}"
+
+    - name: Login to OpenShift Hub Cluster
+      include_tasks: "{{ playbook_dir }}/../tasks/login_ocp.yml"
+
+    - name: Validate cluster_name is provided
+      fail:
+        msg: "cluster_name is required. Pass it with -e cluster_name=<name>"
+      when: cluster_name is not defined or cluster_name == ''
+
+    - name: Parse requested features list
+      set_fact:
+        requested_features_list: "{{ (requested_features | default('') | string).split(',') | select | list }}"
+
+    - name: Get ROSAControlPlane spec
+      shell: >
+        oc get rosacontrolplane {{ cluster_name }} -n {{ capi_namespace }}
+        -o json
+      register: rcp_raw
+
+    - name: Parse ROSAControlPlane
+      set_fact:
+        rcp: "{{ rcp_raw.stdout | from_json }}"
+
+    - name: Get ROSAMachinePool spec
+      shell: >
+        oc get rosamachinepool {{ cluster_name }} -n {{ capi_namespace }}
+        -o json
+      register: rmp_raw
+
+    - name: Parse ROSAMachinePool
+      set_fact:
+        rmp: "{{ rmp_raw.stdout | from_json }}"
+
+    - name: Get ROSANetwork spec
+      shell: >
+        oc get rosanetwork {{ cluster_name }}-network -n {{ capi_namespace }}
+        -o json
+      register: rnet_raw
+      ignore_errors: true
+
+    - name: Parse ROSANetwork
+      set_fact:
+        rnet: "{{ rnet_raw.stdout | from_json }}"
+      when: rnet_raw.rc == 0
+
+    - name: Display cluster info
+      debug:
+        msg: |
+          ═══════════════════════════════════════════════════════════════
+          Feature Flag Verification for: {{ cluster_name }}
+          Namespace: {{ capi_namespace }}
+          Requested features: {{ requested_features_list | join(', ') | default('none (all checks will SKIP)', true) }}
+          ═══════════════════════════════════════════════════════════════
+
+    # ================================================================
+    # FEATURE CHECKS
+    # ================================================================
+
+    # --- no_cni ---
+    - name: "CHECK: No CNI Plugin (networkType: Other)"
+      block:
+        - name: Assert networkType is Other
+          assert:
+            that:
+              - rcp.spec.network.networkType is defined
+              - rcp.spec.network.networkType == 'Other'
+            fail_msg: "FAIL: networkType is '{{ rcp.spec.network.networkType | default('not set') }}', expected 'Other'"
+            success_msg: "PASS: networkType = Other"
+        - set_fact:
+            features_passed: "{{ features_passed | int + 1 }}"
+      rescue:
+        - include_tasks: "{{ playbook_dir }}/../tasks/verify_feature_rescue.yml"
+          vars:
+            feature_id: no_cni
+            fail_detail: "networkType is not 'Other'"
+
+    # --- private_network ---
+    - name: "CHECK: Private Cluster (endpointAccess: Private)"
+      block:
+        - name: Assert endpointAccess is Private
+          assert:
+            that:
+              - rcp.spec.endpointAccess is defined
+              - rcp.spec.endpointAccess == 'Private'
+            fail_msg: "FAIL: endpointAccess is '{{ rcp.spec.endpointAccess | default('not set') }}', expected 'Private'"
+            success_msg: "PASS: endpointAccess = Private"
+        - set_fact:
+            features_passed: "{{ features_passed | int + 1 }}"
+      rescue:
+        - include_tasks: "{{ playbook_dir }}/../tasks/verify_feature_rescue.yml"
+          vars:
+            feature_id: private_network
+            fail_detail: "endpointAccess is not 'Private'"
+
+    # --- external_oidc ---
+    - name: "CHECK: External OIDC (enableExternalAuthProviders)"
+      block:
+        - name: Assert enableExternalAuthProviders is true
+          assert:
+            that:
+              - rcp.spec.enableExternalAuthProviders is defined
+              - rcp.spec.enableExternalAuthProviders | bool
+            fail_msg: "FAIL: enableExternalAuthProviders not set"
+            success_msg: "PASS: enableExternalAuthProviders = true"
+        - set_fact:
+            features_passed: "{{ features_passed | int + 1 }}"
+      rescue:
+        - include_tasks: "{{ playbook_dir }}/../tasks/verify_feature_rescue.yml"
+          vars:
+            feature_id: external_oidc
+            fail_detail: "enableExternalAuthProviders is not set"
+
+    # --- fips ---
+    - name: "CHECK: FIPS Mode"
+      block:
+        - name: Assert fips is Enabled
+          assert:
+            that:
+              - rcp.spec.fips is defined
+              - rcp.spec.fips == 'Enabled'
+            fail_msg: "FAIL: fips is '{{ rcp.spec.fips | default('not set') }}'"
+            success_msg: "PASS: fips = Enabled"
+        - set_fact:
+            features_passed: "{{ features_passed | int + 1 }}"
+      rescue:
+        - include_tasks: "{{ playbook_dir }}/../tasks/verify_feature_rescue.yml"
+          vars:
+            feature_id: fips
+            fail_detail: "fips is not set to 'Enabled'"
+
+    # --- etcd_kms ---
+    - name: "CHECK: ETCD KMS Encryption"
+      block:
+        - name: Assert etcdEncryptionKMSARN is set
+          assert:
+            that:
+              - rcp.spec.etcdEncryptionKMSARN is defined
+              - rcp.spec.etcdEncryptionKMSARN | length > 0
+            fail_msg: "FAIL: etcdEncryptionKMSARN not set"
+            success_msg: "PASS: etcdEncryptionKMSARN = {{ rcp.spec.etcdEncryptionKMSARN }}"
+        - set_fact:
+            features_passed: "{{ features_passed | int + 1 }}"
+      rescue:
+        - include_tasks: "{{ playbook_dir }}/../tasks/verify_feature_rescue.yml"
+          vars:
+            feature_id: etcd_kms
+            fail_detail: "etcdEncryptionKMSARN is not set"
+
+    # --- user_agent ---
+    - name: "CHECK: User Agent"
+      block:
+        - name: Assert userAgent is set
+          assert:
+            that:
+              - rcp.spec.userAgent is defined
+              - rcp.spec.userAgent | length > 0
+            fail_msg: "FAIL: userAgent not set"
+            success_msg: "PASS: userAgent = {{ rcp.spec.userAgent }}"
+        - set_fact:
+            features_passed: "{{ features_passed | int + 1 }}"
+      rescue:
+        - include_tasks: "{{ playbook_dir }}/../tasks/verify_feature_rescue.yml"
+          vars:
+            feature_id: user_agent
+            fail_detail: "userAgent is not set"
+
+    # --- cluster_autoscaler_expander ---
+    - name: "CHECK: Cluster Autoscaler Expander"
+      block:
+        - name: Assert autoscaler expanders configured
+          assert:
+            that:
+              - rcp.spec.autoscaler is defined
+              - rcp.spec.autoscaler.expanders is defined
+              - rcp.spec.autoscaler.expanders | length > 0
+            fail_msg: "FAIL: autoscaler expanders not set"
+            success_msg: "PASS: autoscaler.expanders = {{ rcp.spec.autoscaler.expanders }}"
+        - set_fact:
+            features_passed: "{{ features_passed | int + 1 }}"
+      rescue:
+        - include_tasks: "{{ playbook_dir }}/../tasks/verify_feature_rescue.yml"
+          vars:
+            feature_id: cluster_autoscaler_expander
+            fail_detail: "autoscaler.expanders is not set"
+
+    # --- image_registry ---
+    - name: "CHECK: Image Registry Config"
+      block:
+        - name: Assert clusterRegistryConfig is set
+          assert:
+            that:
+              - rcp.spec.clusterRegistryConfig is defined
+            fail_msg: "FAIL: clusterRegistryConfig not set"
+            success_msg: "PASS: clusterRegistryConfig configured"
+        - set_fact:
+            features_passed: "{{ features_passed | int + 1 }}"
+      rescue:
+        - include_tasks: "{{ playbook_dir }}/../tasks/verify_feature_rescue.yml"
+          vars:
+            feature_id: image_registry
+            fail_detail: "clusterRegistryConfig is not set"
+
+    # --- additional_tags ---
+    - name: "CHECK: Additional Tags"
+      block:
+        - name: Assert custom tags present
+          assert:
+            that:
+              - rcp.spec.additionalTags is defined
+              - rcp.spec.additionalTags.keys() | length > 5
+            fail_msg: "FAIL: No custom additionalTags beyond defaults"
+            success_msg: "PASS: additionalTags has custom entries: {{ rcp.spec.additionalTags.keys() | list }}"
+        - set_fact:
+            features_passed: "{{ features_passed | int + 1 }}"
+      rescue:
+        - include_tasks: "{{ playbook_dir }}/../tasks/verify_feature_rescue.yml"
+          vars:
+            feature_id: additional_tags
+            fail_detail: "no custom tags found beyond defaults"
+
+    # --- domain_prefix (always set by provisioning, informational only) ---
+    - name: "CHECK: Domain Prefix"
+      debug:
+        msg: "INFO: domainPrefix = {{ rcp.spec.domainPrefix | default('not set') }}"
+
+    # --- channel_group ---
+    - name: "CHECK: Channel Group"
+      block:
+        - name: Assert channelGroup is set
+          assert:
+            that:
+              - rcp.spec.channelGroup is defined
+              - rcp.spec.channelGroup | length > 0
+            fail_msg: "FAIL: channelGroup not set"
+            success_msg: "PASS: channelGroup = {{ rcp.spec.channelGroup }}"
+        - set_fact:
+            features_passed: "{{ features_passed | int + 1 }}"
+      rescue:
+        - include_tasks: "{{ playbook_dir }}/../tasks/verify_feature_rescue.yml"
+          vars:
+            feature_id: channel_group
+            fail_detail: "channelGroup is not set"
+
+    # --- long cluster name (not a registry feature, always SKIP on failure) ---
+    - name: "CHECK: Long Cluster Name"
+      block:
+        - name: Assert cluster name length
+          assert:
+            that:
+              - rcp.spec.rosaClusterName | length > 20
+            fail_msg: "SKIP: cluster name '{{ rcp.spec.rosaClusterName }}' is not long ({{ rcp.spec.rosaClusterName | length }} chars)"
+            success_msg: "PASS: Long cluster name = {{ rcp.spec.rosaClusterName }} ({{ rcp.spec.rosaClusterName | length }} chars)"
+        - set_fact:
+            features_passed: "{{ features_passed | int + 1 }}"
+      rescue:
+        - debug:
+            msg: "SKIP: cluster name is not long (not a requestable feature)"
+        - set_fact:
+            features_skipped: "{{ features_skipped | int + 1 }}"
+
+    # --- disk_size ---
+    - name: "CHECK: Disk Volume Size"
+      block:
+        - name: Assert volumeSize is set
+          assert:
+            that:
+              - rmp.spec.volumeSize is defined
+              - rmp.spec.volumeSize | int != 300
+            fail_msg: "FAIL: volumeSize is default (300) or not set"
+            success_msg: "PASS: volumeSize = {{ rmp.spec.volumeSize }}"
+        - set_fact:
+            features_passed: "{{ features_passed | int + 1 }}"
+      rescue:
+        - include_tasks: "{{ playbook_dir }}/../tasks/verify_feature_rescue.yml"
+          vars:
+            feature_id: disk_size
+            fail_detail: "volumeSize is default (300) or not set"
+
+    # --- parallel_upgrade ---
+    - name: "CHECK: Parallel Node Upgrade"
+      block:
+        - name: Assert updateConfig is set
+          assert:
+            that:
+              - rmp.spec.updateConfig is defined
+              - rmp.spec.updateConfig.rollingUpdate is defined
+            fail_msg: "FAIL: updateConfig.rollingUpdate not set"
+            success_msg: "PASS: updateConfig.rollingUpdate configured (maxSurge={{ rmp.spec.updateConfig.rollingUpdate.maxSurge | default('?') }})"
+        - set_fact:
+            features_passed: "{{ features_passed | int + 1 }}"
+      rescue:
+        - include_tasks: "{{ playbook_dir }}/../tasks/verify_feature_rescue.yml"
+          vars:
+            feature_id: parallel_upgrade
+            fail_detail: "updateConfig.rollingUpdate is not set"
+
+    # --- security_groups ---
+    - name: "CHECK: Additional Security Groups"
+      block:
+        - name: Assert additionalSecurityGroups is set
+          assert:
+            that:
+              - rmp.spec.additionalSecurityGroups is defined
+              - rmp.spec.additionalSecurityGroups | length > 0
+            fail_msg: "FAIL: additionalSecurityGroups not set"
+            success_msg: "PASS: additionalSecurityGroups = {{ rmp.spec.additionalSecurityGroups }}"
+        - set_fact:
+            features_passed: "{{ features_passed | int + 1 }}"
+      rescue:
+        - include_tasks: "{{ playbook_dir }}/../tasks/verify_feature_rescue.yml"
+          vars:
+            feature_id: security_groups
+            fail_detail: "additionalSecurityGroups is not set"
+
+    # --- availability_zones ---
+    - name: "CHECK: Availability Zones"
+      block:
+        - name: Assert AZ count
+          assert:
+            that:
+              - rnet is defined
+              - rnet.spec.availabilityZones is defined
+              - rnet.spec.availabilityZones | length >= 2
+            fail_msg: "FAIL: availabilityZones count is {{ rnet.spec.availabilityZones | default([]) | length }}"
+            success_msg: "PASS: availabilityZones = {{ rnet.spec.availabilityZones }} ({{ rnet.spec.availabilityZones | length }} AZs)"
+        - set_fact:
+            features_passed: "{{ features_passed | int + 1 }}"
+      rescue:
+        - include_tasks: "{{ playbook_dir }}/../tasks/verify_feature_rescue.yml"
+          vars:
+            feature_id: availability_zones
+            fail_detail: "AZ count < 2 or network not available"
+
+    # --- audit_logging ---
+    - name: "CHECK: Log Forwarding (CloudWatch)"
+      block:
+        - name: Assert cloudWatchlogForwarder is set
+          assert:
+            that:
+              - rcp.spec.cloudWatchlogForwarder is defined
+            fail_msg: "FAIL: cloudWatchlogForwarder not set"
+            success_msg: "PASS: cloudWatchlogForwarder configured"
+        - set_fact:
+            features_passed: "{{ features_passed | int + 1 }}"
+      rescue:
+        - include_tasks: "{{ playbook_dir }}/../tasks/verify_feature_rescue.yml"
+          vars:
+            feature_id: audit_logging
+            fail_detail: "cloudWatchlogForwarder is not set"
+
+    # --- proxy_enabled ---
+    - name: "CHECK: Proxy Configuration"
+      block:
+        - name: Assert proxy is set
+          assert:
+            that:
+              - rcp.spec.proxy is defined
+            fail_msg: "FAIL: proxy not set"
+            success_msg: "PASS: proxy configured"
+        - set_fact:
+            features_passed: "{{ features_passed | int + 1 }}"
+      rescue:
+        - include_tasks: "{{ playbook_dir }}/../tasks/verify_feature_rescue.yml"
+          vars:
+            feature_id: proxy_enabled
+            fail_detail: "proxy is not set"
+
+    # ================================================================
+    # SUMMARY
+    # ================================================================
+    - name: Feature verification summary
+      debug:
+        msg: |
+
+          ═══════════════════════════════════════════════════════════════
+          FEATURE FLAG VERIFICATION SUMMARY
+          ═══════════════════════════════════════════════════════════════
+
+          Cluster: {{ cluster_name }}
+          Namespace: {{ capi_namespace }}
+          Requested: {{ requested_features_list | join(', ') | default('none', true) }}
+
+          Results:
+            Passed:  {{ features_passed }}
+            Skipped: {{ features_skipped }} (feature not requested — not an error)
+            Failed:  {{ features_failed }} (feature requested but missing from spec)
+
+          ═══════════════════════════════════════════════════════════════
+
+    - name: Fail if any requested features are missing from spec
+      fail:
+        msg: >
+          {{ features_failed }} requested feature(s) not found in cluster spec.
+          Review the FAIL messages above.
+      when: features_failed | int > 0
