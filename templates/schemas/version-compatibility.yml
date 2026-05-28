@@ -67,6 +67,18 @@ feature_availability:
   user_agent:
     min_version: "4.19"
     max_version: null
+  additional_tags:
+    min_version: "4.18"
+    max_version: null
+  availability_zones:
+    min_version: "4.18"
+    max_version: null
+  channel_group:
+    min_version: "4.18"
+    max_version: null
+  domain_prefix:
+    min_version: "4.18"
+    max_version: null
   basic_networking:
     min_version: "4.18"
     max_version: "4.19"

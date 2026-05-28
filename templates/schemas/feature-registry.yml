@@ -56,10 +56,8 @@ cli_aliases:
   image-registry: image_registry
   user-agent: user_agent
   security-groups: security_groups
-  long-name: domain_prefix
   autoscaling: default_autoscaling
 
-# Features valid for --feature CLI flag (Day1 creation features)
 # Features valid for --feature CLI flag (Day1 creation features).
 # Only features with working template conditionals are listed here.
 # byon: requires template changes to skip ROSANetwork and accept manual subnets
@@ -209,7 +207,7 @@ suites:
         mutable: false
         applies_to: [create]
         default: false
-        k8s_field: ".spec.externalOIDC"
+        k8s_field: ".spec.enableExternalAuthProviders"
         resource: ROSAControlPlane
 
       - id: security_groups
@@ -280,7 +278,7 @@ suites:
         applies_to: [create, apply]
         default: 1
         ci_default: 2
-        k8s_field: ".spec.strategy.rollingUpdate.maxSurge"
+        k8s_field: ".spec.updateConfig.rollingUpdate"
         resource: ROSAMachinePool
 
       - id: cluster_autoscaler_expander
@@ -366,7 +364,7 @@ suites:
         applies_to: [create]
         default: 300
         ci_default: 500
-        k8s_field: ".spec.rootVolume.size"
+        k8s_field: ".spec.volumeSize"
         resource: ROSAMachinePool
 
       - id: node_taints
@@ -402,7 +400,7 @@ suites:
         mutable: false
         applies_to: [create]
         default: false
-        k8s_field: ".spec.network.noCNI"
+        k8s_field: ".spec.network.networkType"
         resource: ROSAControlPlane
 
       - id: proxy_enabled
@@ -428,7 +426,7 @@ suites:
         mutable: true
         applies_to: [create, apply]
         default: false
-        k8s_field: ".spec.imageRegistry"
+        k8s_field: ".spec.clusterRegistryConfig"
         resource: ROSAControlPlane
 
   - id: domain-useragent
@@ -484,5 +482,5 @@ suites:
         mutable: true
         applies_to: [create, apply]
         default: false
-        k8s_field: ".spec.auditLogForwarding"
+        k8s_field: ".spec.cloudWatchlogForwarder"
         resource: ROSAControlPlane

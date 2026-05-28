@@ -282,21 +282,20 @@
     # --- disk_size ---
     - name: "CHECK: Disk Volume Size"
       block:
-        - name: Assert rootVolume size is set
+        - name: Assert volumeSize is set
           assert:
             that:
-              - rmp.spec.rootVolume is defined
-              - rmp.spec.rootVolume.size is defined
-              - rmp.spec.rootVolume.size | int != 300
-            fail_msg: "FAIL: rootVolume.size is default (300) or not set"
-            success_msg: "PASS: rootVolume.size = {{ rmp.spec.rootVolume.size }}"
+              - rmp.spec.volumeSize is defined
+              - rmp.spec.volumeSize | int != 300
+            fail_msg: "FAIL: volumeSize is default (300) or not set"
+            success_msg: "PASS: volumeSize = {{ rmp.spec.volumeSize }}"
         - set_fact:
             features_passed: "{{ features_passed | int + 1 }}"
       rescue:
         - include_tasks: "{{ playbook_dir }}/../tasks/verify_feature_rescue.yml"
           vars:
             feature_id: disk_size
-            fail_detail: "rootVolume.size is default (300) or not set"
+            fail_detail: "volumeSize is default (300) or not set"
 
     # --- parallel_upgrade ---
     - name: "CHECK: Parallel Node Upgrade"

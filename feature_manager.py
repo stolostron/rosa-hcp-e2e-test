@@ -1,5 +1,7 @@
 """Lightweight feature registry for CLI --feature flag resolution."""
 
+import json
+
 import yaml
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -55,14 +57,15 @@ class FeatureManager:
 
     def auto_resolve_deps(self, feature_names: List[str]) -> List[str]:
         resolved = list(feature_names)
-        added = True
-        while added:
-            added = False
-            for feat in list(resolved):
-                for dep in self._dependencies.get(feat, []):
-                    if dep not in resolved:
-                        resolved.append(dep)
-                        added = True
+        seen = set(resolved)
+        queue = list(feature_names)
+        while queue:
+            feat = queue.pop(0)
+            for dep in self._dependencies.get(feat, []):
+                if dep not in seen:
+                    seen.add(dep)
+                    resolved.append(dep)
+                    queue.append(dep)
         return resolved
 
     def validate_features(self, feature_names: List[str], version: str) -> List[str]:
@@ -70,6 +73,7 @@ class FeatureManager:
         ocp_ver = _version_tuple(version)
 
         for name in feature_names:
+            name = self.resolve_alias(name)
             if name not in self._features:
                 available = ", ".join(sorted(self._cli_features))
                 errors.append(f"Unknown feature: '{name}'. Available: {available}")
@@ -105,7 +109,6 @@ class FeatureManager:
     @staticmethod
     def _serialize_value(value, feat_type: str) -> str:
         if feat_type in ("key_value", "list", "range"):
-            import json
             return json.dumps(value)
         return str(value)
 
@@ -124,7 +127,7 @@ class FeatureManager:
                 ci_default = feat.get("ci_default")
                 default = feat.get("default")
                 effective = ci_default if ci_default is not None else default
-                if effective is not None and effective != "" and effective != {} and effective != []:
+                if effective is not None and effective not in ("", {}, []):
                     extra_vars[var_name] = self._serialize_value(effective, feat_type)
                 extra_vars[f"feature_{name}_enabled"] = "true"
 

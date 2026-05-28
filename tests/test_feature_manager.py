@@ -27,8 +27,8 @@ class TestAliasResolution:
     def test_disk_size_alias(self, fm):
         assert fm.resolve_alias("disk-size") == "disk_size"
 
-    def test_long_name_alias(self, fm):
-        assert fm.resolve_alias("long-name") == "domain_prefix"
+    def test_domain_alias(self, fm):
+        assert fm.resolve_alias("domain") == "domain_prefix"
 
 
 class TestValidation:
@@ -64,6 +64,14 @@ class TestValidation:
         assert len(errors) == 1
         assert "not available as a CLI flag" in errors[0]
 
+    def test_validate_with_aliases(self, fm):
+        errors = fm.validate_features(["no-cni", "disk-size"], "4.22")
+        assert errors == []
+
+    def test_validate_mixed_aliases_and_ids(self, fm):
+        errors = fm.validate_features(["no-cni", "external_oidc"], "4.22")
+        assert errors == []
+
 
 class TestDependencyResolution:
     def test_byon_adds_private(self, fm):
@@ -75,6 +83,10 @@ class TestDependencyResolution:
     def test_no_deps_unchanged(self, fm):
         resolved = fm.auto_resolve_deps(["private_network"])
         assert resolved == ["private_network"]
+
+    def test_empty_list(self, fm):
+        resolved = fm.auto_resolve_deps([])
+        assert resolved == []
 
     def test_dep_not_duplicated(self, fm):
         resolved = fm.auto_resolve_deps(["byon", "private_network"])
@@ -135,6 +147,10 @@ class TestExtraVarResolution:
         result = fm.resolve_to_extra_vars(["security_groups"])
         assert "additional_security_groups" not in result
         assert "feature_security_groups_enabled" in result
+
+    def test_empty_feature_list(self, fm):
+        result = fm.resolve_to_extra_vars([])
+        assert result["requested_features"] == ""
 
 
 class TestRequiredInputs:
@@ -358,6 +374,80 @@ class TestMutualExclusions:
         fm = FeatureManager(tmp_path)
         errors = fm.validate_features(["feat_a"], "4.22")
         assert errors == []
+
+
+class TestCircularDependencyGuard:
+    def test_circular_deps_do_not_loop(self, tmp_path):
+        schemas_dir = tmp_path / "templates" / "schemas"
+        schemas_dir.mkdir(parents=True)
+
+        registry = {
+            "version": "1.0",
+            "var_map": {"feat_a": "a", "feat_b": "b"},
+            "cli_aliases": {},
+            "cli_features": ["feat_a", "feat_b"],
+            "dependencies": {"feat_a": ["feat_b"], "feat_b": ["feat_a"]},
+            "mutual_exclusions": [],
+            "suites": [{
+                "id": "test",
+                "name": "Test",
+                "phase": "Day1",
+                "features": [
+                    {"id": "feat_a", "name": "A", "description": "A", "type": "boolean", "default": False},
+                    {"id": "feat_b", "name": "B", "description": "B", "type": "boolean", "default": False},
+                ]
+            }]
+        }
+        compat = {
+            "supported_versions": ["4.22"],
+            "feature_availability": {}
+        }
+
+        import yaml
+        (schemas_dir / "feature-registry.yml").write_text(yaml.dump(registry))
+        (schemas_dir / "version-compatibility.yml").write_text(yaml.dump(compat))
+
+        fm = FeatureManager(tmp_path)
+        resolved = fm.auto_resolve_deps(["feat_a"])
+        assert "feat_a" in resolved
+        assert "feat_b" in resolved
+        assert len(resolved) == 2
+
+
+class TestFalsyDefaults:
+    def test_zero_default_preserved(self, tmp_path):
+        schemas_dir = tmp_path / "templates" / "schemas"
+        schemas_dir.mkdir(parents=True)
+
+        registry = {
+            "version": "1.0",
+            "var_map": {"feat_z": "z_var"},
+            "cli_aliases": {},
+            "cli_features": ["feat_z"],
+            "dependencies": {},
+            "mutual_exclusions": [],
+            "suites": [{
+                "id": "test",
+                "name": "Test",
+                "phase": "Day1",
+                "features": [
+                    {"id": "feat_z", "name": "Z", "description": "Zero default", "type": "number", "default": 0},
+                ]
+            }]
+        }
+        compat = {
+            "supported_versions": ["4.22"],
+            "feature_availability": {}
+        }
+
+        import yaml
+        (schemas_dir / "feature-registry.yml").write_text(yaml.dump(registry))
+        (schemas_dir / "version-compatibility.yml").write_text(yaml.dump(compat))
+
+        fm = FeatureManager(tmp_path)
+        result = fm.resolve_to_extra_vars(["feat_z"])
+        assert "z_var" in result
+        assert result["z_var"] == "0"
 
 
 class TestDeprecatedFeatureFiltering:

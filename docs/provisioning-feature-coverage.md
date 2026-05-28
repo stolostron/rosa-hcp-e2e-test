@@ -37,7 +37,7 @@
 | Additional Security Groups | `--feature security-groups -e additional_security_groups='[sg-xxx]'` | `additionalSecurityGroups` |
 | Cluster Autoscaler Expanders | `--feature autoscaler` | `autoscaler.expanders` |
 | Image Registry Config | `--feature image-registry` | `clusterRegistryConfig` |
-| Machine Pool Disk Volume Size | `--feature disk-size` (default 300 GiB) | `rootVolume.size` |
+| Machine Pool Disk Volume Size | `--feature disk-size` (default 300 GiB) | `volumeSize` |
 | Parallel Node Upgrade | `--feature parallel-upgrade` | `updateConfig.rollingUpdate` |
 | User Agent for ROSA CAPA | `--feature user-agent -e user_agent=my-agent` | `userAgent` |
 | Domain Prefix / Long Name | `--feature domain -e domain_prefix=my-long-prefix` | `domainPrefix` |

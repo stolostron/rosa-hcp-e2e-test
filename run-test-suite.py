@@ -39,6 +39,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+import yaml
+
 # AI Agent Framework (optional - only imported if --ai-agent flag is used)
 try:
     from agents import MonitoringAgent, DiagnosticAgent, RemediationAgent, LearningAgent
@@ -1171,7 +1173,6 @@ Examples:
         # Read default version from vars.yml if not specified via -e
         default_version = "4.21"
         try:
-            import yaml
             vars_path = Path.cwd() / "vars" / "vars.yml"
             if vars_path.exists():
                 with open(vars_path) as vf:
@@ -1182,8 +1183,8 @@ Examples:
         version = extra_vars.get("openshift_version", default_version)
         errors = fm.validate_features(resolved, version)
         if errors:
-            for err in errors:
-                print(f"{Colors.RED}Feature error: {err}{Colors.ENDC}")
+            for error_msg in errors:
+                print(f"{Colors.RED}Feature error: {error_msg}{Colors.ENDC}")
             return 1
 
         feature_vars = fm.resolve_to_extra_vars(resolved)

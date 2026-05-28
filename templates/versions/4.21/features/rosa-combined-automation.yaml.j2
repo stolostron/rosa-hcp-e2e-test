@@ -120,7 +120,7 @@ spec:
 
   rosaClusterName: {{ cluster_name }}
   domainPrefix: {{ domain_prefix | default(rosa_role_prefix) | default(cluster_name) }}
-  version: "{{ rcp_version | default(openshift_version) | default('4.20.10') }}"
+  version: "{{ rcp_version | default(openshift_version) | default('4.21.0') }}"
   region: {{ aws_region }}
   channelGroup: {{ channel_group | default('stable') }}
 
@@ -227,5 +227,18 @@ spec:
   nodePoolName: {{ (rosa_role_prefix | default(domain_prefix) | default('test'))[:4] | regex_replace('-$', '') }}-np
   instanceType: {{ machine_pool.instance_type | default('m5.xlarge') }}
   version: {{ openshift_version }}
-  # Note: subnet assignment will be automatic via ROSANetwork
-  # nodePoolName uses 4-char prefix + '-np' to stay under 15-byte limit
+{% if root_volume_size is defined and root_volume_size %}
+  volumeSize: {{ root_volume_size }}
+{% endif %}
+{% if parallel_node_upgrade is defined and parallel_node_upgrade | int > 0 %}
+  updateConfig:
+    rollingUpdate:
+      maxSurge: {{ max_surge | default(1) }}
+      maxUnavailable: {{ max_unavailable | default(0) }}
+{% endif %}
+{% if additional_security_groups is defined and additional_security_groups %}
+  additionalSecurityGroups:
+{% for sg in additional_security_groups %}
+    - {{ sg }}
+{% endfor %}
+{% endif %}

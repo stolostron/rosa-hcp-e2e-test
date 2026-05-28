@@ -25,7 +25,7 @@ spec:
 {% endfor %}
   cidrBlock: {{ rosa_network_config.cidr_block | default('10.0.0.0/16') }}
 {% if rosa_network_config.tags is defined %}
-  tags:
+  stackTags:
 {% for key, value in rosa_network_config.tags.items() %}
     {{ key }}: {{ value }}
 {% endfor %}

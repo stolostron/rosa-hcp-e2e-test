@@ -141,11 +141,11 @@ spec:
 {% if image_registry_config is defined and image_registry_config | bool %}
   clusterRegistryConfig:
     allowedRegistriesForImport:
-      - domainName: "{{ registry_domain | default('trusted-registry.com') }}"
+      - domainName: "{{ registry_domain | default('quay.io') }}"
         insecure: false
     registrySources:
       allowedRegistries:
-        - "{{ allowed_registry | default('allowed-registry.com') }}"
+        - "{{ allowed_registry | default('quay.io') }}"
 {% endif %}
 
 {% if cluster_autoscaler_expander is defined and cluster_autoscaler_expander | bool %}
@@ -226,10 +226,9 @@ spec:
   instanceType: {{ machine_pool.instance_type | default('m5.xlarge') }}
   version: {{ openshift_version }}
 {% if root_volume_size is defined and root_volume_size %}
-  rootVolume:
-    size: {{ root_volume_size }}
+  volumeSize: {{ root_volume_size }}
 {% endif %}
-{% if parallel_node_upgrade is defined and parallel_node_upgrade | bool %}
+{% if parallel_node_upgrade is defined and parallel_node_upgrade | int > 0 %}
   updateConfig:
     rollingUpdate:
       maxSurge: {{ max_surge | default(1) }}
