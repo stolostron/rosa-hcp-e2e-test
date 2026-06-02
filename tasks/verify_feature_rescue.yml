@@ -1,14 +1,49 @@
 ---
 - block:
-    - debug:
-        msg: "FAIL: {{ feature_id }} was requested but {{ fail_detail }}"
-    - set_fact:
-        features_failed: "{{ features_failed | int + 1 }}"
-  when: "feature_id in requested_features_list"
+    - name: Check if CRD supports this feature field
+      shell: >
+        oc get crd {{ crd_field_map[feature_id].crd }} -o json 2>/dev/null |
+        jq -r '.spec.versions[] | select(.served==true) |
+        .schema.openAPIV3Schema.properties.spec.properties.{{ crd_field_map[feature_id].field.split(".")[0] }} // empty'
+      register: crd_field_check
+      failed_when: false
+      changed_when: false
+      when: feature_id in (crd_field_map | default({}))
+
+    - name: Set CRD check result for features without mapping
+      set_fact:
+        crd_field_check: {stdout: "unknown", skipped: true}
+      when: feature_id not in (crd_field_map | default({}))
+
+    - block:
+        - debug:
+            msg: "WARN: {{ feature_id }} was requested but CRD does not have field '{{ crd_field_map[feature_id].field }}' — platform limitation"
+        - set_fact:
+            features_warned: "{{ features_warned | int + 1 }}"
+      when:
+        - feature_id in (crd_field_map | default({}))
+        - (crd_field_check.stdout | default('')) == ""
+
+    - block:
+        - debug:
+            msg: "FAIL: {{ feature_id }} was requested, CRD supports it, but {{ fail_detail }}"
+        - set_fact:
+            features_failed: "{{ features_failed | int + 1 }}"
+      when:
+        - feature_id in (crd_field_map | default({}))
+        - (crd_field_check.stdout | default('')) != ""
+
+    - block:
+        - debug:
+            msg: "FAIL: {{ feature_id }} was requested but {{ fail_detail }}"
+        - set_fact:
+            features_failed: "{{ features_failed | int + 1 }}"
+      when: feature_id not in (crd_field_map | default({}))
+  when: feature_id in requested_features_list
 
 - block:
     - debug:
         msg: "SKIP: {{ feature_id }} not requested"
     - set_fact:
         features_skipped: "{{ features_skipped | int + 1 }}"
-  when: "feature_id not in requested_features_list"
+  when: feature_id not in requested_features_list
