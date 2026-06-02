@@ -9,6 +9,21 @@
     features_passed: 0
     features_failed: 0
     features_skipped: 0
+    features_warned: 0
+    crd_field_map:
+      no_cni: {crd: "rosacontrolplanes.controlplane.cluster.x-k8s.io", field: "network.networkType"}
+      private_network: {crd: "rosacontrolplanes.controlplane.cluster.x-k8s.io", field: "endpointAccess"}
+      external_oidc: {crd: "rosacontrolplanes.controlplane.cluster.x-k8s.io", field: "enableExternalAuthProviders"}
+      fips: {crd: "rosacontrolplanes.controlplane.cluster.x-k8s.io", field: "fips"}
+      etcd_kms: {crd: "rosacontrolplanes.controlplane.cluster.x-k8s.io", field: "etcdEncryptionKMSARN"}
+      user_agent: {crd: "rosacontrolplanes.controlplane.cluster.x-k8s.io", field: "userAgent"}
+      cluster_autoscaler_expander: {crd: "rosacontrolplanes.controlplane.cluster.x-k8s.io", field: "autoscaler"}
+      image_registry: {crd: "rosacontrolplanes.controlplane.cluster.x-k8s.io", field: "clusterRegistryConfig"}
+      disk_size: {crd: "rosamachinepools.infrastructure.cluster.x-k8s.io", field: "volumeSize"}
+      parallel_upgrade: {crd: "rosamachinepools.infrastructure.cluster.x-k8s.io", field: "updateConfig"}
+      security_groups: {crd: "rosamachinepools.infrastructure.cluster.x-k8s.io", field: "additionalSecurityGroups"}
+      audit_logging: {crd: "rosacontrolplanes.controlplane.cluster.x-k8s.io", field: "cloudWatchlogForwarder"}
+      proxy_enabled: {crd: "rosacontrolplanes.controlplane.cluster.x-k8s.io", field: "proxy"}
 
   tasks:
     # ================================================================
@@ -404,13 +419,20 @@
           Results:
             Passed:  {{ features_passed }}
             Skipped: {{ features_skipped }} (feature not requested — not an error)
-            Failed:  {{ features_failed }} (feature requested but missing from spec)
+            Warned:  {{ features_warned }} (feature requested but CRD field not supported)
+            Failed:  {{ features_failed }} (feature requested, CRD supports it, but missing from spec)
 
           ═══════════════════════════════════════════════════════════════
 
-    - name: Fail if any requested features are missing from spec
+    - name: Warn about CRD limitations
+      debug:
+        msg: "{{ features_warned }} feature(s) not supported by installed CRD version — platform limitation, not a test failure."
+      when: features_warned | int > 0
+
+    - name: Fail if any CRD-supported features are missing from spec
       fail:
         msg: >
-          {{ features_failed }} requested feature(s) not found in cluster spec.
+          {{ features_failed }} requested feature(s) not found in cluster spec
+          (CRD supports the field but template did not render it).
           Review the FAIL messages above.
       when: features_failed | int > 0
