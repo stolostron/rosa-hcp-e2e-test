@@ -208,20 +208,28 @@
     # --- etcd_kms ---
     - name: "CHECK: ETCD KMS Encryption"
       block:
-        - name: Assert etcdEncryptionKMSARN is set
+        - name: Assert etcdEncryptionKMSARN is valid and matches requested
           assert:
             that:
               - rcp.spec.etcdEncryptionKMSARN is defined
               - rcp.spec.etcdEncryptionKMSARN | length > 0
-            fail_msg: "FAIL: etcdEncryptionKMSARN not set"
+              - "rcp.spec.etcdEncryptionKMSARN is match('^arn:aws:kms:')"
+            fail_msg: "FAIL: etcdEncryptionKMSARN '{{ rcp.spec.etcdEncryptionKMSARN | default('not set') }}' is missing or not a valid KMS ARN"
             success_msg: "PASS: etcdEncryptionKMSARN = {{ rcp.spec.etcdEncryptionKMSARN }}"
+        - name: Assert KMS ARN matches requested value
+          assert:
+            that:
+              - rcp.spec.etcdEncryptionKMSARN == etcd_encryption_kms_arn
+            fail_msg: "FAIL: etcdEncryptionKMSARN is '{{ rcp.spec.etcdEncryptionKMSARN }}', expected '{{ etcd_encryption_kms_arn }}'"
+            success_msg: "PASS: etcdEncryptionKMSARN matches requested"
+          when: etcd_encryption_kms_arn is defined and etcd_encryption_kms_arn
         - set_fact:
             features_passed: "{{ features_passed | int + 1 }}"
       rescue:
         - include_tasks: "{{ playbook_dir }}/../tasks/verify_feature_rescue.yml"
           vars:
             feature_id: etcd_kms
-            fail_detail: "etcdEncryptionKMSARN is not set"
+            fail_detail: "etcdEncryptionKMSARN not set or does not match requested"
 
     # --- user_agent ---
     - name: "CHECK: User Agent"
@@ -243,14 +251,18 @@
 
     # --- cluster_autoscaler_expander ---
     - name: "CHECK: Cluster Autoscaler Expander"
+      vars:
+        valid_expanders: ['LeastWaste', 'Priority', 'Random']
       block:
-        - name: Assert autoscaler expanders configured
+        - name: Assert autoscaler expanders configured with valid values
           assert:
             that:
               - rcp.spec.autoscaler is defined
               - rcp.spec.autoscaler.expanders is defined
               - rcp.spec.autoscaler.expanders | length > 0
-            fail_msg: "FAIL: autoscaler expanders not set"
+              - rcp.spec.autoscaler.expanders | difference(valid_expanders) | length == 0
+              - "'LeastWaste' in rcp.spec.autoscaler.expanders"
+            fail_msg: "FAIL: autoscaler expanders {{ rcp.spec.autoscaler.expanders | default([]) }}, expected LeastWaste (valid: {{ valid_expanders | join(', ') }})"
             success_msg: "PASS: autoscaler.expanders = {{ rcp.spec.autoscaler.expanders }}"
         - set_fact:
             features_passed: "{{ features_passed | int + 1 }}"
@@ -262,20 +274,33 @@
 
     # --- image_registry ---
     - name: "CHECK: Image Registry Config"
+      vars:
+        expected_domain: "{{ registry_domain | default('quay.io') }}"
       block:
-        - name: Assert clusterRegistryConfig is set
+        - name: Assert clusterRegistryConfig structure exists
           assert:
             that:
               - rcp.spec.clusterRegistryConfig is defined
-            fail_msg: "FAIL: clusterRegistryConfig not set"
-            success_msg: "PASS: clusterRegistryConfig configured"
+              - rcp.spec.clusterRegistryConfig.allowedRegistriesForImport is defined
+              - rcp.spec.clusterRegistryConfig.allowedRegistriesForImport | length > 0
+              - rcp.spec.clusterRegistryConfig.registrySources is defined
+              - rcp.spec.clusterRegistryConfig.registrySources.allowedRegistries is defined
+            fail_msg: "FAIL: clusterRegistryConfig missing or incomplete — got {{ rcp.spec.clusterRegistryConfig | default({}) }}"
+            success_msg: "PASS: clusterRegistryConfig structure present"
+        - name: Assert registry domain matches expected
+          assert:
+            that:
+              - rcp.spec.clusterRegistryConfig.allowedRegistriesForImport[0].domainName == expected_domain
+              - "expected_domain in rcp.spec.clusterRegistryConfig.registrySources.allowedRegistries"
+            fail_msg: "FAIL: registry domain is '{{ rcp.spec.clusterRegistryConfig.allowedRegistriesForImport[0].domainName | default('?') }}', expected '{{ expected_domain }}'"
+            success_msg: "PASS: clusterRegistryConfig domain={{ expected_domain }}, allowedRegistries={{ rcp.spec.clusterRegistryConfig.registrySources.allowedRegistries }}"
         - set_fact:
             features_passed: "{{ features_passed | int + 1 }}"
       rescue:
         - include_tasks: "{{ playbook_dir }}/../tasks/verify_feature_rescue.yml"
           vars:
             feature_id: image_registry
-            fail_detail: "clusterRegistryConfig is not set"
+            fail_detail: "clusterRegistryConfig missing or registry domain does not match expected"
 
     # --- additional_tags ---
     - name: "CHECK: Additional Tags"
@@ -337,21 +362,25 @@
 
     # --- channel_group ---
     - name: "CHECK: Channel Group"
+      vars:
+        expected_channel_group: "{{ channel_group | default('stable') }}"
+        valid_channel_groups: ['stable', 'fast', 'candidate']
       block:
-        - name: Assert channelGroup is set
+        - name: Assert channelGroup is valid and matches requested
           assert:
             that:
               - rcp.spec.channelGroup is defined
-              - rcp.spec.channelGroup | length > 0
-            fail_msg: "FAIL: channelGroup not set"
-            success_msg: "PASS: channelGroup = {{ rcp.spec.channelGroup }}"
+              - rcp.spec.channelGroup in valid_channel_groups
+              - rcp.spec.channelGroup == expected_channel_group
+            fail_msg: "FAIL: channelGroup is '{{ rcp.spec.channelGroup | default('not set') }}', expected '{{ expected_channel_group }}' (valid: {{ valid_channel_groups | join(', ') }})"
+            success_msg: "PASS: channelGroup = {{ rcp.spec.channelGroup }} (matches expected '{{ expected_channel_group }}')"
         - set_fact:
             features_passed: "{{ features_passed | int + 1 }}"
       rescue:
         - include_tasks: "{{ playbook_dir }}/../tasks/verify_feature_rescue.yml"
           vars:
             feature_id: channel_group
-            fail_detail: "channelGroup is not set"
+            fail_detail: "channelGroup does not match expected '{{ expected_channel_group }}'"
 
     # --- default_autoscaling ---
     - name: "CHECK: Default MachinePool Autoscaling"
@@ -380,12 +409,14 @@
     # --- long cluster name (not a registry feature, always SKIP on failure) ---
     - name: "CHECK: Long Cluster Name"
       block:
-        - name: Assert cluster name length
+        - name: Assert cluster name matches and check length
           assert:
             that:
+              - rcp.spec.rosaClusterName is defined
+              - rcp.spec.rosaClusterName == cluster_name
               - rcp.spec.rosaClusterName | length > 20
-            fail_msg: "SKIP: cluster name '{{ rcp.spec.rosaClusterName }}' is not long ({{ rcp.spec.rosaClusterName | length }} chars)"
-            success_msg: "PASS: Long cluster name = {{ rcp.spec.rosaClusterName }} ({{ rcp.spec.rosaClusterName | length }} chars)"
+            fail_msg: "SKIP: cluster name '{{ rcp.spec.rosaClusterName | default('not set') }}' ({{ rcp.spec.rosaClusterName | default('') | length }} chars, expected '{{ cluster_name }}')"
+            success_msg: "PASS: rosaClusterName = {{ rcp.spec.rosaClusterName }} ({{ rcp.spec.rosaClusterName | length }} chars, matches expected)"
         - set_fact:
             features_passed: "{{ features_passed | int + 1 }}"
       rescue:
@@ -396,57 +427,76 @@
 
     # --- disk_size ---
     - name: "CHECK: Disk Volume Size"
+      vars:
+        expected_volume_size: "{{ root_volume_size | default(300) | int }}"
       block:
-        - name: Assert volumeSize is set
+        - name: Assert volumeSize matches specified value
           assert:
             that:
               - rmp.spec.volumeSize is defined
-              - rmp.spec.volumeSize | int != 300
-            fail_msg: "FAIL: volumeSize is default (300) or not set"
-            success_msg: "PASS: volumeSize = {{ rmp.spec.volumeSize }}"
+              - rmp.spec.volumeSize | int == expected_volume_size | int
+            fail_msg: "FAIL: volumeSize is {{ rmp.spec.volumeSize | default('not set') }}, expected {{ expected_volume_size }}"
+            success_msg: "PASS: volumeSize = {{ rmp.spec.volumeSize }} (matches expected {{ expected_volume_size }})"
         - set_fact:
             features_passed: "{{ features_passed | int + 1 }}"
       rescue:
         - include_tasks: "{{ playbook_dir }}/../tasks/verify_feature_rescue.yml"
           vars:
             feature_id: disk_size
-            fail_detail: "volumeSize is default (300) or not set"
+            fail_detail: "volumeSize does not match expected {{ expected_volume_size }}"
 
     # --- parallel_upgrade ---
     - name: "CHECK: Parallel Node Upgrade"
+      vars:
+        expected_max_surge: "{{ max_surge | default(1) | int }}"
+        expected_max_unavailable: "{{ max_unavailable | default(0) | int }}"
       block:
-        - name: Assert updateConfig is set
+        - name: Assert updateConfig matches requested values
           assert:
             that:
               - rmp.spec.updateConfig is defined
               - rmp.spec.updateConfig.rollingUpdate is defined
-            fail_msg: "FAIL: updateConfig.rollingUpdate not set"
-            success_msg: "PASS: updateConfig.rollingUpdate configured (maxSurge={{ rmp.spec.updateConfig.rollingUpdate.maxSurge | default('?') }})"
+              - rmp.spec.updateConfig.rollingUpdate.maxSurge | int == expected_max_surge | int
+              - rmp.spec.updateConfig.rollingUpdate.maxUnavailable | int == expected_max_unavailable | int
+            fail_msg: "FAIL: rollingUpdate maxSurge={{ rmp.spec.updateConfig.rollingUpdate.maxSurge | default('?') }} maxUnavailable={{ rmp.spec.updateConfig.rollingUpdate.maxUnavailable | default('?') }}, expected maxSurge={{ expected_max_surge }} maxUnavailable={{ expected_max_unavailable }}"
+            success_msg: "PASS: rollingUpdate maxSurge={{ rmp.spec.updateConfig.rollingUpdate.maxSurge }}, maxUnavailable={{ rmp.spec.updateConfig.rollingUpdate.maxUnavailable }}"
         - set_fact:
             features_passed: "{{ features_passed | int + 1 }}"
       rescue:
         - include_tasks: "{{ playbook_dir }}/../tasks/verify_feature_rescue.yml"
           vars:
             feature_id: parallel_upgrade
-            fail_detail: "updateConfig.rollingUpdate is not set"
+            fail_detail: "updateConfig.rollingUpdate does not match expected maxSurge={{ expected_max_surge }} maxUnavailable={{ expected_max_unavailable }}"
 
     # --- security_groups ---
     - name: "CHECK: Additional Security Groups"
+      vars:
+        expected_sgs: "{{ additional_security_groups | default([]) }}"
       block:
-        - name: Assert additionalSecurityGroups is set
+        - name: Assert additionalSecurityGroups match requested
+          assert:
+            that:
+              - rmp.spec.additionalSecurityGroups is defined
+              - rmp.spec.additionalSecurityGroups | length > 0
+              - rmp.spec.additionalSecurityGroups | sort == expected_sgs | sort
+            fail_msg: "FAIL: additionalSecurityGroups is {{ rmp.spec.additionalSecurityGroups | default([]) }}, expected {{ expected_sgs }}"
+            success_msg: "PASS: additionalSecurityGroups = {{ rmp.spec.additionalSecurityGroups }} (matches requested)"
+          when: expected_sgs | length > 0
+        - name: Assert additionalSecurityGroups exists (no expected list to compare)
           assert:
             that:
               - rmp.spec.additionalSecurityGroups is defined
               - rmp.spec.additionalSecurityGroups | length > 0
             fail_msg: "FAIL: additionalSecurityGroups not set"
             success_msg: "PASS: additionalSecurityGroups = {{ rmp.spec.additionalSecurityGroups }}"
+          when: expected_sgs | length == 0
         - set_fact:
             features_passed: "{{ features_passed | int + 1 }}"
       rescue:
         - include_tasks: "{{ playbook_dir }}/../tasks/verify_feature_rescue.yml"
           vars:
             feature_id: security_groups
-            fail_detail: "additionalSecurityGroups is not set"
+            fail_detail: "additionalSecurityGroups not set or does not match expected {{ expected_sgs }}"
 
     # --- availability_zones ---
     - name: "CHECK: Availability Zones"
@@ -473,19 +523,34 @@
     # --- audit_logging ---
     - name: "CHECK: Log Forwarding (CloudWatch)"
       block:
-        - name: Assert cloudWatchlogForwarder is set
+        - name: Assert cloudWatchlogForwarder is configured correctly
           assert:
             that:
               - rcp.spec.cloudWatchlogForwarder is defined
-            fail_msg: "FAIL: cloudWatchlogForwarder not set"
+              - rcp.spec.cloudWatchlogForwarder.cloudWatchLogRoleArn is defined or rcp.spec.cloudWatchlogForwarder.cloudWatchLogGroupName is defined
+            fail_msg: "FAIL: cloudWatchlogForwarder not set or missing role ARN / log group"
             success_msg: "PASS: cloudWatchlogForwarder configured"
+        - name: Assert CloudWatch role ARN matches
+          assert:
+            that:
+              - rcp.spec.cloudWatchlogForwarder.cloudWatchLogRoleArn == log_forward_cloudwatch_role_arn
+            fail_msg: "FAIL: cloudWatchLogRoleArn is '{{ rcp.spec.cloudWatchlogForwarder.cloudWatchLogRoleArn | default('not set') }}', expected '{{ log_forward_cloudwatch_role_arn }}'"
+            success_msg: "PASS: cloudWatchLogRoleArn matches"
+          when: log_forward_cloudwatch_role_arn is defined and log_forward_cloudwatch_role_arn
+        - name: Assert CloudWatch log group matches
+          assert:
+            that:
+              - rcp.spec.cloudWatchlogForwarder.cloudWatchLogGroupName == log_forward_cloudwatch_log_group
+            fail_msg: "FAIL: cloudWatchLogGroupName is '{{ rcp.spec.cloudWatchlogForwarder.cloudWatchLogGroupName | default('not set') }}', expected '{{ log_forward_cloudwatch_log_group }}'"
+            success_msg: "PASS: cloudWatchLogGroupName matches"
+          when: log_forward_cloudwatch_log_group is defined and log_forward_cloudwatch_log_group
         - set_fact:
             features_passed: "{{ features_passed | int + 1 }}"
       rescue:
         - include_tasks: "{{ playbook_dir }}/../tasks/verify_feature_rescue.yml"
           vars:
             feature_id: audit_logging
-            fail_detail: "cloudWatchlogForwarder is not set"
+            fail_detail: "cloudWatchlogForwarder not configured correctly"
 
     # --- proxy_enabled ---
     - name: "CHECK: Proxy Configuration"
