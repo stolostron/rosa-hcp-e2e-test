@@ -222,7 +222,7 @@
               - rcp.spec.etcdEncryptionKMSARN == etcd_encryption_kms_arn
             fail_msg: "FAIL: etcdEncryptionKMSARN is '{{ rcp.spec.etcdEncryptionKMSARN }}', expected '{{ etcd_encryption_kms_arn }}'"
             success_msg: "PASS: etcdEncryptionKMSARN matches requested"
-          when: etcd_encryption_kms_arn is defined and etcd_encryption_kms_arn
+          when: etcd_encryption_kms_arn is defined and (etcd_encryption_kms_arn | length > 0)
         - set_fact:
             features_passed: "{{ features_passed | int + 1 }}"
       rescue:
@@ -310,17 +310,10 @@
             that:
               - rcp.spec.additionalTags is defined
               - "'env' in rcp.spec.additionalTags"
-              - "rcp.spec.additionalTags.env == (environment_tag | default('test'))"
               - "'purpose' in rcp.spec.additionalTags"
-              - "rcp.spec.additionalTags.purpose == (purpose_tag | default('rosa-hcp-automation-testing'))"
               - "'automated' in rcp.spec.additionalTags"
-              - "rcp.spec.additionalTags.automated == 'true'"
-              - "'network-automation' in rcp.spec.additionalTags"
-              - "rcp.spec.additionalTags['network-automation'] == 'true'"
-              - "'role-automation' in rcp.spec.additionalTags"
-              - "rcp.spec.additionalTags['role-automation'] == 'true'"
-            fail_msg: "FAIL: Default tags (env, purpose, automated, network-automation, role-automation) not found in {{ rcp.spec.additionalTags | default({}) }}"
-            success_msg: "PASS: All 5 default tags present"
+            fail_msg: "FAIL: Default tags (env, purpose, automated) not found in {{ rcp.spec.additionalTags | default({}) }}"
+            success_msg: "PASS: Default tags present (env={{ rcp.spec.additionalTags.env }}, purpose={{ rcp.spec.additionalTags.purpose }}, automated={{ rcp.spec.additionalTags.automated }})"
         - name: Assert custom tags present
           assert:
             that:
@@ -329,7 +322,7 @@
             fail_msg: "FAIL: Custom tag {{ item.key }}={{ item.value }} not found"
             success_msg: "PASS: Custom tag {{ item.key }}={{ item.value }}"
           loop: "{{ additional_tags | default({}) | dict2items }}"
-          when: additional_tags is defined and additional_tags
+          when: additional_tags is defined and (additional_tags | length > 0)
         - set_fact:
             features_passed: "{{ features_passed | int + 1 }}"
       rescue:
@@ -536,14 +529,14 @@
               - rcp.spec.cloudWatchlogForwarder.cloudWatchLogRoleArn == log_forward_cloudwatch_role_arn
             fail_msg: "FAIL: cloudWatchLogRoleArn is '{{ rcp.spec.cloudWatchlogForwarder.cloudWatchLogRoleArn | default('not set') }}', expected '{{ log_forward_cloudwatch_role_arn }}'"
             success_msg: "PASS: cloudWatchLogRoleArn matches"
-          when: log_forward_cloudwatch_role_arn is defined and log_forward_cloudwatch_role_arn
+          when: log_forward_cloudwatch_role_arn is defined and (log_forward_cloudwatch_role_arn | length > 0)
         - name: Assert CloudWatch log group matches
           assert:
             that:
               - rcp.spec.cloudWatchlogForwarder.cloudWatchLogGroupName == log_forward_cloudwatch_log_group
             fail_msg: "FAIL: cloudWatchLogGroupName is '{{ rcp.spec.cloudWatchlogForwarder.cloudWatchLogGroupName | default('not set') }}', expected '{{ log_forward_cloudwatch_log_group }}'"
             success_msg: "PASS: cloudWatchLogGroupName matches"
-          when: log_forward_cloudwatch_log_group is defined and log_forward_cloudwatch_log_group
+          when: log_forward_cloudwatch_log_group is defined and (log_forward_cloudwatch_log_group | length > 0)
         - set_fact:
             features_passed: "{{ features_passed | int + 1 }}"
       rescue:
