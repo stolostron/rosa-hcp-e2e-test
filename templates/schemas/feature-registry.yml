@@ -114,10 +114,11 @@ feature_groups:
       - disk_size
 
   day1-security:
-    description: "Security features (requires AWS KMS key tagged with red-hat:true)"
+    description: "Security features (requires AWS KMS key and security group IDs)"
     features:
       - etcd_kms
       - fips
+      - security_groups
 
   day1-networking:
     description: "Network/auth features (requires OIDC provider and CloudWatch setup)"
