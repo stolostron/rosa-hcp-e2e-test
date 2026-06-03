@@ -45,7 +45,7 @@ cli_aliases:
   proxy: proxy_enabled
   tags: additional_tags
   domain: domain_prefix
-  channel: channel_group
+  channel-group: channel_group
   instance: instance_type
   disk-size: disk_size
   azs: availability_zones
@@ -61,11 +61,10 @@ cli_aliases:
 # Features valid for --feature CLI flag (Day1 creation features).
 # Only features with working template conditionals are listed here.
 # byon: requires template changes to skip ROSANetwork and accept manual subnets
-# private_network: requires private-only subnets in ROSANetwork (not yet implemented)
 # instance_type: template uses machine_pool.instance_type, not settable via flat extra var
-# default_autoscaling: template uses machine_pool.min_replicas/max_replicas, not flat var
 # proxy_enabled: N/A priority per test matrix
 cli_features:
+  - private_network
   - no_cni
   - external_oidc
   - etcd_kms
@@ -81,6 +80,7 @@ cli_features:
   - cluster_autoscaler_expander
   - audit_logging
   - fips
+  - default_autoscaling
 
 # Dependency rules: feature_id -> list of prerequisites
 dependencies:
@@ -97,18 +97,21 @@ mutual_exclusions: []
 # Other groups add --feature flags on top of the defaults
 feature_groups:
   day1-basic:
-    description: "Default provisioning (STS, Tags, AZs, DomainPrefix, Autoscaling, Long Name)"
-    features: []
+    description: "Default provisioning (DomainPrefix, AZs, Tags, ChannelGroup, Autoscaling)"
+    features:
+      - domain_prefix
+      - availability_zones
+      - additional_tags
+      - channel_group
+      - default_autoscaling
 
   day1-combo:
-    description: "All non-default Day1 features (includes day1-basic defaults)"
+    description: "Non-default Day1 features (includes day1-basic defaults)"
     features:
-      - no_cni
       - cluster_autoscaler_expander
       - image_registry
       - parallel_upgrade
       - disk_size
-      - user_agent
 
   day1-security:
     description: "Security features (requires AWS KMS key tagged with red-hat:true)"
@@ -252,13 +255,13 @@ suites:
     features:
       - id: default_autoscaling
         name: Default MachinePool Auto Scaling
-        description: Enable autoscaling on the default machine pool
-        type: range
+        description: Enable autoscaling on the default machine pool (use -e mp_min_replicas=N -e mp_max_replicas=N to set range)
+        type: boolean
         mutable: true
         applies_to: [create, apply]
-        default: {min: 2, max: 4}
-        k8s_field: ".spec.autoscaling"
-        resource: ROSAMachinePool
+        default: false
+        k8s_field: ".spec.defaultMachinePoolSpec.autoscaling"
+        resource: ROSAControlPlane
 
       - id: machine_pool_autoscaling
         name: Additional Machine Pool

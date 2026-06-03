@@ -89,8 +89,13 @@ spec:
   defaultMachinePoolSpec:
     instanceType: {{ machine_pool.instance_type | default('m5.xlarge') }}
     autoscaling:
-      maxReplicas: {{ machine_pool.max_replicas | default(availability_zones_list | default(['us-west-2a']) | length * 2) }}
+{% if default_autoscaling is defined and default_autoscaling | bool %}
+      minReplicas: {{ mp_min_replicas | default(2) }}
+      maxReplicas: {{ mp_max_replicas | default(4) }}
+{% else %}
       minReplicas: {{ machine_pool.min_replicas | default(availability_zones_list | default(['us-west-2a']) | length) }}
+      maxReplicas: {{ machine_pool.max_replicas | default(availability_zones_list | default(['us-west-2a']) | length * 2) }}
+{% endif %}
 
   additionalTags:
     env: {{ environment_tag | default('test') }}

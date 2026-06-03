@@ -254,12 +254,19 @@ class TestFeatureGroups:
 
     def test_resolve_basic_group(self, fm):
         features = fm.resolve_group("day1-basic")
-        assert features == []
+        assert len(features) == 5
+        assert "domain_prefix" in features
+        assert "availability_zones" in features
+        assert "additional_tags" in features
+        assert "channel_group" in features
+        assert "default_autoscaling" in features
 
     def test_resolve_combo_group(self, fm):
         features = fm.resolve_group("day1-combo")
-        assert len(features) > 0
-        assert "no_cni" in features
+        assert len(features) == 4
+        assert "cluster_autoscaler_expander" in features
+        assert "image_registry" in features
+        assert "parallel_upgrade" in features
         assert "disk_size" in features
 
     def test_resolve_unknown_group(self, fm):
@@ -270,17 +277,17 @@ class TestFeatureGroups:
         group_features = fm.resolve_group("day1-combo")
         combined = group_features + ["etcd_kms"]
         resolved = fm.auto_resolve_deps(combined)
-        assert "no_cni" in resolved
+        assert "disk_size" in resolved
         assert "etcd_kms" in resolved
         assert len(resolved) == len(set(resolved))
 
     def test_group_and_individual_feature_dedup(self, fm):
-        """Simulate --feature-group day1-combo --feature no-cni (no_cni in both)."""
+        """Simulate --feature-group day1-combo --feature disk-size (disk_size in both)."""
         group_features = fm.resolve_group("day1-combo")
-        individual = ["no_cni"]
+        individual = ["disk_size"]
         merged = individual + group_features
         deduped = list(dict.fromkeys(merged))
-        assert deduped.count("no_cni") == 1
+        assert deduped.count("disk_size") == 1
         assert len(deduped) == len(group_features)
 
     def test_group_features_are_valid_cli_features(self, fm):
