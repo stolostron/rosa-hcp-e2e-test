@@ -10,6 +10,9 @@
     features_failed: 0
     features_skipped: 0
     features_warned: 0
+    results_passed: []
+    results_failed: []
+    results_warned: []
     crd_field_map:
       no_cni: {crd: "rosacontrolplanes.controlplane.cluster.x-k8s.io", field: "network.networkType"}
       private_network: {crd: "rosacontrolplanes.controlplane.cluster.x-k8s.io", field: "endpointAccess"}
@@ -24,6 +27,11 @@
       security_groups: {crd: "rosamachinepools.infrastructure.cluster.x-k8s.io", field: "additionalSecurityGroups"}
       audit_logging: {crd: "rosacontrolplanes.controlplane.cluster.x-k8s.io", field: "cloudWatchlogForwarder"}
       proxy_enabled: {crd: "rosacontrolplanes.controlplane.cluster.x-k8s.io", field: "proxy"}
+      default_autoscaling: {crd: "rosacontrolplanes.controlplane.cluster.x-k8s.io", field: "defaultMachinePoolSpec"}
+      domain_prefix: {crd: "rosacontrolplanes.controlplane.cluster.x-k8s.io", field: "domainPrefix"}
+      channel_group: {crd: "rosacontrolplanes.controlplane.cluster.x-k8s.io", field: "channelGroup"}
+      additional_tags: {crd: "rosacontrolplanes.controlplane.cluster.x-k8s.io", field: "additionalTags"}
+      availability_zones: {crd: "rosanetworks.infrastructure.cluster.x-k8s.io", field: "availabilityZones"}
 
   tasks:
     # ================================================================
@@ -79,12 +87,45 @@
         rnet: "{{ rnet_raw.stdout | from_json }}"
       when: rnet_raw.rc == 0
 
+    - name: Get MCE version
+      shell: >
+        oc get csv -n multicluster-engine -o json 2>/dev/null |
+        jq -r '.items[] | select(.metadata.name | startswith("multicluster-engine")) | .spec.version' 2>/dev/null || echo "unknown"
+      register: mce_version_raw
+      failed_when: false
+      changed_when: false
+
+    - name: Get CAPA controller image
+      shell: >
+        oc get deploy capa-controller-manager -n multicluster-engine
+        -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || echo "unknown"
+      register: capa_image_raw
+      failed_when: false
+      changed_when: false
+
+    - name: Get OCP version
+      shell: >
+        oc get clusterversion version
+        -o jsonpath='{.status.desired.version}' 2>/dev/null || echo "unknown"
+      register: ocp_version_raw
+      failed_when: false
+      changed_when: false
+
+    - name: Set version facts
+      set_fact:
+        mce_version: "{{ mce_version_raw.stdout | default('unknown') }}"
+        capa_image: "{{ capa_image_raw.stdout | default('unknown') }}"
+        hub_ocp_version: "{{ ocp_version_raw.stdout | default('unknown') }}"
+
     - name: Display cluster info
       debug:
         msg: |
           ═══════════════════════════════════════════════════════════════
           Feature Flag Verification for: {{ cluster_name }}
           Namespace: {{ capi_namespace }}
+          OpenShift Version: {{ hub_ocp_version }}
+          MCE Version: {{ mce_version }}
+          CAPA Image: {{ capa_image }}
           Requested features: {{ requested_features_list | join(', ') | default('none (all checks will SKIP)', true) }}
           ═══════════════════════════════════════════════════════════════
 
@@ -239,25 +280,60 @@
     # --- additional_tags ---
     - name: "CHECK: Additional Tags"
       block:
-        - name: Assert custom tags present
+        - name: Assert default tags present
           assert:
             that:
               - rcp.spec.additionalTags is defined
-              - rcp.spec.additionalTags.keys() | length > 5
-            fail_msg: "FAIL: No custom additionalTags beyond defaults"
-            success_msg: "PASS: additionalTags has custom entries: {{ rcp.spec.additionalTags.keys() | list }}"
+              - "'env' in rcp.spec.additionalTags"
+              - "rcp.spec.additionalTags.env == (environment_tag | default('test'))"
+              - "'purpose' in rcp.spec.additionalTags"
+              - "rcp.spec.additionalTags.purpose == (purpose_tag | default('rosa-hcp-automation-testing'))"
+              - "'automated' in rcp.spec.additionalTags"
+              - "rcp.spec.additionalTags.automated == 'true'"
+              - "'network-automation' in rcp.spec.additionalTags"
+              - "rcp.spec.additionalTags['network-automation'] == 'true'"
+              - "'role-automation' in rcp.spec.additionalTags"
+              - "rcp.spec.additionalTags['role-automation'] == 'true'"
+            fail_msg: "FAIL: Default tags (env, purpose, automated, network-automation, role-automation) not found in {{ rcp.spec.additionalTags | default({}) }}"
+            success_msg: "PASS: All 5 default tags present"
+        - name: Assert custom tags present
+          assert:
+            that:
+              - "'{{ item.key }}' in rcp.spec.additionalTags"
+              - "rcp.spec.additionalTags[item.key] == item.value | string"
+            fail_msg: "FAIL: Custom tag {{ item.key }}={{ item.value }} not found"
+            success_msg: "PASS: Custom tag {{ item.key }}={{ item.value }}"
+          loop: "{{ additional_tags | default({}) | dict2items }}"
+          when: additional_tags is defined and additional_tags
         - set_fact:
             features_passed: "{{ features_passed | int + 1 }}"
       rescue:
         - include_tasks: "{{ playbook_dir }}/../tasks/verify_feature_rescue.yml"
           vars:
             feature_id: additional_tags
-            fail_detail: "no custom tags found beyond defaults"
+            fail_detail: "default or custom tags not found"
 
-    # --- domain_prefix (always set by provisioning, informational only) ---
+    # --- domain_prefix ---
     - name: "CHECK: Domain Prefix"
-      debug:
-        msg: "INFO: domainPrefix = {{ rcp.spec.domainPrefix | default('not set') }}"
+      vars:
+        expected_prefix: "{{ domain_prefix | default(name_prefix | default(cluster_name | regex_replace('-rosa-hcp$', ''))) }}"
+      block:
+        - name: Assert domainPrefix matches expected value
+          assert:
+            that:
+              - rcp.spec.domainPrefix is defined
+              - rcp.spec.domainPrefix | length > 0
+              - rcp.spec.domainPrefix | length <= 15
+              - rcp.spec.domainPrefix == expected_prefix
+            fail_msg: "FAIL: domainPrefix is '{{ rcp.spec.domainPrefix | default('not set') }}', expected '{{ expected_prefix }}'"
+            success_msg: "PASS: domainPrefix = {{ rcp.spec.domainPrefix }} (matches expected '{{ expected_prefix }}')"
+        - set_fact:
+            features_passed: "{{ features_passed | int + 1 }}"
+      rescue:
+        - include_tasks: "{{ playbook_dir }}/../tasks/verify_feature_rescue.yml"
+          vars:
+            feature_id: domain_prefix
+            fail_detail: "domainPrefix does not match expected '{{ expected_prefix }}'"
 
     # --- channel_group ---
     - name: "CHECK: Channel Group"
@@ -276,6 +352,30 @@
           vars:
             feature_id: channel_group
             fail_detail: "channelGroup is not set"
+
+    # --- default_autoscaling ---
+    - name: "CHECK: Default MachinePool Autoscaling"
+      vars:
+        expected_min: "{{ mp_min_replicas | default(2) | int }}"
+        expected_max: "{{ mp_max_replicas | default(4 if (default_autoscaling | default(false) | bool) else 2) | int }}"
+      block:
+        - name: Assert autoscaling min/max replicas match
+          assert:
+            that:
+              - rcp.spec.defaultMachinePoolSpec is defined
+              - rcp.spec.defaultMachinePoolSpec.autoscaling is defined
+              - rcp.spec.defaultMachinePoolSpec.autoscaling.minReplicas | int == expected_min | int
+              - rcp.spec.defaultMachinePoolSpec.autoscaling.maxReplicas | int == expected_max | int
+              - rcp.spec.defaultMachinePoolSpec.autoscaling.maxReplicas | int >= rcp.spec.defaultMachinePoolSpec.autoscaling.minReplicas | int
+            fail_msg: "FAIL: autoscaling min={{ rcp.spec.defaultMachinePoolSpec.autoscaling.minReplicas | default('?') }} max={{ rcp.spec.defaultMachinePoolSpec.autoscaling.maxReplicas | default('?') }}, expected min={{ expected_min }} max={{ expected_max }}"
+            success_msg: "PASS: autoscaling minReplicas={{ rcp.spec.defaultMachinePoolSpec.autoscaling.minReplicas }}, maxReplicas={{ rcp.spec.defaultMachinePoolSpec.autoscaling.maxReplicas }}"
+        - set_fact:
+            features_passed: "{{ features_passed | int + 1 }}"
+      rescue:
+        - include_tasks: "{{ playbook_dir }}/../tasks/verify_feature_rescue.yml"
+          vars:
+            feature_id: default_autoscaling
+            fail_detail: "autoscaling min/max replicas do not match expected values"
 
     # --- long cluster name (not a registry feature, always SKIP on failure) ---
     - name: "CHECK: Long Cluster Name"
@@ -350,22 +450,25 @@
 
     # --- availability_zones ---
     - name: "CHECK: Availability Zones"
+      vars:
+        expected_region: "{{ aws_region | default(rcp.spec.region | default('us-west-2')) }}"
       block:
-        - name: Assert AZ count
+        - name: Assert AZ count and region match
           assert:
             that:
               - rnet is defined
               - rnet.spec.availabilityZones is defined
               - rnet.spec.availabilityZones | length >= 2
-            fail_msg: "FAIL: availabilityZones count is {{ rnet.spec.availabilityZones | default([]) | length }}"
-            success_msg: "PASS: availabilityZones = {{ rnet.spec.availabilityZones }} ({{ rnet.spec.availabilityZones | length }} AZs)"
+              - rnet.spec.availabilityZones | map('regex_search', '^' + expected_region) | select | list | length == rnet.spec.availabilityZones | length
+            fail_msg: "FAIL: availabilityZones {{ rnet.spec.availabilityZones | default([]) }} — expected {{ rnet.spec.availabilityZones | default([]) | length }} AZs in region {{ expected_region }}"
+            success_msg: "PASS: availabilityZones = {{ rnet.spec.availabilityZones }} ({{ rnet.spec.availabilityZones | length }} AZs in {{ expected_region }})"
         - set_fact:
             features_passed: "{{ features_passed | int + 1 }}"
       rescue:
         - include_tasks: "{{ playbook_dir }}/../tasks/verify_feature_rescue.yml"
           vars:
             feature_id: availability_zones
-            fail_detail: "AZ count < 2 or network not available"
+            fail_detail: "AZ count < 2 or AZs do not match region {{ expected_region }}"
 
     # --- audit_logging ---
     - name: "CHECK: Log Forwarding (CloudWatch)"
@@ -404,6 +507,10 @@
     # ================================================================
     # SUMMARY
     # ================================================================
+    - name: Build passed features list
+      set_fact:
+        results_passed: "{{ requested_features_list | difference(results_warned | map('regex_replace', ':.*', '') | list) | difference(results_failed | map('regex_replace', ':.*', '') | list) }}"
+
     - name: Feature verification summary
       debug:
         msg: |
@@ -414,25 +521,46 @@
 
           Cluster: {{ cluster_name }}
           Namespace: {{ capi_namespace }}
+          Cluster Version: {{ rcp.spec.version | default('unknown') }}
+          OpenShift Version: {{ hub_ocp_version }}
+          MCE Version: {{ mce_version }}
+          CAPA Image: {{ capa_image }}
           Requested: {{ requested_features_list | join(', ') | default('none', true) }}
 
-          Results:
-            Passed:  {{ features_passed }}
-            Skipped: {{ features_skipped }} (feature not requested — not an error)
-            Warned:  {{ features_warned }} (feature requested but CRD field not supported)
-            Failed:  {{ features_failed }} (feature requested, CRD supports it, but missing from spec)
+          ───────────────────────────────────────────────────────────────
+          PASSED ({{ results_passed | length }}):
+          {% for f in results_passed %}
+            ✓ {{ f }}
+          {% endfor %}
+          {% if results_passed | length == 0 %}
+            (none)
+          {% endif %}
 
+          {% if results_warned | length > 0 %}
+          WARNED ({{ results_warned | length }}) — CRD does not support field:
+          {% for w in results_warned %}
+            ⚠ {{ w }}
+          {% endfor %}
+
+          {% endif %}
+          {% if results_failed | length > 0 %}
+          FAILED ({{ results_failed | length }}) — requested and CRD supports it, but missing:
+          {% for f in results_failed %}
+            ✗ {{ f }}
+          {% endfor %}
+
+          {% endif %}
+          SKIPPED: {{ features_skipped }} (feature not requested — not an error)
           ═══════════════════════════════════════════════════════════════
 
     - name: Warn about CRD limitations
       debug:
-        msg: "{{ features_warned }} feature(s) not supported by installed CRD version — platform limitation, not a test failure."
-      when: features_warned | int > 0
+        msg: "{{ results_warned | length }} feature(s) not supported by installed CRD version — platform limitation, not a test failure."
+      when: results_warned | length > 0
 
     - name: Fail if any CRD-supported features are missing from spec
       fail:
         msg: >
-          {{ features_failed }} requested feature(s) not found in cluster spec
-          (CRD supports the field but template did not render it).
-          Review the FAIL messages above.
-      when: features_failed | int > 0
+          {{ results_failed | length }} requested feature(s) not found in cluster spec:
+          {% for f in results_failed %}{{ f }}; {% endfor %}
+      when: results_failed | length > 0

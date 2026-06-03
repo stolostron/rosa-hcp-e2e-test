@@ -20,6 +20,7 @@
             msg: "WARN: {{ feature_id }} was requested but CRD does not have field '{{ crd_field_map[feature_id].field }}' — platform limitation"
         - set_fact:
             features_warned: "{{ features_warned | int + 1 }}"
+            results_warned: "{{ results_warned + [feature_id + ': CRD does not have field ' + crd_field_map[feature_id].field] }}"
       when:
         - feature_id in (crd_field_map | default({}))
         - (crd_field_check.stdout | default('')) == ""
@@ -29,6 +30,7 @@
             msg: "FAIL: {{ feature_id }} was requested, CRD supports it, but {{ fail_detail }}"
         - set_fact:
             features_failed: "{{ features_failed | int + 1 }}"
+            results_failed: "{{ results_failed + [feature_id + ': ' + fail_detail] }}"
       when:
         - feature_id in (crd_field_map | default({}))
         - (crd_field_check.stdout | default('')) != ""
@@ -38,6 +40,7 @@
             msg: "FAIL: {{ feature_id }} was requested but {{ fail_detail }}"
         - set_fact:
             features_failed: "{{ features_failed | int + 1 }}"
+            results_failed: "{{ results_failed + [feature_id + ': ' + fail_detail] }}"
       when: feature_id not in (crd_field_map | default({}))
   when: feature_id in requested_features_list
 
