@@ -170,7 +170,7 @@
             fail_detail: "endpointAccess is not 'Private'"
 
     # --- external_oidc ---
-    - name: "CHECK: External OIDC (enableExternalAuthProviders)"
+    - name: "CHECK: External OIDC (enableExternalAuthProviders + externalAuthProviders)"
       block:
         - name: Assert enableExternalAuthProviders is true
           assert:
@@ -179,13 +179,28 @@
               - rcp.spec.enableExternalAuthProviders | bool
             fail_msg: "FAIL: enableExternalAuthProviders not set"
             success_msg: "PASS: enableExternalAuthProviders = true"
+        - name: Assert externalAuthProviders is configured
+          assert:
+            that:
+              - rcp.spec.externalAuthProviders is defined
+              - rcp.spec.externalAuthProviders | length > 0
+              - rcp.spec.externalAuthProviders[0].issuer is defined
+              - rcp.spec.externalAuthProviders[0].issuer.issuerURL is defined
+              - rcp.spec.externalAuthProviders[0].issuer.issuerURL | length > 0
+              - rcp.spec.externalAuthProviders[0].issuer.audiences is defined
+              - rcp.spec.externalAuthProviders[0].issuer.audiences | length > 0
+              - rcp.spec.externalAuthProviders[0].claimMappings is defined
+              - rcp.spec.externalAuthProviders[0].claimMappings.username is defined
+              - rcp.spec.externalAuthProviders[0].claimMappings.username.claim is defined
+            fail_msg: "FAIL: externalAuthProviders missing or incomplete — issuerURL, audiences, or claimMappings not configured"
+            success_msg: "PASS: externalAuthProviders configured — issuerURL={{ rcp.spec.externalAuthProviders[0].issuer.issuerURL }}, audiences={{ rcp.spec.externalAuthProviders[0].issuer.audiences }}"
         - set_fact:
             features_passed: "{{ features_passed | int + 1 }}"
       rescue:
         - include_tasks: "{{ playbook_dir }}/../tasks/verify_feature_rescue.yml"
           vars:
             feature_id: external_oidc
-            fail_detail: "enableExternalAuthProviders is not set"
+            fail_detail: "enableExternalAuthProviders or externalAuthProviders not configured correctly"
 
     # --- fips ---
     - name: "CHECK: FIPS Mode"

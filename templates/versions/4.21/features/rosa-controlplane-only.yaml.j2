@@ -118,6 +118,37 @@ spec:
 
 {% if external_oidc is defined and external_oidc | bool %}
   enableExternalAuthProviders: true
+{% if oidc_issuer_url is defined and (oidc_issuer_url | length > 0) %}
+  externalAuthProviders:
+    - name: {{ oidc_provider_name | default('capa-e2e-oidc') }}
+      issuer:
+        issuerURL: {{ oidc_issuer_url }}
+        audiences:
+{% for aud in oidc_audiences | default([oidc_client_id | default('capa-e2e-client')]) %}
+          - {{ aud }}
+{% endfor %}
+      claimMappings:
+        username:
+          claim: {{ oidc_username_claim | default('email') }}
+          prefixPolicy: {{ oidc_username_prefix_policy | default('""') }}
+{% if oidc_groups_claim is defined and (oidc_groups_claim | length > 0) %}
+        groups:
+          claim: {{ oidc_groups_claim }}
+{% if oidc_groups_prefix is defined and (oidc_groups_prefix | length > 0) %}
+          prefix: {{ oidc_groups_prefix }}
+{% endif %}
+{% endif %}
+{% if oidc_client_id is defined and (oidc_client_id | length > 0) %}
+      oidcClients:
+        - componentName: console
+          componentNamespace: openshift-console
+          clientID: {{ oidc_client_id }}
+{% if oidc_client_secret_name is defined and (oidc_client_secret_name | length > 0) %}
+          clientSecret:
+            name: {{ oidc_client_secret_name }}
+{% endif %}
+{% endif %}
+{% endif %}
 {% endif %}
 
 {% if etcd_encryption_kms_arn is defined and etcd_encryption_kms_arn %}
