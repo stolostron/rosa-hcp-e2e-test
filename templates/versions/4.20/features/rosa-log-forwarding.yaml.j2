@@ -146,7 +146,7 @@ spec:
   # LOG FORWARDING CONFIGURATION
   # PR: https://github.com/kubernetes-sigs/cluster-api-provider-aws/pull/5786
   # ======================================
-  {% if log_forward_enabled | default(false) %}
+  {% if log_forward_enabled is defined and log_forward_enabled | bool %}
   cloudWatchlogForwarder:
     # CloudWatch configuration
     {% if log_forward_cloudwatch_role_arn is defined and log_forward_cloudwatch_role_arn %}

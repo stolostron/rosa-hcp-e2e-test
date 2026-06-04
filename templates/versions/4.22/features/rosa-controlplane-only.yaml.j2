@@ -4,7 +4,7 @@ metadata:
   name: {{ cluster_name }}
   namespace: {{ capi_namespace }}
   labels:
-    automation.acm.redhat.com/test-case: "ACM-21174-Combined"
+    automation.acm.redhat.com/test-case: "ACM-21174-ControlPlane"
     automation.acm.redhat.com/network-automation: "true"
     automation.acm.redhat.com/role-automation: "true"
 spec:
@@ -16,13 +16,13 @@ metadata:
   name: {{ cluster_name }}
   namespace: {{ capi_namespace }}
   labels:
-    automation.acm.redhat.com/test-case: "ACM-21174-Combined"
+    automation.acm.redhat.com/test-case: "ACM-21174-ControlPlane"
     automation.acm.redhat.com/network-automation: "true"
     automation.acm.redhat.com/role-automation: "true"
 spec:
   clusterNetwork:
     pods:
-      cidrBlocks: ["{{ cluster_network.pod_cidr | default('192.168.0.0/16') }}"]
+      cidrBlocks: ["{{ cluster_network.pod_cidr | default('10.128.0.0/14') }}"]
   infrastructureRef:
     apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
     kind: ROSACluster
@@ -40,61 +40,13 @@ metadata:
   name: {{ cluster_name }}
   namespace: {{ capi_namespace }}
   labels:
-    automation.acm.redhat.com/test-case: "ACM-21174-Combined"
+    automation.acm.redhat.com/test-case: "ACM-21174-ControlPlane"
     automation.acm.redhat.com/network-automation: "true"
     automation.acm.redhat.com/role-automation: "true"
 spec: {}
 ---
-# ROSANetwork for automated VPC and subnet creation
-# FIXED: Removed unsupported credentialsSecretRef, changed tags to stackTags, added required stackName and region
-apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
-kind: ROSANetwork
-metadata:
-  name: {{ cluster_name }}-network
-  namespace: {{ capi_namespace }}
-  labels:
-    cluster.x-k8s.io/cluster-name: {{ cluster_name }}
-    automation.acm.redhat.com/test-case: "ACM-21174-Combined"
-    automation.acm.redhat.com/created-by: "ansible-automation"
-spec:
-  identityRef:
-    kind: AWSClusterControllerIdentity
-    name: {{ rosa_network_config.identity_name | default('default') }}
-  region: {{ aws_region }}
-  cidrBlock: {{ rosa_network_config.cidr_block | default('10.0.0.0/16') }}
-  stackName: {{ cluster_name }}-network-stack
-  availabilityZones:
-  {% for az in rosa_network_config.availability_zones -%}
-  - {{ az }}
-  {% endfor -%}
-  stackTags:
-    Environment: {{ environment_tag | default('test') }}
-    TestCase: "ACM-21174-Combined"
-    CreatedBy: "ansible-automation"
-    Purpose: "combined-automation-testing"
----
-# ROSARoleConfig for automated AWS IAM role creation
-# FIXED: Removed unsupported credentialsSecretRef field
-# Default: ALWAYS CREATED for automated role management
-apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
-kind: ROSARoleConfig
-metadata:
-  name: {{ cluster_name }}-roles
-  namespace: {{ capi_namespace }}
-  labels:
-    cluster.x-k8s.io/cluster-name: {{ cluster_name }}
-    automation.acm.redhat.com/test-case: "ACM-21174-Combined"
-    automation.acm.redhat.com/created-by: "ansible-automation"
-spec:
-  identityRef:
-    kind: AWSClusterControllerIdentity
-    name: {{ rosa_role_config.identity_name | default('default') }}
-  accountRoleConfig:
-    prefix: "{{ rosa_role_config.prefix | default(cluster_name_prefix) }}"
-    version: {{ rosa_role_config.version | default(openshift_version) }}
-  operatorRoleConfig:
-    prefix: "{{ rosa_role_config.prefix | default(cluster_name_prefix) }}"
----
+# ROSAControlPlane references separately created ROSANetwork and ROSARoleConfig
+# No inline resource definitions - prevents immutable field update errors
 apiVersion: controlplane.cluster.x-k8s.io/v1beta2
 kind: ROSAControlPlane
 metadata:
@@ -106,7 +58,7 @@ metadata:
 {{ cluster_description | indent(6, first=True) }}
   {% endif -%}
   labels:
-    automation.acm.redhat.com/test-case: "ACM-21174-Combined"
+    automation.acm.redhat.com/test-case: "ACM-21174-ControlPlane"
     automation.acm.redhat.com/network-automation: "true"
     automation.acm.redhat.com/role-automation: "true"
 spec:
@@ -120,27 +72,122 @@ spec:
 
   rosaClusterName: {{ cluster_name }}
   domainPrefix: {{ domain_prefix | default(rosa_role_prefix) | default(cluster_name) }}
-  version: "{{ rcp_version | default(openshift_version) | default('4.21.0') }}"
+  version: "{{ rcp_version | default(openshift_version) | default('4.22.0') }}"
+{% if fips is defined and fips | bool %}
+  fips: "Enabled"
+{% endif %}
   region: {{ aws_region }}
-  channelGroup: {{ channel_group | default('stable') }}
+{% if channel_group is defined and channel_group %}
+  channelGroup: {{ channel_group }}
+{% endif %}
+
+{% if private is defined and private | bool %}
+  endpointAccess: Private
+{% endif %}
 
   defaultMachinePoolSpec:
     instanceType: {{ machine_pool.instance_type | default('m5.xlarge') }}
     autoscaling:
-      maxReplicas: {{ machine_pool.max_replicas | default(2) }}
+{% if default_autoscaling is defined and default_autoscaling | bool %}
+      minReplicas: {{ mp_min_replicas | default(2) }}
+      maxReplicas: {{ mp_max_replicas | default(4) }}
+{% else %}
       minReplicas: {{ machine_pool.min_replicas | default(2) }}
+      maxReplicas: {{ machine_pool.max_replicas | default(2) }}
+{% endif %}
 
   additionalTags:
     env: {{ environment_tag | default('test') }}
-    purpose: {{ purpose_tag | default('acm21174-combined-testing') }}
+    purpose: {{ purpose_tag | default('rosa-hcp-automation-testing') }}
     automated: "true"
     network-automation: "true"
-    role-automation: "{{ 'true' if rosa_role_config is defined and rosa_role_config.enabled | default(false) else 'false' }}"
+    role-automation: "true"
+{% if additional_tags is defined and additional_tags %}
+{% for key, value in additional_tags.items() %}
+    {{ key }}: "{{ value }}"
+{% endfor %}
+{% endif %}
 
   network:
     machineCIDR: {{ cluster_network.machine_cidr | default('10.0.0.0/16') }}
+{% if no_cni is defined and no_cni | bool %}
+    networkType: Other
+{% endif %}
     podCIDR: {{ cluster_network.pod_cidr | default('10.128.0.0/14') }}
     serviceCIDR: {{ cluster_network.service_cidr | default('172.30.0.0/16') }}
+
+{% if external_oidc is defined and external_oidc | bool %}
+  enableExternalAuthProviders: true
+{% if oidc_issuer_url is defined and (oidc_issuer_url | length > 0) %}
+  externalAuthProviders:
+    - name: {{ oidc_provider_name | default('capa-e2e-oidc') }}
+      issuer:
+        issuerURL: {{ oidc_issuer_url }}
+        audiences:
+{% for aud in oidc_audiences | default([oidc_client_id | default('capa-e2e-client')]) %}
+          - {{ aud }}
+{% endfor %}
+      claimMappings:
+        username:
+          claim: {{ oidc_username_claim | default('email') }}
+          prefixPolicy: {{ oidc_username_prefix_policy | default('""') }}
+{% if oidc_groups_claim is defined and (oidc_groups_claim | length > 0) %}
+        groups:
+          claim: {{ oidc_groups_claim }}
+{% if oidc_groups_prefix is defined and (oidc_groups_prefix | length > 0) %}
+          prefix: {{ oidc_groups_prefix }}
+{% endif %}
+{% endif %}
+{% if oidc_client_id is defined and (oidc_client_id | length > 0) %}
+      oidcClients:
+        - componentName: console
+          componentNamespace: openshift-console
+          clientID: {{ oidc_client_id }}
+{% if oidc_client_secret_name is defined and (oidc_client_secret_name | length > 0) %}
+          clientSecret:
+            name: {{ oidc_client_secret_name }}
+{% endif %}
+{% endif %}
+{% endif %}
+{% endif %}
+
+{% if etcd_encryption_kms_arn is defined and etcd_encryption_kms_arn %}
+  etcdEncryptionKMSARN: {{ etcd_encryption_kms_arn }}
+{% endif %}
+
+{% if user_agent is defined and user_agent %}
+  userAgent: {{ user_agent }}
+{% endif %}
+
+{% if http_proxy is defined and http_proxy | bool %}
+  proxy:
+    httpProxy: {{ http_proxy_url | default('') }}
+    httpsProxy: {{ https_proxy_url | default('') }}
+    noProxy: {{ no_proxy | default('') }}
+{% endif %}
+
+{% if additional_security_groups is defined and additional_security_groups %}
+  additionalSecurityGroups:
+{% for sg in additional_security_groups %}
+    - {{ sg }}
+{% endfor %}
+{% endif %}
+
+{% if image_registry_config is defined and image_registry_config | bool %}
+  clusterRegistryConfig:
+    allowedRegistriesForImport:
+      - domainName: "{{ registry_domain | default('quay.io') }}"
+        insecure: false
+    registrySources:
+      allowedRegistries:
+        - "{{ allowed_registry | default('quay.io') }}"
+{% endif %}
+
+{% if cluster_autoscaler_expander is defined and cluster_autoscaler_expander | bool %}
+  autoscaler:
+    expanders:
+      - LeastWaste
+{% endif %}
 
   # ======================================
   # LOG FORWARDING CONFIGURATION
@@ -188,8 +235,8 @@ spec:
   {% endif %}
   {% endif %}
 
-  # Complete automation: No manual subnets, availability zones, or role ARNs required
-  # All infrastructure will be created automatically by ROSANetwork and ROSARoleConfig
+  # References to automation resources created separately
+  # No inline ROSANetwork or ROSARoleConfig definitions
 ---
 apiVersion: cluster.x-k8s.io/v1beta1
 kind: MachinePool
@@ -197,7 +244,7 @@ metadata:
   name: {{ cluster_name }}
   namespace: {{ capi_namespace }}
   labels:
-    automation.acm.redhat.com/test-case: "ACM-21174-Combined"
+    automation.acm.redhat.com/test-case: "ACM-21174-ControlPlane"
     automation.acm.redhat.com/network-automation: "true"
     automation.acm.redhat.com/role-automation: "true"
 spec:
@@ -220,7 +267,7 @@ metadata:
   name: {{ cluster_name }}
   namespace: {{ capi_namespace }}
   labels:
-    automation.acm.redhat.com/test-case: "ACM-21174-Combined"
+    automation.acm.redhat.com/test-case: "ACM-21174-ControlPlane"
     automation.acm.redhat.com/network-automation: "true"
     automation.acm.redhat.com/role-automation: "true"
 spec:

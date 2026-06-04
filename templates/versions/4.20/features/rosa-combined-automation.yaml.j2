@@ -146,9 +146,9 @@ spec:
   # LOG FORWARDING CONFIGURATION
   # PR: https://github.com/kubernetes-sigs/cluster-api-provider-aws/pull/5786
   # ======================================
-  {% if log_forward_enabled | default(false) %}
+  {% if log_forward_enabled is defined and log_forward_enabled | bool %}
   # CloudWatch log forwarding configuration
-  {% if log_forward_cloudwatch_role_arn or log_forward_cloudwatch_log_group %}
+  {% if (log_forward_cloudwatch_role_arn is defined and log_forward_cloudwatch_role_arn) or (log_forward_cloudwatch_log_group is defined and log_forward_cloudwatch_log_group) %}
   cloudWatchlogForwarder:
     # Applications to forward (valid values: application, infrastructure, audit-webhook)
     {% if log_forward_applications is defined and log_forward_applications %}
@@ -168,7 +168,7 @@ spec:
   {% endif %}
 
   # S3 log forwarding configuration (separate from CloudWatch)
-  {% if log_forward_s3_bucket or log_forward_s3_prefix %}
+  {% if (log_forward_s3_bucket is defined and log_forward_s3_bucket) or (log_forward_s3_prefix is defined and log_forward_s3_prefix) %}
   s3LogForwarder:
     # Applications to forward (valid values: application, infrastructure, audit-webhook)
     {% if log_forward_applications is defined and log_forward_applications %}
