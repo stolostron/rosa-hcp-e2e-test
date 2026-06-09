@@ -184,6 +184,10 @@
       Check: oc get rosacontrolplane {{ cluster_name }} -n {{ capi_namespace }}
   when: rcp_deletion_failed | default(false) | bool
 
+- name: Clean up additional security groups (before VPC deletion)
+  include_tasks: delete_security_group.yml
+  when: AWS_ACCESS_KEY_ID is defined and AWS_SECRET_ACCESS_KEY is defined
+
 - name: Delete ROSANetwork (after ROSAControlPlane deletion completes)
   shell: |
     oc delete rosanetwork {{ rosa_network_name }} -n {{ capi_namespace }} --wait=false
