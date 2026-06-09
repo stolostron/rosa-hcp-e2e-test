@@ -189,51 +189,38 @@ spec:
       - LeastWaste
 {% endif %}
 
-  # ======================================
-  # LOG FORWARDING CONFIGURATION
-  # PR: https://github.com/kubernetes-sigs/cluster-api-provider-aws/pull/5786
-  # ======================================
-  {% if log_forward_enabled is defined and log_forward_enabled | bool %}
-  # CloudWatch log forwarding configuration
-  {% if (log_forward_cloudwatch_role_arn is defined and log_forward_cloudwatch_role_arn) or (log_forward_cloudwatch_log_group is defined and log_forward_cloudwatch_log_group) %}
+{% if log_forward_enabled is defined and log_forward_enabled | bool %}
+{% if (log_forward_cloudwatch_role_arn is defined and log_forward_cloudwatch_role_arn) or (log_forward_cloudwatch_log_group is defined and log_forward_cloudwatch_log_group) %}
   cloudWatchlogForwarder:
-    # Applications to forward (valid values: application, infrastructure, audit-webhook)
-    {% if log_forward_applications is defined and log_forward_applications %}
+{% if log_forward_applications is defined and log_forward_applications %}
     applications:
-    {% for app in log_forward_applications %}
+{% for app in log_forward_applications %}
       - {{ app }}
-    {% endfor %}
-    {% endif %}
-
-    # CloudWatch configuration
-    {% if log_forward_cloudwatch_role_arn is defined and log_forward_cloudwatch_role_arn %}
+{% endfor %}
+{% endif %}
+{% if log_forward_cloudwatch_role_arn is defined and log_forward_cloudwatch_role_arn %}
     cloudWatchLogRoleArn: {{ log_forward_cloudwatch_role_arn | trim }}
-    {% endif %}
-    {% if log_forward_cloudwatch_log_group is defined and log_forward_cloudwatch_log_group %}
+{% endif %}
+{% if log_forward_cloudwatch_log_group is defined and log_forward_cloudwatch_log_group %}
     cloudWatchLogGroupName: {{ log_forward_cloudwatch_log_group | trim }}
-    {% endif %}
-  {% endif %}
-
-  # S3 log forwarding configuration (separate from CloudWatch)
-  {% if (log_forward_s3_bucket is defined and log_forward_s3_bucket) or (log_forward_s3_prefix is defined and log_forward_s3_prefix) %}
+{% endif %}
+{% endif %}
+{% if (log_forward_s3_bucket is defined and log_forward_s3_bucket) or (log_forward_s3_prefix is defined and log_forward_s3_prefix) %}
   s3LogForwarder:
-    # Applications to forward (valid values: application, infrastructure, audit-webhook)
-    {% if log_forward_applications is defined and log_forward_applications %}
+{% if log_forward_applications is defined and log_forward_applications %}
     applications:
-    {% for app in log_forward_applications %}
+{% for app in log_forward_applications %}
       - {{ app }}
-    {% endfor %}
-    {% endif %}
-
-    # S3 configuration
-    {% if log_forward_s3_bucket is defined and log_forward_s3_bucket %}
+{% endfor %}
+{% endif %}
+{% if log_forward_s3_bucket is defined and log_forward_s3_bucket %}
     s3ConfigBucketName: {{ log_forward_s3_bucket | trim }}
-    {% endif %}
-    {% if log_forward_s3_prefix is defined and log_forward_s3_prefix %}
+{% endif %}
+{% if log_forward_s3_prefix is defined and log_forward_s3_prefix %}
     s3ConfigBucketPrefix: {{ log_forward_s3_prefix | trim }}
-    {% endif %}
-  {% endif %}
-  {% endif %}
+{% endif %}
+{% endif %}
+{% endif %}
 
   # References to automation resources created separately
   # No inline ROSANetwork or ROSARoleConfig definitions
