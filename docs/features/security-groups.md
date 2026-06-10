@@ -151,7 +151,9 @@ required and passed automatically by the Jenkinsfile.
 | ROSAMachinePool SG | `["sg-0fdad2295cfee7ba3"]` |
 | ROSAControlPlane Ready | true |
 | ROSAMachinePool Ready | true |
-| Result | PASS |
+| Provision Result | PASS |
+| Delete Result | PASS (suite 30, SG deleted first try, zero ENI retries) |
+| Orphan Check | PASS (SG, VPC, CFN stack, 11 IAM roles all confirmed gone) |
 
 ## Related PRs
 

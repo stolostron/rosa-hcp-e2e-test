@@ -568,6 +568,8 @@ class TestTemplateSecurityGroupPlacement:
     ])
     def test_sg_only_on_machine_pool(self, version, template_name):
         docs = _render_template(template_name, version, {"additional_security_groups": ["sg-test123"]})
+        assert docs, f"{template_name}: rendered no YAML documents"
+        assert any(d.get("kind") == "ROSAMachinePool" for d in docs), f"{template_name}: no ROSAMachinePool document"
         for doc in docs:
             kind = doc.get("kind")
             has_sg = "additionalSecurityGroups" in doc.get("spec", {})
@@ -584,6 +586,7 @@ class TestTemplateSecurityGroupPlacement:
     ])
     def test_no_sg_when_not_defined(self, version, template_name):
         docs = _render_template(template_name, version)
+        assert docs, f"{template_name}: rendered no YAML documents"
         for doc in docs:
             assert "additionalSecurityGroups" not in doc.get("spec", {}), \
                 f"{template_name}: {doc.get('kind')} has additionalSecurityGroups when none defined"
