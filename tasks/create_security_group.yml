@@ -8,7 +8,7 @@
 - name: Get VPC ID from ROSANetwork status
   shell: >
     oc get rosanetwork {{ rosa_network_name }} -n {{ capi_namespace }}
-    -o jsonpath='{.status.vpcId}'
+    -o jsonpath='{.status.resources[?(@.logicalId=="VPC")].physicalId}'
   register: vpc_id_result
   failed_when: vpc_id_result.rc != 0 or vpc_id_result.stdout == ''
 
