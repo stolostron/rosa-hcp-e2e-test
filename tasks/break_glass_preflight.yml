@@ -1,0 +1,95 @@
+---
+- name: Validate cluster_id is provided for preflight
+  fail:
+    msg: "Required variable cluster_id is not defined or empty"
+  when: cluster_id is not defined or cluster_id == ""
+
+- name: Set default variables
+  set_fact:
+    capi_namespace: "{{ capi_namespace | default('ns-rosa-hcp') }}"
+    capa_system_namespace: "{{ capa_system_namespace | default('multicluster-engine') }}"
+
+- name: Get cluster information from OCM API
+  shell: |
+    ocm get /api/clusters_mgmt/v1/clusters/{{ cluster_id }}
+  register: cluster_info_raw
+  failed_when: false
+  changed_when: false
+
+- name: Parse cluster information and extract details
+  set_fact:
+    cluster_info: "{{ cluster_info_raw.stdout | from_json }}"
+  when: cluster_info_raw.rc == 0
+
+- name: Set cluster facts from OCM response
+  set_fact:
+    cluster_name: "{{ cluster_info.name | default('') }}"
+    cluster_state: "{{ cluster_info.state | default('') }}"
+    external_auth_enabled: "{{ cluster_info.external_auth_config.enabled | default(cluster_info.external_authentication.enabled | default(false)) | bool }}"
+  when: cluster_info_raw.rc == 0
+
+- name: Handle cluster not found
+  set_fact:
+    cluster_name: ""
+    cluster_state: "not_found"
+    external_auth_enabled: false
+  when: cluster_info_raw.rc != 0
+
+- name: Warn if external auth is not enabled
+  debug:
+    msg: |
+      WARNING: External authentication is NOT enabled on cluster {{ cluster_id }}.
+      Break-glass credentials require external auth to be enabled.
+      Current external_auth_enabled: {{ external_auth_enabled }}
+  when: not external_auth_enabled
+
+- name: Check kubeconfig secret exists on provisioner
+  shell: |
+    oc get secret {{ cluster_name }}-kubeconfig -n {{ capi_namespace }} --no-headers 2>/dev/null
+  register: kubeconfig_secret_check
+  failed_when: false
+  changed_when: false
+  when: cluster_name != ""
+
+- name: Check bootstrap-kubeconfig secret exists on provisioner
+  shell: |
+    oc get secret {{ cluster_name }}-bootstrap-kubeconfig -n {{ capi_namespace }} --no-headers 2>/dev/null
+  register: bootstrap_kubeconfig_secret_check
+  failed_when: false
+  changed_when: false
+  when: cluster_name != ""
+
+- name: Set secret existence facts
+  set_fact:
+    kubeconfig_secret_exists: "{{ (kubeconfig_secret_check.rc | default(1)) == 0 }}"
+    bootstrap_kubeconfig_secret_exists: "{{ (bootstrap_kubeconfig_secret_check.rc | default(1)) == 0 }}"
+
+- name: Display diagnostic summary
+  debug:
+    msg: |
+      Break-Glass Preflight Check Summary:
+      =====================================
+      Cluster ID: {{ cluster_id }}
+      Cluster Name: {{ cluster_name }}
+      Cluster State: {{ cluster_state }}
+      External Auth Enabled: {{ external_auth_enabled }}
+      CAPI Namespace: {{ capi_namespace }}
+      
+      Provisioner Secret Status:
+      - {{ cluster_name }}-kubeconfig: {{ 'EXISTS' if kubeconfig_secret_exists else 'MISSING' }}
+      - {{ cluster_name }}-bootstrap-kubeconfig: {{ 'EXISTS' if bootstrap_kubeconfig_secret_exists else 'MISSING' }}
+
+- name: Set preflight result
+  set_fact:
+    break_glass_preflight_passed: "{{ cluster_info_raw.rc == 0 and external_auth_enabled and kubeconfig_secret_exists and bootstrap_kubeconfig_secret_exists }}"
+
+- name: Display preflight result
+  debug:
+    msg: |
+      Break-Glass Preflight Check Result: {{ 'PASSED' if break_glass_preflight_passed else 'FAILED' }}
+      
+      Requirements:
+      - Cluster exists: {{ 'YES' if cluster_info_raw.rc == 0 else 'NO' }}
+      - External auth enabled: {{ 'YES' if external_auth_enabled else 'NO' }}
+      - Kubeconfig secret exists: {{ 'YES' if kubeconfig_secret_exists else 'NO' }}
+      - Bootstrap kubeconfig secret exists: {{ 'YES' if bootstrap_kubeconfig_secret_exists else 'NO' }}

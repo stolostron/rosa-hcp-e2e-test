@@ -26,6 +26,7 @@ var_map:
   no_cni: no_cni
   proxy_enabled: http_proxy
   external_oidc: external_oidc
+  break_glass_credentials: break_glass_credentials
   image_registry: image_registry_config
   parallel_upgrade: parallel_node_upgrade
   user_agent: user_agent
@@ -41,6 +42,7 @@ cli_aliases:
   private: private_network
   no-cni: no_cni
   external-oidc: external_oidc
+  break-glass: break_glass_credentials
   etcd-kms: etcd_kms
   proxy: proxy_enabled
   tags: additional_tags
@@ -67,6 +69,7 @@ cli_features:
   - private_network
   - no_cni
   - external_oidc
+  - break_glass_credentials
   - etcd_kms
   - additional_tags
   - domain_prefix
@@ -86,6 +89,8 @@ cli_features:
 dependencies:
   byon:
     - private_network
+  break_glass_credentials:
+    - external_oidc
   fips:
     - etcd_kms
 
@@ -213,6 +218,18 @@ suites:
         default: false
         k8s_field: ".spec.enableExternalAuthProviders"
         resource: ROSAControlPlane
+
+      - id: break_glass_credentials
+        name: Break Glass Credentials
+        description: Validate OCM break-glass credential create/list for external-auth clusters (diagnoses 403 Forbidden)
+        type: action
+        mutable: false
+        applies_to: [create]
+        default: false
+        k8s_field: ".spec.enableExternalAuthProviders"
+        resource: ROSAControlPlane
+        min_version: "4.19"
+        playbook: playbooks/verify_break_glass_credentials.yml
 
       - id: security_groups
         name: Additional Security Groups
