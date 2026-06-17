@@ -186,7 +186,9 @@
 
 - name: Clean up additional security groups (before VPC deletion)
   include_tasks: delete_security_group.yml
-  when: AWS_ACCESS_KEY_ID is defined and AWS_SECRET_ACCESS_KEY is defined
+  when:
+    - AWS_ACCESS_KEY_ID is defined and AWS_SECRET_ACCESS_KEY is defined
+    - (feature_security_groups_enabled | default(false) | bool) or (created_security_group_id is defined)
 
 - name: Delete ROSANetwork (after ROSAControlPlane deletion completes)
   shell: |

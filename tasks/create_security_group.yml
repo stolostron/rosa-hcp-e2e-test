@@ -81,7 +81,11 @@
           --tags "Key=Name,Value={{ cluster_name }}-test-sg" \
                  "Key=rosa-cluster,Value={{ cluster_name }}" \
                  "Key=automation.acm.redhat.com/created-by,Value=ansible-automation" \
-                 "Key=automation.acm.redhat.com/test-case,Value=SC-04" || true
+                 "Key=automation.acm.redhat.com/test-case,Value=SC-04"
+        TAG_RC=$?
+        if [ $TAG_RC -ne 0 ]; then
+          echo "WARNING: Failed to tag security group $SG_ID — may be orphaned on cleanup" >&2
+        fi
         echo "$SG_ID"
       register: create_sg_result
     - name: Set created security group ID

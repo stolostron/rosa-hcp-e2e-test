@@ -8,7 +8,7 @@
 | Phase | Day1 |
 | Type | list |
 | Mutable | Yes (create + apply) |
-| Requires Input | Yes (auto-created when using `--feature security-groups`) |
+| Requires Input | Optional (auto-created when using `--feature security-groups`) |
 | CRD Resource | `ROSAMachinePool` |
 | K8s Field | `.spec.additionalSecurityGroups` |
 | Min Version | 4.19 |
@@ -31,8 +31,8 @@ test security group in the cluster VPC (Step 2.5) and injects it into the
 ### Provisioning Flow
 
 ```
-Step 1/3  ROSARoleConfig       AWS IAM roles + OIDC provider
-Step 2/3  ROSANetwork          VPC, subnets, NAT GWs (CloudFormation)
+Step 1  ROSARoleConfig       AWS IAM roles + OIDC provider
+Step 2  ROSANetwork          VPC, subnets, NAT GWs (CloudFormation)
 Step 2.5  create_security_group.yml
           |-- Gets VPC ID from ROSANetwork
           |   jsonpath: .status.resources[?(@.logicalId=="VPC")].physicalId
@@ -42,9 +42,9 @@ Step 2.5  create_security_group.yml
           |     automation.acm.redhat.com/created-by=ansible-automation
           |     automation.acm.redhat.com/test-case=SC-04
           |-- Sets fact: additional_security_groups=[sg-xxx]
-Step 3/3  ROSAControlPlane + ROSAMachinePool from template
+Step 3  ROSAControlPlane + ROSAMachinePool from template
           ROSAMachinePool.spec.additionalSecurityGroups: [sg-xxx]
-Step 4/4  Wait for cluster ready
+Step 4  Wait for cluster ready
 ```
 
 ### Deletion Flow
