@@ -28,7 +28,7 @@ diagnostic identifies the root cause from four scenarios:
 3. **External auth not enabled** — break-glass requires external auth
 4. **Invalid/expired OCM token**
 
-## How It Works
+## Usage
 
 ```bash
 ./run-test-suite.py 20-rosa-hcp-provision --feature break-glass \
@@ -177,6 +177,8 @@ the OCM cluster ID via `EXTRA_FEATURE_VARS=cluster_id=<ocm_id>`.
 - Only credential ID is stored (not full API response)
 - SRE tokens are explicitly noted as excluded from break-glass permissions
 
-## Related PRs
+## Related
 
-- [PR #70](https://github.com/stolostron/rosa-hcp-e2e-test/pull/70) - feat: add break-glass credential 403 diagnostic test for external-auth clusters
+- [Automated Feature Verification](automated-feature-verification.md)
+- [External OIDC](external-oidc.md) (auto-resolved dependency)
+- [PR #70](https://github.com/stolostron/rosa-hcp-e2e-test/pull/70)

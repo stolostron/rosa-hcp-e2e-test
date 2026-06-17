@@ -59,7 +59,7 @@ limitation) and an incorrectly applied feature (test failure).
 | `channel_group` | `--feature channel-group` | `.spec.channelGroup` | Valid value (stable, fast, candidate), matches requested |
 | `default_autoscaling` | `--feature autoscaling` | `.spec.defaultMachinePoolSpec.autoscaling` | `minReplicas`/`maxReplicas` match expected (default: 2/4 when enabled, 2/2 otherwise) |
 | `audit_logging` | `--feature log-forwarding` | `.spec.cloudWatchlogForwarder` | Structure present, CloudWatch role ARN and/or log group match if provided |
-| `proxy_enabled` | `--feature proxy` | `.spec.proxy` | Proxy configuration block present |
+| `proxy_enabled` | `-e http_proxy=true` | `.spec.proxy` | Proxy configuration block present |
 
 ### ROSAMachinePool Features
 
@@ -68,6 +68,14 @@ limitation) and an incorrectly applied feature (test failure).
 | `disk_size` | `--feature disk-size` | `.spec.volumeSize` | Matches requested value (CI default: 500, default: 300) |
 | `parallel_upgrade` | `--feature parallel-upgrade` | `.spec.updateConfig.rollingUpdate` | `maxSurge` and `maxUnavailable` match expected (default: 1/0) |
 | `security_groups` | `--feature security-groups` | `.spec.additionalSecurityGroups` | Non-empty array, matches requested SG IDs if provided |
+
+### Action Features (Non-Field Checks)
+
+| Feature | CLI Flag | Type | What it Does |
+|---------|----------|------|-------------|
+| `break_glass_credentials` | `--feature break-glass` | action | Runs dedicated playbook to list/create break-glass credentials via OCM API, diagnoses 403 errors with AMS role check |
+
+See [Break-Glass Credentials](break-glass-credentials.md) for full details.
 
 ### ROSANetwork Features
 
@@ -131,7 +139,7 @@ input (e.g., KMS ARN) are passed via `EXTRA_FEATURE_VARS` or `ETCD_KMS_ARN`.
 
 | File | Purpose |
 |------|---------|
-| `playbooks/verify_feature_flags.yml` | Main verification playbook (18 feature checks) |
+| `playbooks/verify_feature_flags.yml` | Main verification playbook (field-based feature checks) |
 | `tasks/verify_feature_rescue.yml` | CRD field check + PASS/FAIL/WARN/SKIP classification |
 | `templates/schemas/feature-registry.yml` | Feature definitions, var mappings, groups, dependencies |
 | `templates/schemas/version-compatibility.yml` | Version gating rules |
