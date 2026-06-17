@@ -82,7 +82,7 @@ render this block on the **ROSAMachinePool** resource only:
 ```yaml
 spec:
   additionalSecurityGroups:
-    - sg-0fdad2295cfee7ba3
+    - sg-0123456789abcdef0
 ```
 
 The ROSAControlPlane CRD does **not** support `additionalSecurityGroups`.
@@ -140,20 +140,20 @@ required and passed automatically by the Jenkinsfile.
 | Field | Value |
 |-------|-------|
 | Date | 2026-06-10 |
-| Hub Cluster | ci-azure-w24 |
-| Cluster Name | sg1-rosa-hcp |
-| OCM ID | 2qrlaikus4p1au4o7b7o4j74hhdr4mal |
+| Hub Cluster | `<hub-cluster>` |
+| Cluster Name | `<cluster-name>` |
+| OCM ID | `<ocm-cluster-id>` |
 | Version | 4.22.0-rc.5 (candidate) |
 | Region | us-west-2 |
-| API URL | https://api.sg1.j9y4.s3.devshift.org:443 |
-| VPC ID | vpc-0c5abdb3aa4493f66 |
-| Security Group | sg-0fdad2295cfee7ba3 (sg1-rosa-hcp-test-sg) |
-| ROSAMachinePool SG | `["sg-0fdad2295cfee7ba3"]` |
+| API URL | `https://api.<cluster>.<domain>:443` |
+| VPC ID | `vpc-<id>` |
+| Security Group | `sg-<id>` (`<cluster-name>-test-sg`) |
+| ROSAMachinePool SG | `["sg-<id>"]` |
 | ROSAControlPlane Ready | true |
 | ROSAMachinePool Ready | true |
 | Provision Result | PASS |
 | Delete Result | PASS (suite 30, SG deleted first try, zero ENI retries) |
-| Orphan Check | PASS (SG, VPC, CFN stack, 11 IAM roles all confirmed gone) |
+| Orphan Check | PASS (SG, VPC, CFN stack, IAM roles all confirmed gone) |
 
 ## Related PRs
 
