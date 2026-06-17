@@ -77,6 +77,34 @@
         - cluster_name is defined
         - bootstrap_kubeconfig_secret_found | default(false)
 
+    - name: Check OCM account role for break-glass permissions
+      shell: |
+        ROLE_BINDINGS=$(ocm get /api/accounts_mgmt/v1/role_bindings --parameter search="account.id='$(ocm whoami --json 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))" 2>/dev/null)'" 2>/dev/null)
+        if [ $? -ne 0 ] || [ -z "$ROLE_BINDINGS" ]; then
+          echo "ROLE_CHECK_FAILED"
+          exit 0
+        fi
+        echo "$ROLE_BINDINGS" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+roles = [item.get('role',{}).get('id','') for item in data.get('items',[])]
+has_owner = any('ClusterOwner' in r or 'cluster_owner' in r for r in roles)
+has_dev = any('ClusterServiceDeveloper' in r or 'cluster_service_developer' in r for r in roles)
+print(f'has_cluster_owner={has_owner}')
+print(f'has_cluster_service_developer={has_dev}')
+print(f'roles={",".join(roles)}')
+" 2>/dev/null || echo "ROLE_PARSE_FAILED"
+      register: ocm_role_check_result
+      failed_when: false
+      changed_when: false
+
+    - name: Parse OCM role check results
+      set_fact:
+        ocm_has_cluster_owner: "{{ 'has_cluster_owner=True' in (ocm_role_check_result.stdout | default('')) }}"
+        ocm_has_cluster_service_developer: "{{ 'has_cluster_service_developer=True' in (ocm_role_check_result.stdout | default('')) }}"
+        ocm_has_break_glass_permission: "{{ 'has_cluster_owner=True' in (ocm_role_check_result.stdout | default('')) or 'has_cluster_service_developer=True' in (ocm_role_check_result.stdout | default('')) }}"
+        ocm_role_check_failed: "{{ 'ROLE_CHECK_FAILED' in (ocm_role_check_result.stdout | default('')) or 'ROLE_PARSE_FAILED' in (ocm_role_check_result.stdout | default('')) }}"
+
     - name: Check CAPA controller logs for break-glass errors
       shell: |
         oc logs deploy/capa-controller-manager -n "{{ capa_system_namespace }}" --tail=100 2>/dev/null | grep -i 'break.glass\|forbidden\|403'
@@ -123,8 +151,24 @@
           - No break-glass related errors found in recent CAPA controller logs
           {% endif %}
           
+          OCM ROLE CHECK:
+          {% if ocm_role_check_failed | default(false) %}
+          - Role check: COULD NOT DETERMINE (API call failed)
+          {% else %}
+          - Has cluster_owner role: {{ 'YES' if ocm_has_cluster_owner | default(false) else 'NO' }}
+          - Has cluster_service_developer role: {{ 'YES' if ocm_has_cluster_service_developer | default(false) else 'NO' }}
+          - Has break-glass permission: {{ 'YES' if ocm_has_break_glass_permission | default(false) else 'NO' }}
+          {% endif %}
+          - 403 is AMS access_review denial: {{ 'YES' if break_glass_403_is_ams_denial | default(false) | bool else 'NO' }}
+          
           ROOT CAUSE ASSESSMENT:
-          {% if not (kubeconfig_secret_found | default(false)) or not (bootstrap_kubeconfig_secret_found | default(false)) %}
+          {% if (break_glass_403_is_ams_denial | default(false) | bool) or (not ocm_role_check_failed | default(false) and not ocm_has_break_glass_permission | default(false)) %}
+          - Confidence: High
+          - Primary Issue: OCM credential lacks ClusterBreakGlassCredential permission
+          - Root Cause: AMS access_review denied the request — OCM credential does not have cluster_owner or cluster_service_developer role
+          - Impact: CAPA controller cannot create/list break-glass credentials; reconcile external auth fails with 403
+          - Note: SRE tokens (sre_agent, uhc_support) are explicitly excluded from this permission
+          {% elif not (kubeconfig_secret_found | default(false)) or not (bootstrap_kubeconfig_secret_found | default(false)) %}
           - Confidence: High
           - Primary Issue: Missing provisioner kubeconfig secrets
           - Root Cause: Kubeconfig secrets deleted or missing on provisioner (common during ArgoCD adoption)
@@ -160,7 +204,10 @@
     - name: Set root cause and remediation facts
       set_fact:
         break_glass_root_cause: >-
-          {% if not (kubeconfig_secret_found | default(false)) or not (bootstrap_kubeconfig_secret_found | default(false)) %}
+          {% if (break_glass_403_is_ams_denial | default(false) | bool) or (not ocm_role_check_failed | default(false) and not ocm_has_break_glass_permission | default(false)) %}
+          [High confidence] AMS access_review denied ClusterBreakGlassCredential. The OCM credential used by CAPA lacks cluster_owner or cluster_service_developer role.
+          Only cluster_owner and cluster_service_developer roles have break-glass permission; sre_agent and uhc_support are explicitly excluded.
+          {% elif not (kubeconfig_secret_found | default(false)) or not (bootstrap_kubeconfig_secret_found | default(false)) %}
           [High confidence] Provisioner kubeconfig secrets missing. OCM API returns 403 because the authentication context for the hosted cluster is absent.
           {% elif not (cluster_external_auth_status | default(false) | bool) %}
           [High confidence] External authentication not enabled on cluster. Break-glass requires external auth.
@@ -170,7 +217,15 @@
           [Low confidence] All common causes checked — 403 may be due to RBAC, subscription, or service-side restrictions.
           {% endif %}
         break_glass_remediation_steps: >-
-          {% if not (kubeconfig_secret_found | default(false)) or not (bootstrap_kubeconfig_secret_found | default(false)) %}
+          {% if (break_glass_403_is_ams_denial | default(false) | bool) or (not ocm_role_check_failed | default(false) and not ocm_has_break_glass_permission | default(false)) %}
+          {{ [
+            'Verify the OCM token/credential used by CAPA on the provisioner has cluster_owner or cluster_service_developer role',
+            'Update the CAPA OCM secret on the provisioner with a credential that has the correct role',
+            'Note: SRE tokens cannot be used for break-glass operations (AMS excludes sre_agent and uhc_support from ClusterBreakGlassCredential)',
+            'Restart CAPA controller after updating the secret: oc rollout restart deploy/capa-controller-manager -n ' + capa_system_namespace,
+            'Retry break-glass credential operations'
+          ] }}
+          {% elif not (kubeconfig_secret_found | default(false)) or not (bootstrap_kubeconfig_secret_found | default(false)) %}
           {{ [
             'Verify cluster is healthy and MC is operational',
             'Recreate missing kubeconfig secrets on the provisioner (' + cluster_name + '-kubeconfig and ' + cluster_name + '-bootstrap-kubeconfig in ' + capi_namespace + ')',
