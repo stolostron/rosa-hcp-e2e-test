@@ -11,7 +11,7 @@
 
 - name: Get cluster information from OCM API
   shell: |
-    ocm get /api/clusters_mgmt/v1/clusters/{{ cluster_id }}
+    ocm get /api/clusters_mgmt/v1/clusters/"{{ cluster_id }}"
   register: cluster_info_raw
   failed_when: false
   changed_when: false
@@ -45,7 +45,7 @@
 
 - name: Check kubeconfig secret exists on provisioner
   shell: |
-    oc get secret {{ cluster_name }}-kubeconfig -n {{ capi_namespace }} --no-headers 2>/dev/null
+    oc get secret "{{ cluster_name }}-kubeconfig" -n "{{ capi_namespace }}" --no-headers 2>/dev/null
   register: kubeconfig_secret_check
   failed_when: false
   changed_when: false
@@ -53,7 +53,7 @@
 
 - name: Check bootstrap-kubeconfig secret exists on provisioner
   shell: |
-    oc get secret {{ cluster_name }}-bootstrap-kubeconfig -n {{ capi_namespace }} --no-headers 2>/dev/null
+    oc get secret "{{ cluster_name }}-bootstrap-kubeconfig" -n "{{ capi_namespace }}" --no-headers 2>/dev/null
   register: bootstrap_kubeconfig_secret_check
   failed_when: false
   changed_when: false

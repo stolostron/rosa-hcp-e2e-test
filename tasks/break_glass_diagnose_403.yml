@@ -27,7 +27,7 @@
 
     - name: Check cluster's limited support status
       shell: |
-        ocm get /api/clusters_mgmt/v1/clusters/{{ cluster_id }}/limited_support_reasons
+        ocm get /api/clusters_mgmt/v1/clusters/"{{ cluster_id }}"/limited_support_reasons
       register: limited_support_result
       failed_when: false
       changed_when: false
@@ -44,7 +44,7 @@
 
     - name: List all secrets in CAPI namespace matching cluster
       shell: |
-        oc get secrets -n {{ capi_namespace }} --no-headers 2>/dev/null | grep '{{ cluster_name }}'
+        oc get secrets -n "{{ capi_namespace }}" --no-headers 2>/dev/null | grep -F '{{ cluster_name }}'
       register: cluster_secrets_result
       failed_when: false
       changed_when: false
@@ -59,7 +59,7 @@
 
     - name: Check secret ages if they exist
       shell: |
-        oc get secret {{ cluster_name }}-kubeconfig -n {{ capi_namespace }} -o jsonpath='{.metadata.creationTimestamp}' 2>/dev/null
+        oc get secret "{{ cluster_name }}-kubeconfig" -n "{{ capi_namespace }}" -o jsonpath='{.metadata.creationTimestamp}' 2>/dev/null
       register: kubeconfig_secret_age
       failed_when: false
       changed_when: false
@@ -69,7 +69,7 @@
 
     - name: Check bootstrap secret age if it exists
       shell: |
-        oc get secret {{ cluster_name }}-bootstrap-kubeconfig -n {{ capi_namespace }} -o jsonpath='{.metadata.creationTimestamp}' 2>/dev/null
+        oc get secret "{{ cluster_name }}-bootstrap-kubeconfig" -n "{{ capi_namespace }}" -o jsonpath='{.metadata.creationTimestamp}' 2>/dev/null
       register: bootstrap_secret_age
       failed_when: false
       changed_when: false
@@ -79,7 +79,7 @@
 
     - name: Check CAPA controller logs for break-glass errors
       shell: |
-        oc logs deploy/capa-controller-manager -n {{ capa_system_namespace }} --tail=100 2>/dev/null | grep -i 'break.glass\|forbidden\|403'
+        oc logs deploy/capa-controller-manager -n "{{ capa_system_namespace }}" --tail=100 2>/dev/null | grep -i 'break.glass\|forbidden\|403'
       register: capa_logs_result
       failed_when: false
       changed_when: false
@@ -101,8 +101,8 @@
           
           OCM IDENTITY INFORMATION:
           - OCM Token Valid: {{ 'YES' if ocm_whoami_result.rc == 0 else 'NO' }}
-          - OCM Email: {{ ocm_email | default('unknown') }}
-          - OCM Organization ID: {{ ocm_organization_id | default('unknown') }}
+          - OCM Email: {{ (ocm_email | default('unknown'))[:3] + '***' if ocm_email is defined and ocm_email != 'unknown' else 'unknown' }}
+          - OCM Organization ID: {{ (ocm_organization_id | default('unknown'))[:8] + '...' if ocm_organization_id is defined and ocm_organization_id != 'unknown' else 'unknown' }}
           
           PROVISIONER SECRET INVENTORY:
           - CAPI Namespace: {{ capi_namespace }}
@@ -124,10 +124,24 @@
           {% endif %}
           
           ROOT CAUSE ASSESSMENT:
-          - Confidence: 97%
+          {% if not (kubeconfig_secret_found | default(false)) or not (bootstrap_kubeconfig_secret_found | default(false)) %}
+          - Confidence: High
           - Primary Issue: Missing provisioner kubeconfig secrets
-          - Root Cause: Customer deleted bootstrap-kubeconfig/kubeconfig secrets during ArgoCD adoption
-          - Impact: OCM API returns 403 when attempting break-glass operations due to missing authentication context
+          - Root Cause: Kubeconfig secrets deleted or missing on provisioner (common during ArgoCD adoption)
+          - Impact: OCM API returns 403 — authentication context for hosted cluster is missing
+          {% elif not (cluster_external_auth_status | default(false) | bool) %}
+          - Confidence: High
+          - Primary Issue: External authentication not enabled
+          - Root Cause: Break-glass requires external auth to be enabled on the cluster
+          {% elif ocm_whoami_result.rc != 0 %}
+          - Confidence: High
+          - Primary Issue: Invalid OCM token
+          - Root Cause: OCM CLI authentication is invalid or expired
+          {% else %}
+          - Confidence: Low
+          - Primary Issue: Unknown — all common causes checked
+          - Root Cause: 403 may be due to RBAC, subscription, or service-side restrictions
+          {% endif %}
           
           REMEDIATION STEPS:
           1. Verify cluster is healthy and MC (Management Cluster) is operational
@@ -146,14 +160,39 @@
     - name: Set root cause and remediation facts
       set_fact:
         break_glass_root_cause: >-
-          [97% confidence] Customer deleted bootstrap-kubeconfig/kubeconfig secrets on the provisioner during ArgoCD adoption.
-          OCM API returns 403 when attempting break-glass operations because the authentication context for the hosted cluster is missing.
-          The error originates on the customer provisioner, not the Red Hat MC.
-        break_glass_remediation_steps:
-          - "Verify cluster is healthy and MC is operational"
-          - "Recreate missing kubeconfig secrets on the provisioner ({{ cluster_name }}-kubeconfig and {{ cluster_name }}-bootstrap-kubeconfig in {{ capi_namespace }})"
-          - "Ensure secrets contain valid cluster authentication data from the MC"
-          - "Restart CAPA controller: oc rollout restart deploy/capa-controller-manager -n {{ capa_system_namespace }}"
-          - "Retry break-glass credential operations after secret restoration"
+          {% if not (kubeconfig_secret_found | default(false)) or not (bootstrap_kubeconfig_secret_found | default(false)) %}
+          [High confidence] Provisioner kubeconfig secrets missing. OCM API returns 403 because the authentication context for the hosted cluster is absent.
+          {% elif not (cluster_external_auth_status | default(false) | bool) %}
+          [High confidence] External authentication not enabled on cluster. Break-glass requires external auth.
+          {% elif ocm_whoami_result.rc != 0 %}
+          [High confidence] OCM CLI token is invalid or expired.
+          {% else %}
+          [Low confidence] All common causes checked — 403 may be due to RBAC, subscription, or service-side restrictions.
+          {% endif %}
+        break_glass_remediation_steps: >-
+          {% if not (kubeconfig_secret_found | default(false)) or not (bootstrap_kubeconfig_secret_found | default(false)) %}
+          {{ [
+            'Verify cluster is healthy and MC is operational',
+            'Recreate missing kubeconfig secrets on the provisioner (' + cluster_name + '-kubeconfig and ' + cluster_name + '-bootstrap-kubeconfig in ' + capi_namespace + ')',
+            'Ensure secrets contain valid cluster authentication data from the MC',
+            'Restart CAPA controller: oc rollout restart deploy/capa-controller-manager -n ' + capa_system_namespace,
+            'Retry break-glass credential operations after secret restoration'
+          ] }}
+          {% elif not (cluster_external_auth_status | default(false) | bool) %}
+          {{ [
+            'Enable external authentication on the cluster via OCM or ROSA CLI',
+            'Retry break-glass credential operations'
+          ] }}
+          {% elif ocm_whoami_result.rc != 0 %}
+          {{ [
+            'Re-authenticate OCM CLI: ocm login --token=<token>',
+            'Retry break-glass credential operations'
+          ] }}
+          {% else %}
+          {{ [
+            'Check OCM subscription and RBAC permissions',
+            'Contact Red Hat support if issue persists'
+          ] }}
+          {% endif %}
 
   when: break_glass_403_detected | default(false) | bool
