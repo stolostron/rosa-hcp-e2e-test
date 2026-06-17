@@ -22,9 +22,9 @@ When used with `--feature security-groups`, the framework automatically creates 
 test security group in the cluster VPC (Step 2.5) and injects it into the
 `ROSAMachinePool.spec.additionalSecurityGroups` list at template rendering time.
 
-## How It Works
+## Usage
 
-```
+```bash
 ./run-test-suite.py 20-rosa-hcp-provision --feature security-groups
 ```
 
@@ -86,8 +86,6 @@ spec:
 ```
 
 The ROSAControlPlane CRD does **not** support `additionalSecurityGroups`.
-
-## Usage Modes
 
 ### Auto-create (recommended for CI)
 
@@ -155,6 +153,8 @@ required and passed automatically by the Jenkinsfile.
 | Delete Result | PASS (suite 30, SG deleted first try, zero ENI retries) |
 | Orphan Check | PASS (SG, VPC, CFN stack, IAM roles all confirmed gone) |
 
-## Related PRs
+## Related
 
-- [PR #67](https://github.com/stolostron/rosa-hcp-e2e-test/pull/67) - feat: auto-create AWS security group for --feature security-groups testing
+- [Automated Feature Verification](automated-feature-verification.md)
+- Feature Group: `day1-security`
+- [PR #67](https://github.com/stolostron/rosa-hcp-e2e-test/pull/67)
