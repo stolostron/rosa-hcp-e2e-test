@@ -641,6 +641,11 @@ class TestBreakGlassCredentials:
         result = fm.resolve_to_extra_vars(["break_glass_credentials"])
         assert "feature_break_glass_credentials_enabled" in result
 
+    def test_break_glass_alias_resolves_in_extra_vars(self, fm):
+        result = fm.resolve_to_extra_vars(["break-glass"])
+        assert "break_glass_credentials" in result["requested_features"]
+        assert result["feature_break_glass_credentials_enabled"] == "true"
+
     def test_break_glass_not_in_418_list(self, fm):
         features = fm.list_features(version="4.18")
         ids = [f["id"] for f in features]
