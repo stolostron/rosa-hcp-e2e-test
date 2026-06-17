@@ -1,4 +1,4 @@
-# 4.22 Feature Testing: Break-Glass Credential 403 Diagnostic
+# 4.22 Feature Testing: External Auth Break-Glass Credentials
 
 | Field | Value |
 |-------|-------|
