@@ -37,9 +37,6 @@ feature_availability:
   external_oidc:
     min_version: "4.19"
     max_version: null
-  break_glass_credentials:
-    min_version: "4.19"
-    max_version: null
   image_registry:
     min_version: "4.19"
     max_version: null
