@@ -179,6 +179,5 @@ the OCM cluster ID via `EXTRA_FEATURE_VARS=cluster_id=<ocm_id>`.
 
 ## Related
 
-- [Automated Feature Verification](automated-feature-verification.md)
 - [External OIDC](external-oidc.md) (auto-resolved dependency)
 - [PR #70](https://github.com/stolostron/rosa-hcp-e2e-test/pull/70)
