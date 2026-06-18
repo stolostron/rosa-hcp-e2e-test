@@ -135,7 +135,7 @@ suites:
     features:
       - id: private_network
         name: Private Network
-        description: Enable private cluster networking (no public API endpoint)
+        description: Enable private cluster networking with private subnets only (no public API endpoint). Auto-extracts private subnets from ROSANetwork or accepts user-provided subnet IDs.
         type: boolean
         mutable: false
         applies_to: [create]

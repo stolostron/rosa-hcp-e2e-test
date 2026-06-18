@@ -86,6 +86,13 @@ spec:
   endpointAccess: Public
 {% endif %}
 
+{% if cluster_private_subnets is defined and cluster_private_subnets | length > 0 %}
+  subnets:
+{% for subnet in cluster_private_subnets %}
+    - {{ subnet }}
+{% endfor %}
+{% endif %}
+
   defaultMachinePoolSpec:
     instanceType: {{ machine_pool.instance_type | default('m5.xlarge') }}
     autoscaling:

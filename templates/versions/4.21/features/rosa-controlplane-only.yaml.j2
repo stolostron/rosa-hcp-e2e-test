@@ -83,6 +83,15 @@ spec:
 
 {% if private is defined and private | bool %}
   endpointAccess: Private
+{% else %}
+  endpointAccess: Public
+{% endif %}
+
+{% if cluster_private_subnets is defined and cluster_private_subnets | length > 0 %}
+  subnets:
+{% for subnet in cluster_private_subnets %}
+    - {{ subnet }}
+{% endfor %}
 {% endif %}
 
   defaultMachinePoolSpec:

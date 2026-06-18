@@ -266,6 +266,30 @@
       include_tasks: create_security_group.yml
 
 # ================================================================
+# STEP 2.6: Extract private subnets (if --feature private)
+# ================================================================
+- name: Extract private subnets for private cluster
+  when:
+    - private is defined and private | bool
+    - cluster_private_subnets is not defined or (cluster_private_subnets | length == 0)
+  block:
+    - name: Display private subnet extraction message
+      debug:
+        msg: |
+
+          ⏳ STEP 2.6: Extracting Private Subnets
+          ───────────────────────────────────────────────────────────
+          Private cluster requested. Extracting private subnet IDs
+          {% if private_subnet_ids is defined and (private_subnet_ids | length > 0) %}
+          from user-provided subnet list.
+          {% else %}
+          from ROSANetwork status.
+          {% endif %}
+
+    - name: Extract private subnets
+      include_tasks: extract_private_subnets.yml
+
+# ================================================================
 # STEP 3: Create RosaControlPlane
 # ================================================================
 - name: Create RosaControlPlane with references to automated resources

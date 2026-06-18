@@ -542,6 +542,7 @@ def _render_template(template_name, version, extra_vars=None):
     base = Path(__file__).parent.parent / "templates" / "versions" / version / "features"
     env = Environment(loader=FileSystemLoader(str(base)), undefined=Undefined)
     env.filters["regex_replace"] = lambda v, p, r="": re.sub(p, r, str(v))
+    env.filters["bool"] = lambda v: str(v).lower() in ("true", "yes", "1")
     template = env.get_template(template_name)
     vars = {
         "cluster_name": "test-cluster",
@@ -601,3 +602,57 @@ class TestFeatureRegistrySecurityGroups:
     def test_security_groups_var_mapping(self, fm):
         result = fm.resolve_to_extra_vars(["security_groups"])
         assert "feature_security_groups_enabled" in result
+
+
+class TestPrivateClusterSubnets:
+    @pytest.mark.parametrize("version,template_name", [
+        ("4.22", "rosa-controlplane-only.yaml.j2"),
+        ("4.22", "rosa-combined-automation.yaml.j2"),
+        ("4.21", "rosa-controlplane-only.yaml.j2"),
+    ])
+    def test_private_subnets_rendered_on_controlplane(self, version, template_name):
+        docs = _render_template(template_name, version, {
+            "private": True,
+            "cluster_private_subnets": ["subnet-abc123", "subnet-def456"],
+        })
+        assert docs, f"{template_name}: rendered no YAML documents"
+        rcp = next((d for d in docs if d.get("kind") == "ROSAControlPlane"), None)
+        assert rcp is not None, f"{template_name}: no ROSAControlPlane document"
+        assert rcp["spec"]["endpointAccess"] == "Private"
+        assert rcp["spec"]["subnets"] == ["subnet-abc123", "subnet-def456"]
+
+    @pytest.mark.parametrize("version,template_name", [
+        ("4.22", "rosa-controlplane-only.yaml.j2"),
+        ("4.22", "rosa-combined-automation.yaml.j2"),
+        ("4.21", "rosa-controlplane-only.yaml.j2"),
+    ])
+    def test_no_subnets_when_not_private(self, version, template_name):
+        docs = _render_template(template_name, version)
+        assert docs, f"{template_name}: rendered no YAML documents"
+        rcp = next((d for d in docs if d.get("kind") == "ROSAControlPlane"), None)
+        assert rcp is not None
+        assert "subnets" not in rcp.get("spec", {}), \
+            f"{template_name}: subnets should not be rendered when not private"
+
+    @pytest.mark.parametrize("version,template_name", [
+        ("4.22", "rosa-controlplane-only.yaml.j2"),
+        ("4.22", "rosa-combined-automation.yaml.j2"),
+        ("4.21", "rosa-controlplane-only.yaml.j2"),
+    ])
+    def test_private_without_subnets_renders_no_subnets_field(self, version, template_name):
+        docs = _render_template(template_name, version, {"private": True})
+        rcp = next((d for d in docs if d.get("kind") == "ROSAControlPlane"), None)
+        assert rcp is not None
+        assert rcp["spec"].get("endpointAccess") == "Private"
+        assert "subnets" not in rcp.get("spec", {}), \
+            f"{template_name}: subnets should not be rendered when cluster_private_subnets not provided"
+
+    def test_private_network_feature_metadata(self, fm):
+        feat = fm.get_feature("private_network")
+        assert feat is not None
+        assert feat["resource"] == "ROSAControlPlane"
+        assert feat["k8s_field"] == ".spec.endpointAccess"
+
+    def test_private_network_var_mapping(self, fm):
+        result = fm.resolve_to_extra_vars(["private_network"])
+        assert result["private"] == "true"
