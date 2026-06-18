@@ -64,6 +64,8 @@ Step 2.5  extract_private_subnets.yml
 Step 3  ROSAControlPlane from template
           endpointAccess: Private
           subnets: [subnet-xxx, subnet-yyy]
+          availabilityZones: [us-west-2a, us-west-2b]
+          rosaNetworkRef: EXCLUDED (mutually exclusive with subnets)
 Step 4  Wait for cluster ready
 ```
 
@@ -79,11 +81,20 @@ spec:
   subnets:
     - subnet-abc123
     - subnet-def456
+  availabilityZones:
+    - us-west-2a
+    - us-west-2b
 ```
 
-Without `--feature private`, `endpointAccess` defaults to `Public` and
-no `subnets` field is rendered (ROSANetwork handles subnet assignment
-automatically via `rosaNetworkRef`).
+**Important CRD constraints**:
+- `subnets` and `rosaNetworkRef` are **mutually exclusive** — the template
+  automatically excludes `rosaNetworkRef` when private subnets are configured
+- `availabilityZones` is **required** when `rosaNetworkRef` is omitted — the
+  template extracts AZ names from `rosa_network_subnets` automatically
+
+Without `--feature private`, `endpointAccess` defaults to `Public`,
+`rosaNetworkRef` is rendered, and no `subnets` or `availabilityZones`
+fields appear (ROSANetwork handles everything automatically).
 
 ## Verification
 

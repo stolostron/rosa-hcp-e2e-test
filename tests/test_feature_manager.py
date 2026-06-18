@@ -647,6 +647,39 @@ class TestPrivateClusterSubnets:
         assert "subnets" not in rcp.get("spec", {}), \
             f"{template_name}: subnets should not be rendered when cluster_private_subnets not provided"
 
+    @pytest.mark.parametrize("version,template_name", [
+        ("4.22", "rosa-controlplane-only.yaml.j2"),
+        ("4.22", "rosa-combined-automation.yaml.j2"),
+        ("4.21", "rosa-controlplane-only.yaml.j2"),
+    ])
+    def test_rosanetworkref_excluded_when_subnets_set(self, version, template_name):
+        docs = _render_template(template_name, version, {
+            "private": True,
+            "cluster_private_subnets": ["subnet-abc123", "subnet-def456"],
+            "rosa_network_subnets": [
+                {"availabilityZone": "us-west-2a", "privateSubnet": "subnet-abc123", "publicSubnet": "subnet-pub1"},
+                {"availabilityZone": "us-west-2b", "privateSubnet": "subnet-def456", "publicSubnet": "subnet-pub2"},
+            ],
+        })
+        rcp = next((d for d in docs if d.get("kind") == "ROSAControlPlane"), None)
+        assert rcp is not None
+        assert "rosaNetworkRef" not in rcp.get("spec", {}), \
+            f"{template_name}: rosaNetworkRef should be excluded when subnets are set"
+        assert rcp["spec"]["subnets"] == ["subnet-abc123", "subnet-def456"]
+        assert rcp["spec"]["availabilityZones"] == ["us-west-2a", "us-west-2b"]
+
+    @pytest.mark.parametrize("version,template_name", [
+        ("4.22", "rosa-controlplane-only.yaml.j2"),
+        ("4.22", "rosa-combined-automation.yaml.j2"),
+        ("4.21", "rosa-controlplane-only.yaml.j2"),
+    ])
+    def test_rosanetworkref_present_when_no_subnets(self, version, template_name):
+        docs = _render_template(template_name, version)
+        rcp = next((d for d in docs if d.get("kind") == "ROSAControlPlane"), None)
+        assert rcp is not None
+        assert "rosaNetworkRef" in rcp.get("spec", {}), \
+            f"{template_name}: rosaNetworkRef should be present when no subnets"
+
     def test_private_network_feature_metadata(self, fm):
         feat = fm.get_feature("private_network")
         assert feat is not None
