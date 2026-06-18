@@ -680,6 +680,22 @@ class TestPrivateClusterSubnets:
         assert "rosaNetworkRef" in rcp.get("spec", {}), \
             f"{template_name}: rosaNetworkRef should be present when no subnets"
 
+    @pytest.mark.parametrize("version,template_name", [
+        ("4.22", "rosa-controlplane-only.yaml.j2"),
+        ("4.22", "rosa-combined-automation.yaml.j2"),
+        ("4.21", "rosa-controlplane-only.yaml.j2"),
+    ])
+    def test_subnets_not_rendered_when_public_even_if_var_present(self, version, template_name):
+        docs = _render_template(template_name, version, {
+            "private": False,
+            "cluster_private_subnets": ["subnet-abc123"],
+        })
+        rcp = next((d for d in docs if d.get("kind") == "ROSAControlPlane"), None)
+        assert rcp is not None
+        assert rcp["spec"]["endpointAccess"] == "Public"
+        assert "subnets" not in rcp.get("spec", {}), \
+            f"{template_name}: subnets should not render when private=false"
+
     def test_private_network_feature_metadata(self, fm):
         feat = fm.get_feature("private_network")
         assert feat is not None

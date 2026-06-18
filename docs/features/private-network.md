@@ -98,9 +98,19 @@ fields appear (ROSANetwork handles everything automatically).
 
 ## Verification
 
+Uses AWS CLI to verify the cluster VPC has no internet-facing load balancers:
+
+```bash
+aws ec2 describe-subnets \
+  --filters "Name=tag:aws:cloudformation:stack-name,Values=<cluster>-rosa-network-stack" \
+  --query 'Subnets[0].VpcId'
+
+aws elbv2 describe-load-balancers \
+  --query "LoadBalancers[?VpcId=='<vpc_id>'].{Name:LoadBalancerName,Scheme:Scheme}"
+```
+
 Asserts:
-- `rcp.spec.endpointAccess == 'Private'`
-- `rcp.spec.subnets` is defined and non-empty (when subnets CRD field exists)
+- All load balancers in the cluster VPC have `Scheme: internal` (none are `internet-facing`)
 
 ## Files
 

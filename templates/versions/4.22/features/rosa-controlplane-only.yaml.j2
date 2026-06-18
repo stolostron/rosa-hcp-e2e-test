@@ -88,15 +88,22 @@ spec:
   endpointAccess: Public
 {% endif %}
 
-{% if cluster_private_subnets is defined and cluster_private_subnets | length > 0 %}
+{% if private is defined and private | bool and cluster_private_subnets is defined and cluster_private_subnets | length > 0 %}
   subnets:
 {% for subnet in cluster_private_subnets %}
     - {{ subnet }}
 {% endfor %}
+{% if rosa_network_subnets is defined and rosa_network_subnets | length > 0 %}
   availabilityZones:
-{% for subnet_info in rosa_network_subnets | default([]) %}
+{% for subnet_info in rosa_network_subnets %}
     - {{ subnet_info.availabilityZone }}
 {% endfor %}
+{% elif private_availability_zones is defined and private_availability_zones | length > 0 %}
+  availabilityZones:
+{% for az in private_availability_zones %}
+    - {{ az }}
+{% endfor %}
+{% endif %}
 {% endif %}
 
   defaultMachinePoolSpec:

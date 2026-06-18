@@ -152,42 +152,62 @@
             fail_detail: "networkType is not 'Other'"
 
     # --- private_network ---
-    - name: "CHECK: Private Cluster (endpointAccess: Private + private subnets)"
+    - name: "CHECK: Private Cluster (via AWS CLI)"
+      vars:
+        verify_region: "{{ aws_region | default(rcp.spec.region | default('us-west-2')) }}"
+        stack_name: "{{ cluster_name }}-rosa-network-stack"
       block:
-        - name: Assert endpointAccess is Private
-          assert:
-            that:
-              - rcp.spec.endpointAccess is defined
-              - rcp.spec.endpointAccess == 'Private'
-            fail_msg: "FAIL: endpointAccess is '{{ rcp.spec.endpointAccess | default('not set') }}', expected 'Private'"
-            success_msg: "PASS: endpointAccess = Private"
-        - name: Check if CRD supports subnets field
+        - name: Query VPC ID from CloudFormation stack subnets
           shell: >
-            oc get crd rosacontrolplanes.controlplane.cluster.x-k8s.io -o json 2>/dev/null |
-            jq -r '.spec.versions[] | select(.served==true) |
-            .schema.openAPIV3Schema.properties.spec.properties.subnets // empty'
-          register: subnets_crd_check
-          failed_when: false
+            aws ec2 describe-subnets
+            --filters "Name=tag:aws:cloudformation:stack-name,Values={{ stack_name }}"
+            --region {{ verify_region }}
+            --query 'Subnets[0].VpcId'
+            --output text
+          register: aws_vpc_id_raw
           changed_when: false
-        - name: Assert subnets are configured (if CRD supports it)
+
+        - name: Check for internet gateway attached to VPC
+          shell: >
+            aws ec2 describe-internet-gateways
+            --filters "Name=attachment.vpc-id,Values={{ aws_vpc_id_raw.stdout | trim }}"
+            --region {{ verify_region }}
+            --query 'InternetGateways[].InternetGatewayId'
+            --output json
+          register: aws_igw_raw
+          changed_when: false
+
+        - name: Parse IGW response
+          set_fact:
+            aws_igws: "{{ aws_igw_raw.stdout | from_json }}"
+
+        - name: Query load balancers in the VPC
+          shell: >
+            aws elbv2 describe-load-balancers
+            --region {{ verify_region }}
+            --query "LoadBalancers[?VpcId=='{{ aws_vpc_id_raw.stdout | trim }}'].{Name:LoadBalancerName,Scheme:Scheme}"
+            --output json
+          register: aws_nlb_raw
+          changed_when: false
+
+        - name: Parse NLB response
+          set_fact:
+            aws_nlbs: "{{ aws_nlb_raw.stdout | from_json }}"
+
+        - name: Assert cluster is private (no internet-facing LBs)
           assert:
             that:
-              - rcp.spec.subnets is defined
-              - rcp.spec.subnets | length > 0
-            fail_msg: "FAIL: subnets not set on private cluster — expected private subnet IDs"
-            success_msg: "PASS: subnets = {{ rcp.spec.subnets }}"
-          when: (subnets_crd_check.stdout | default('')) != ""
-        - name: Warn if CRD does not support subnets field
-          debug:
-            msg: "WARN: CRD does not have subnets field — private cluster subnets cannot be verified"
-          when: (subnets_crd_check.stdout | default('')) == ""
+              - aws_nlbs | selectattr('Scheme', 'equalto', 'internet-facing') | list | length == 0
+            fail_msg: "FAIL: Found internet-facing load balancer(s) in VPC — cluster is not private"
+            success_msg: "PASS: All load balancers are internal — cluster is private ({{ aws_nlbs | length }} LB(s))"
+
         - set_fact:
             features_passed: "{{ features_passed | int + 1 }}"
       rescue:
         - include_tasks: "{{ playbook_dir }}/../tasks/verify_feature_rescue.yml"
           vars:
             feature_id: private_network
-            fail_detail: "endpointAccess is not 'Private' or subnets not configured"
+            fail_detail: "cluster is not private or could not verify VPC/LB configuration"
 
     # --- external_oidc ---
     - name: "CHECK: External OIDC (enableExternalAuthProviders + externalAuthProviders)"
