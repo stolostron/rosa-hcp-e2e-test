@@ -166,13 +166,6 @@ spec:
     noProxy: {{ no_proxy | default('') }}
 {% endif %}
 
-{% if additional_security_groups is defined and additional_security_groups %}
-  additionalSecurityGroups:
-{% for sg in additional_security_groups %}
-    - {{ sg }}
-{% endfor %}
-{% endif %}
-
 {% if image_registry_config is defined and image_registry_config | bool %}
   clusterRegistryConfig:
     allowedRegistriesForImport:

@@ -114,9 +114,10 @@ class FeatureManager:
 
     def resolve_to_extra_vars(self, feature_names: List[str]) -> dict:
         extra_vars = {}
-        extra_vars["requested_features"] = ",".join(feature_names)
+        resolved_names = [self.resolve_alias(n) for n in feature_names]
+        extra_vars["requested_features"] = ",".join(resolved_names)
 
-        for name in feature_names:
+        for name in resolved_names:
             var_name = self._var_map.get(name, name)
             feat = self._features.get(name, {})
             feat_type = feat.get("type", "boolean")

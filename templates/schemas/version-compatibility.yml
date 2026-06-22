@@ -9,7 +9,7 @@ supported_versions:
   - "4.22"
 
 # Default version if none specified
-default_version: "4.21"
+default_version: "4.22"
 
 # Version validation rules
 validation_rules:

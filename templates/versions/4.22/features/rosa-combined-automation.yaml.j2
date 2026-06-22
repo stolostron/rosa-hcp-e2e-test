@@ -22,7 +22,7 @@ metadata:
 spec:
   clusterNetwork:
     pods:
-      cidrBlocks: ["{{ cluster_network.pod_cidr | default('192.168.0.0/16') }}"]
+      cidrBlocks: ["{{ cluster_network.pod_cidr | default('10.128.0.0/14') }}"]
   infrastructureRef:
     apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
     kind: ROSACluster
@@ -165,13 +165,6 @@ spec:
     httpProxy: {{ http_proxy_url | default('') }}
     httpsProxy: {{ https_proxy_url | default('') }}
     noProxy: {{ no_proxy | default('') }}
-{% endif %}
-
-{% if additional_security_groups is defined and additional_security_groups %}
-  additionalSecurityGroups:
-{% for sg in additional_security_groups %}
-    - {{ sg }}
-{% endfor %}
 {% endif %}
 
 {% if image_registry_config is defined and image_registry_config | bool %}

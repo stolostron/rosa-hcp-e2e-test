@@ -1,6 +1,9 @@
 """Tests for the FeatureManager class."""
 
+import re
 import pytest
+import yaml
+from jinja2 import Environment, FileSystemLoader, Undefined
 from pathlib import Path
 from feature_manager import FeatureManager
 
@@ -533,3 +536,68 @@ class TestDeprecatedFeatureFiltering:
         errors = fm.validate_features(["old_feat"], "4.20")
         assert len(errors) == 1
         assert "deprecated" in errors[0]
+
+
+def _render_template(template_name, version, extra_vars=None):
+    base = Path(__file__).parent.parent / "templates" / "versions" / version / "features"
+    env = Environment(loader=FileSystemLoader(str(base)), undefined=Undefined)
+    env.filters["regex_replace"] = lambda v, p, r="": re.sub(p, r, str(v))
+    template = env.get_template(template_name)
+    vars = {
+        "cluster_name": "test-cluster",
+        "capi_namespace": "test-ns",
+        "aws_region": "us-west-2",
+        "rcp_version": f"{version}.0",
+        "openshift_version": f"{version}.0",
+        "rosa_role_prefix": "test",
+        "domain_prefix": "test",
+        "machine_pool": {"instance_type": "m5.xlarge", "min_replicas": 2, "max_replicas": 2, "replicas": 2},
+        "cluster_network": {"machine_cidr": "10.0.0.0/16", "pod_cidr": "10.128.0.0/14", "service_cidr": "172.30.0.0/16"},
+    }
+    if extra_vars:
+        vars.update(extra_vars)
+    rendered = template.render(**vars)
+    return [d for d in yaml.safe_load_all(rendered) if d]
+
+
+class TestTemplateSecurityGroupPlacement:
+    @pytest.mark.parametrize("version,template_name", [
+        ("4.22", "rosa-controlplane-only.yaml.j2"),
+        ("4.22", "rosa-combined-automation.yaml.j2"),
+        ("4.21", "rosa-controlplane-only.yaml.j2"),
+    ])
+    def test_sg_only_on_machine_pool(self, version, template_name):
+        docs = _render_template(template_name, version, {"additional_security_groups": ["sg-test123"]})
+        assert docs, f"{template_name}: rendered no YAML documents"
+        assert any(d.get("kind") == "ROSAMachinePool" for d in docs), f"{template_name}: no ROSAMachinePool document"
+        for doc in docs:
+            kind = doc.get("kind")
+            has_sg = "additionalSecurityGroups" in doc.get("spec", {})
+            if kind == "ROSAMachinePool":
+                assert has_sg, f"{template_name}: ROSAMachinePool missing additionalSecurityGroups"
+                assert doc["spec"]["additionalSecurityGroups"] == ["sg-test123"]
+            else:
+                assert not has_sg, f"{template_name}: {kind} should NOT have additionalSecurityGroups"
+
+    @pytest.mark.parametrize("version,template_name", [
+        ("4.22", "rosa-controlplane-only.yaml.j2"),
+        ("4.22", "rosa-combined-automation.yaml.j2"),
+        ("4.21", "rosa-controlplane-only.yaml.j2"),
+    ])
+    def test_no_sg_when_not_defined(self, version, template_name):
+        docs = _render_template(template_name, version)
+        assert docs, f"{template_name}: rendered no YAML documents"
+        for doc in docs:
+            assert "additionalSecurityGroups" not in doc.get("spec", {}), \
+                f"{template_name}: {doc.get('kind')} has additionalSecurityGroups when none defined"
+
+
+class TestFeatureRegistrySecurityGroups:
+    def test_security_groups_resource_is_machine_pool(self, fm):
+        feat = fm.get_feature("security_groups")
+        assert feat is not None
+        assert feat["resource"] == "ROSAMachinePool"
+
+    def test_security_groups_var_mapping(self, fm):
+        result = fm.resolve_to_extra_vars(["security_groups"])
+        assert "feature_security_groups_enabled" in result

@@ -223,7 +223,7 @@ suites:
         default: []
         requires_input: true
         k8s_field: ".spec.additionalSecurityGroups"
-        resource: ROSAControlPlane
+        resource: ROSAMachinePool
 
       - id: etcd_kms
         name: ETCD KMS Encryption

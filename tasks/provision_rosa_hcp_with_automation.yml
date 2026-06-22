@@ -245,6 +245,27 @@
       Using existing VPC/subnets or manual network configuration.
 
 # ================================================================
+# STEP 2.5: Create Security Group (if --feature security-groups)
+# ================================================================
+- name: Create additional security group for testing
+  when:
+    - additional_security_groups is not defined or (additional_security_groups | length == 0)
+    - feature_security_groups_enabled is defined and feature_security_groups_enabled | bool
+    - create_rosa_network | bool
+  block:
+    - name: Display security group creation message
+      debug:
+        msg: |
+
+          ⏳ STEP 2.5: Creating AWS Security Group
+          ───────────────────────────────────────────────────────────
+          Creating a test security group in the cluster VPC for
+          ROSAMachinePool.spec.additionalSecurityGroups testing.
+
+    - name: Create security group in cluster VPC
+      include_tasks: create_security_group.yml
+
+# ================================================================
 # STEP 3: Create RosaControlPlane
 # ================================================================
 - name: Create RosaControlPlane with references to automated resources
@@ -266,17 +287,9 @@
     - name: Determine which template to use
       set_fact:
         cluster_template_name: >-
-          {%- if (create_rosa_roles | bool) or (create_rosa_network | bool) -%}
-          rosa-controlplane-only
-          {%- else -%}
-          rosa-control-plane
-          {%- endif -%}
+          {%- if (create_rosa_roles | bool) or (create_rosa_network | bool) -%}rosa-controlplane-only{%- else -%}rosa-control-plane{%- endif -%}
         selected_template_category: >-
-          {%- if (create_rosa_roles | bool) or (create_rosa_network | bool) -%}
-          features
-          {%- else -%}
-          cluster-configs
-          {%- endif -%}
+          {%- if (create_rosa_roles | bool) or (create_rosa_network | bool) -%}features{%- else -%}cluster-configs{%- endif -%}
 
     - name: Display selected template
       debug:

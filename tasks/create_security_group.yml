@@ -1,0 +1,111 @@
+---
+- name: Validate cluster_name is safe for AWS tags
+  assert:
+    that:
+      - cluster_name is match('^[a-zA-Z0-9-]+$')
+    fail_msg: "cluster_name '{{ cluster_name }}' contains unsafe characters for AWS tags"
+
+- name: Get VPC ID from ROSANetwork status
+  shell: >
+    oc get rosanetwork {{ rosa_network_name }} -n {{ capi_namespace }}
+    -o jsonpath='{.status.resources[?(@.logicalId=="VPC")].physicalId}'
+  register: vpc_id_result
+  failed_when: vpc_id_result.rc != 0 or vpc_id_result.stdout == ''
+
+- name: Validate VPC ID format
+  assert:
+    that:
+      - vpc_id_result.stdout is match('^vpc-[a-f0-9]+$')
+    fail_msg: "Invalid VPC ID: {{ vpc_id_result.stdout }}"
+
+- name: Set VPC ID fact
+  set_fact:
+    sg_vpc_id: "{{ vpc_id_result.stdout }}"
+
+- name: Check for existing security group by name and VPC
+  environment:
+    AWS_ACCESS_KEY_ID: "{{ AWS_ACCESS_KEY_ID }}"
+    AWS_SECRET_ACCESS_KEY: "{{ AWS_SECRET_ACCESS_KEY }}"
+    AWS_DEFAULT_REGION: "{{ aws_region | default('us-west-2') }}"
+  shell: |
+    RESULT=$(aws ec2 describe-security-groups \
+      --filters "Name=group-name,Values={{ cluster_name }}-test-sg" \
+                "Name=vpc-id,Values={{ sg_vpc_id }}" \
+      --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null)
+    if [ "$RESULT" = "None" ] || [ -z "$RESULT" ]; then
+      echo ""
+    else
+      echo "$RESULT"
+    fi
+  register: existing_sg_result
+
+- name: Reuse existing security group
+  when: existing_sg_result.stdout | trim | length > 0
+  block:
+    - name: Ensure cleanup tags on existing security group
+      environment:
+        AWS_ACCESS_KEY_ID: "{{ AWS_ACCESS_KEY_ID }}"
+        AWS_SECRET_ACCESS_KEY: "{{ AWS_SECRET_ACCESS_KEY }}"
+        AWS_DEFAULT_REGION: "{{ aws_region | default('us-west-2') }}"
+      shell: |
+        aws ec2 create-tags \
+          --resources "{{ existing_sg_result.stdout | trim }}" \
+          --tags Key=rosa-cluster,Value={{ cluster_name }} \
+                 Key=automation.acm.redhat.com/created-by,Value=ansible-automation \
+                 Key=automation.acm.redhat.com/test-case,Value=SC-04
+      failed_when: false
+    - name: Set existing SG fact
+      set_fact:
+        created_security_group_id: "{{ existing_sg_result.stdout | trim }}"
+
+- name: Create security group in cluster VPC
+  when: existing_sg_result.stdout | trim | length == 0
+  block:
+    - name: Run AWS create-security-group
+      environment:
+        AWS_ACCESS_KEY_ID: "{{ AWS_ACCESS_KEY_ID }}"
+        AWS_SECRET_ACCESS_KEY: "{{ AWS_SECRET_ACCESS_KEY }}"
+        AWS_DEFAULT_REGION: "{{ aws_region | default('us-west-2') }}"
+      shell: |
+        SG_ID=$(aws ec2 create-security-group \
+          --group-name "{{ cluster_name }}-test-sg" \
+          --description "Test security group for ROSA HCP cluster {{ cluster_name }}" \
+          --vpc-id "{{ sg_vpc_id }}" \
+          --query 'GroupId' --output text)
+        RC=$?
+        if [ $RC -ne 0 ] || [ -z "$SG_ID" ]; then
+          exit 1
+        fi
+        aws ec2 create-tags \
+          --resources "$SG_ID" \
+          --tags "Key=Name,Value={{ cluster_name }}-test-sg" \
+                 "Key=rosa-cluster,Value={{ cluster_name }}" \
+                 "Key=automation.acm.redhat.com/created-by,Value=ansible-automation" \
+                 "Key=automation.acm.redhat.com/test-case,Value=SC-04"
+        TAG_RC=$?
+        if [ $TAG_RC -ne 0 ]; then
+          echo "WARNING: Failed to tag security group $SG_ID — may be orphaned on cleanup" >&2
+        fi
+        echo "$SG_ID"
+      register: create_sg_result
+    - name: Set created security group ID
+      set_fact:
+        created_security_group_id: "{{ create_sg_result.stdout | trim }}"
+
+- name: Validate security group ID
+  assert:
+    that:
+      - created_security_group_id is defined
+      - created_security_group_id is match('^sg-[a-f0-9]+$')
+    fail_msg: "Invalid security group ID: {{ created_security_group_id | default('undefined') }}"
+
+- name: Set additional_security_groups for template rendering
+  set_fact:
+    additional_security_groups: "{{ (additional_security_groups | default([])) + [created_security_group_id] }}"
+
+- name: Display security group result
+  debug:
+    msg: |
+      Security Group: {{ created_security_group_id }}
+      VPC: {{ sg_vpc_id }}
+      Will be added to ROSAMachinePool.spec.additionalSecurityGroups

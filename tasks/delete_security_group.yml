@@ -1,0 +1,74 @@
+---
+- name: Find security groups tagged for this cluster
+  environment:
+    AWS_ACCESS_KEY_ID: "{{ AWS_ACCESS_KEY_ID }}"
+    AWS_SECRET_ACCESS_KEY: "{{ AWS_SECRET_ACCESS_KEY }}"
+    AWS_DEFAULT_REGION: "{{ aws_region | default('us-west-2') }}"
+  shell: |
+    aws ec2 describe-security-groups \
+      --filters "Name=tag:rosa-cluster,Values={{ cluster_name }}" \
+                "Name=tag:automation.acm.redhat.com/created-by,Values=ansible-automation" \
+      --query 'SecurityGroups[].GroupId' --output text
+  register: sg_lookup_result
+  failed_when: false
+
+- name: Delete security groups with ENI detach retry
+  when: sg_lookup_result.stdout | default('') | trim | length > 0
+  environment:
+    AWS_ACCESS_KEY_ID: "{{ AWS_ACCESS_KEY_ID }}"
+    AWS_SECRET_ACCESS_KEY: "{{ AWS_SECRET_ACCESS_KEY }}"
+    AWS_DEFAULT_REGION: "{{ aws_region | default('us-west-2') }}"
+  shell: |
+    SG_IDS="{{ sg_lookup_result.stdout | trim }}"
+    if [ -z "$SG_IDS" ]; then
+      echo "No security groups to delete"
+      exit 0
+    fi
+    MAX_RETRIES=12
+    FAILED=0
+    for SG_ID in $SG_IDS; do
+      if ! echo "$SG_ID" | grep -qE '^sg-[a-f0-9]+$'; then
+        echo "Skipping invalid SG ID: $SG_ID"
+        continue
+      fi
+      echo "Deleting security group: $SG_ID"
+      DELETED=0
+      for i in $(seq 1 $MAX_RETRIES); do
+        OUTPUT=$(aws ec2 delete-security-group --group-id "$SG_ID" 2>&1)
+        RC=$?
+        if [ $RC -eq 0 ]; then
+          echo "Deleted $SG_ID"
+          DELETED=1
+          break
+        fi
+        if echo "$OUTPUT" | grep -q "InvalidGroup.NotFound"; then
+          echo "Security group $SG_ID already deleted"
+          DELETED=1
+          break
+        fi
+        if echo "$OUTPUT" | grep -q "DependencyViolation"; then
+          echo "Retry $i/$MAX_RETRIES — $SG_ID attached to ENI, waiting 10s..."
+          sleep 10
+        else
+          echo "ERROR deleting $SG_ID: $OUTPUT"
+          FAILED=1
+          break
+        fi
+      done
+      if [ "$DELETED" -eq 0 ] && [ "$FAILED" -eq 0 ]; then
+        echo "WARNING: Could not delete $SG_ID after $MAX_RETRIES retries (ENI still attached)"
+        FAILED=1
+      fi
+    done
+    exit $FAILED
+  register: sg_delete_result
+  failed_when: false
+
+- name: Display security group cleanup result
+  debug:
+    msg: "{{ sg_delete_result.stdout | default('No security groups to clean up') }}"
+
+- name: Warn on cleanup failure
+  when: sg_delete_result.rc | default(0) | int != 0
+  debug:
+    msg: "WARNING: Some security groups could not be deleted — may need manual cleanup"
