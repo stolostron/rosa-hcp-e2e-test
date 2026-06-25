@@ -1,5 +1,6 @@
 ---
 - name: Determine private subnet source
+  changed_when: false
   set_fact:
     private_subnets_source: >-
       {%- if private_subnet_ids is defined and (private_subnet_ids | length > 0) -%}
@@ -21,6 +22,7 @@
         fail_msg: "Invalid subnet IDs: {{ private_subnet_ids }}. Expected format: subnet-<hex>"
 
     - name: Set private subnets from user input
+      changed_when: false
       set_fact:
         cluster_private_subnets: "{{ private_subnet_ids }}"
 
@@ -36,6 +38,7 @@
   when: private_subnets_source == 'rosa_network'
   block:
     - name: Extract private subnet IDs from ROSANetwork
+      changed_when: false
       set_fact:
         cluster_private_subnets: "{{ rosa_network_subnets | selectattr('privateSubnet', 'defined') | map(attribute='privateSubnet') | list }}"
 
@@ -63,6 +66,7 @@
       ROSANetwork has completed and set rosa_network_subnets.
 
 - name: Display private subnet summary
+  when: cluster_private_subnets is defined
   debug:
     msg: |
       Private cluster subnet configuration:

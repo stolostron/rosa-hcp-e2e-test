@@ -609,6 +609,7 @@ class TestPrivateClusterSubnets:
         ("4.22", "rosa-controlplane-only.yaml.j2"),
         ("4.22", "rosa-combined-automation.yaml.j2"),
         ("4.21", "rosa-controlplane-only.yaml.j2"),
+        ("4.20", "rosa-controlplane-only.yaml.j2"),
     ])
     def test_private_subnets_rendered_on_controlplane(self, version, template_name):
         docs = _render_template(template_name, version, {
@@ -625,6 +626,7 @@ class TestPrivateClusterSubnets:
         ("4.22", "rosa-controlplane-only.yaml.j2"),
         ("4.22", "rosa-combined-automation.yaml.j2"),
         ("4.21", "rosa-controlplane-only.yaml.j2"),
+        ("4.20", "rosa-controlplane-only.yaml.j2"),
     ])
     def test_no_subnets_when_not_private(self, version, template_name):
         docs = _render_template(template_name, version)
@@ -638,6 +640,7 @@ class TestPrivateClusterSubnets:
         ("4.22", "rosa-controlplane-only.yaml.j2"),
         ("4.22", "rosa-combined-automation.yaml.j2"),
         ("4.21", "rosa-controlplane-only.yaml.j2"),
+        ("4.20", "rosa-controlplane-only.yaml.j2"),
     ])
     def test_private_without_subnets_renders_no_subnets_field(self, version, template_name):
         docs = _render_template(template_name, version, {"private": True})
@@ -651,6 +654,7 @@ class TestPrivateClusterSubnets:
         ("4.22", "rosa-controlplane-only.yaml.j2"),
         ("4.22", "rosa-combined-automation.yaml.j2"),
         ("4.21", "rosa-controlplane-only.yaml.j2"),
+        ("4.20", "rosa-controlplane-only.yaml.j2"),
     ])
     def test_rosanetworkref_excluded_when_subnets_set(self, version, template_name):
         docs = _render_template(template_name, version, {
@@ -672,6 +676,7 @@ class TestPrivateClusterSubnets:
         ("4.22", "rosa-controlplane-only.yaml.j2"),
         ("4.22", "rosa-combined-automation.yaml.j2"),
         ("4.21", "rosa-controlplane-only.yaml.j2"),
+        ("4.20", "rosa-controlplane-only.yaml.j2"),
     ])
     def test_rosanetworkref_present_when_no_subnets(self, version, template_name):
         docs = _render_template(template_name, version)
@@ -684,6 +689,7 @@ class TestPrivateClusterSubnets:
         ("4.22", "rosa-controlplane-only.yaml.j2"),
         ("4.22", "rosa-combined-automation.yaml.j2"),
         ("4.21", "rosa-controlplane-only.yaml.j2"),
+        ("4.20", "rosa-controlplane-only.yaml.j2"),
     ])
     def test_subnets_not_rendered_when_public_even_if_var_present(self, version, template_name):
         docs = _render_template(template_name, version, {
@@ -705,3 +711,39 @@ class TestPrivateClusterSubnets:
     def test_private_network_var_mapping(self, fm):
         result = fm.resolve_to_extra_vars(["private_network"])
         assert result["private"] == "true"
+
+    @pytest.mark.parametrize("version,template_name", [
+        ("4.22", "rosa-controlplane-only.yaml.j2"),
+        ("4.22", "rosa-combined-automation.yaml.j2"),
+        ("4.21", "rosa-controlplane-only.yaml.j2"),
+        ("4.20", "rosa-controlplane-only.yaml.j2"),
+    ])
+    def test_private_availability_zones_fallback(self, version, template_name):
+        docs = _render_template(template_name, version, {
+            "private": True,
+            "cluster_private_subnets": ["subnet-abc123", "subnet-def456"],
+            "private_availability_zones": ["us-west-2a", "us-west-2c"],
+        })
+        rcp = next((d for d in docs if d.get("kind") == "ROSAControlPlane"), None)
+        assert rcp is not None
+        assert rcp["spec"]["subnets"] == ["subnet-abc123", "subnet-def456"]
+        assert rcp["spec"]["availabilityZones"] == ["us-west-2a", "us-west-2c"]
+
+    @pytest.mark.parametrize("version,template_name", [
+        ("4.22", "rosa-controlplane-only.yaml.j2"),
+        ("4.22", "rosa-combined-automation.yaml.j2"),
+        ("4.21", "rosa-controlplane-only.yaml.j2"),
+        ("4.20", "rosa-controlplane-only.yaml.j2"),
+    ])
+    def test_rosa_network_subnets_take_priority_over_fallback(self, version, template_name):
+        docs = _render_template(template_name, version, {
+            "private": True,
+            "cluster_private_subnets": ["subnet-abc123"],
+            "rosa_network_subnets": [
+                {"availabilityZone": "us-west-2a", "privateSubnet": "subnet-abc123", "publicSubnet": "subnet-pub1"},
+            ],
+            "private_availability_zones": ["us-west-2b"],
+        })
+        rcp = next((d for d in docs if d.get("kind") == "ROSAControlPlane"), None)
+        assert rcp is not None
+        assert rcp["spec"]["availabilityZones"] == ["us-west-2a"]
