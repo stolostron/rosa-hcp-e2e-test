@@ -332,7 +332,7 @@
             fail_detail: "cluster is not private or could not verify VPC/LB configuration"
 
     # --- external_oidc ---
-    - name: "CHECK: External OIDC (via OCM API)"
+    - name: "CHECK: External OIDC (via OCM API + issuer validation)"
       block:
         - name: Assert external auth via OCM
           assert:
@@ -356,13 +356,57 @@
           fail:
             msg: "BUG: neither OCM nor CRD check executed for external_oidc"
           when: ocm_available is not defined
+        - name: Extract OIDC issuer URL from CRD
+          set_fact:
+            oidc_issuer_url: "{{ (rcp.spec.externalAuthProviders[0].issuer | default({})).issuerURL | default('') }}"
+          when: rcp.spec.externalAuthProviders is defined and rcp.spec.externalAuthProviders | length > 0
+        - name: Validate OIDC issuer URL is reachable
+          uri:
+            url: "{{ oidc_issuer_url }}/.well-known/openid-configuration"
+            method: GET
+            status_code: 200
+            timeout: 10
+            validate_certs: true
+          register: oidc_discovery_result
+          failed_when: false
+          changed_when: false
+          when: oidc_issuer_url is defined and oidc_issuer_url | length > 0
+        - name: Assert OIDC discovery document is valid
+          assert:
+            that:
+              - oidc_discovery_result.status | int == 200
+              - oidc_discovery_result.json.issuer is defined
+              - oidc_discovery_result.json.issuer == oidc_issuer_url
+            fail_msg: "FAIL: OIDC issuer '{{ oidc_issuer_url }}' is not reachable or returned invalid discovery document"
+            success_msg: "PASS: OIDC issuer validated — {{ oidc_issuer_url }} returns valid OpenID configuration"
+          when:
+            - oidc_issuer_url is defined and oidc_issuer_url | length > 0
+            - oidc_discovery_result is defined
+            - oidc_discovery_result.status is defined
+        - name: Assert OIDC audiences configured
+          assert:
+            that:
+              - rcp.spec.externalAuthProviders[0].issuer.audiences is defined
+              - rcp.spec.externalAuthProviders[0].issuer.audiences | length > 0
+            fail_msg: "FAIL: OIDC audiences not configured"
+            success_msg: "PASS: OIDC audiences configured — {{ rcp.spec.externalAuthProviders[0].issuer.audiences }}"
+          when: rcp.spec.externalAuthProviders is defined and rcp.spec.externalAuthProviders | length > 0
+        - name: Assert OIDC claim mappings configured
+          assert:
+            that:
+              - rcp.spec.externalAuthProviders[0].claimMappings is defined
+              - rcp.spec.externalAuthProviders[0].claimMappings.username is defined
+              - rcp.spec.externalAuthProviders[0].claimMappings.username.claim is defined
+            fail_msg: "FAIL: OIDC claim mappings not configured"
+            success_msg: "PASS: OIDC claim mappings configured (username claim: {{ rcp.spec.externalAuthProviders[0].claimMappings.username.claim }})"
+          when: rcp.spec.externalAuthProviders is defined and rcp.spec.externalAuthProviders | length > 0
         - set_fact:
             features_passed: "{{ features_passed | int + 1 }}"
       rescue:
         - include_tasks: "{{ playbook_dir }}/../tasks/verify_feature_rescue.yml"
           vars:
             feature_id: external_oidc
-            fail_detail: "external OIDC auth not enabled (ocm_available={{ ocm_available | default('?') }})"
+            fail_detail: "external OIDC auth not enabled or issuer validation failed (ocm_available={{ ocm_available | default('?') }})"
 
     # --- fips ---
     - name: "CHECK: FIPS Mode (via AWS CLI)"
