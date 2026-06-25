@@ -1,0 +1,20 @@
+auto_record: true
+verbose: false
+
+detection:
+  local_since: "HEAD~1"
+
+upstream:
+  repo: "stolostron/cluster-api-provider-aws"
+  branch: "backplane-2.11"
+
+advisory:
+  enabled: true
+  sources:
+    - redhat
+    - github
+
+auto_test:
+  enabled: false
+  max_features: 5
+  suite_id: "20-rosa-hcp-provision"
