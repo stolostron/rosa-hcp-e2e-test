@@ -37,6 +37,8 @@ Uses the CI default tags: `Team: PICS`, `Jira: RHACM4K-61815`.
   -e '{"additional_tags": {"CostCenter": "12345", "Owner": "team-platform"}}'
 ```
 
+## Template Rendering
+
 ### Default tags (always applied)
 
 These tags are rendered by the template regardless of `--feature tags`:
