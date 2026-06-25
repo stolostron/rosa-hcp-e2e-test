@@ -2,6 +2,10 @@
 - name: Verify feature flags on provisioned ROSA HCP cluster
   hosts: localhost
   gather_facts: false
+  environment:
+    AWS_ACCESS_KEY_ID: "{{ AWS_ACCESS_KEY_ID | default(lookup('env', 'AWS_ACCESS_KEY_ID')) }}"
+    AWS_SECRET_ACCESS_KEY: "{{ AWS_SECRET_ACCESS_KEY | default(lookup('env', 'AWS_SECRET_ACCESS_KEY')) }}"
+    AWS_DEFAULT_REGION: "{{ aws_region | default('us-west-2') }}"
   vars_files:
     - ../vars/vars.yml
   vars:
@@ -60,6 +64,13 @@
         oc get rosacontrolplane {{ cluster_name }} -n {{ capi_namespace }}
         -o json
       register: rcp_raw
+      failed_when: false
+      changed_when: false
+
+    - name: Fail if ROSAControlPlane not found
+      fail:
+        msg: "ROSAControlPlane '{{ cluster_name }}' not found in namespace '{{ capi_namespace }}'. Verify cluster_name and capi_namespace."
+      when: rcp_raw.rc != 0
 
     - name: Parse ROSAControlPlane
       set_fact:
@@ -70,6 +81,13 @@
         oc get rosamachinepool {{ cluster_name }} -n {{ capi_namespace }}
         -o json
       register: rmp_raw
+      failed_when: false
+      changed_when: false
+
+    - name: Fail if ROSAMachinePool not found
+      fail:
+        msg: "ROSAMachinePool '{{ cluster_name }}' not found in namespace '{{ capi_namespace }}'. Verify cluster_name and capi_namespace."
+      when: rmp_raw.rc != 0
 
     - name: Parse ROSAMachinePool
       set_fact:
@@ -139,6 +157,7 @@
       register: ocm_creds_mce
       failed_when: false
       changed_when: false
+      no_log: true
 
     - name: Get OCM credentials from rosa-creds-secret (capi namespace fallback)
       shell: >
@@ -147,6 +166,7 @@
       register: ocm_creds_capi
       failed_when: false
       changed_when: false
+      no_log: true
       when: ocm_creds_mce.rc != 0 or ocm_creds_mce.stdout | length == 0
 
     - name: Select OCM credentials source
@@ -158,6 +178,7 @@
         ocm_client_id: "{{ (ocm_creds_raw.stdout.split('|')[0] | b64decode) if ocm_creds_raw.rc == 0 and ocm_creds_raw.stdout | length > 0 else '' }}"
         ocm_client_secret: "{{ (ocm_creds_raw.stdout.split('|')[1] | b64decode) if ocm_creds_raw.rc == 0 and ocm_creds_raw.stdout.split('|') | length > 1 else '' }}"
         ocm_api_url: "{{ (ocm_creds_raw.stdout.split('|')[2] | b64decode) if ocm_creds_raw.rc == 0 and ocm_creds_raw.stdout.split('|') | length > 2 and ocm_creds_raw.stdout.split('|')[2] | length > 0 else 'https://api.stage.openshift.com' }}"
+      no_log: true
 
     - name: Initialize OCM vars if credentials unavailable
       set_fact:
@@ -180,6 +201,7 @@
       register: ocm_token_result
       failed_when: false
       changed_when: false
+      no_log: true
       when: ocm_client_id | default('') | length > 0
 
     - name: Query OCM for cluster details
@@ -239,6 +261,10 @@
             fail_msg: "FAIL: networkType is '{{ rcp.spec.network.networkType | default('not set') }}', expected 'Other'"
             success_msg: "PASS: networkType = Other (CRD fallback)"
           when: not ocm_available
+        - name: Fail if neither check ran
+          fail:
+            msg: "BUG: neither OCM nor CRD check executed for no_cni"
+          when: ocm_available is not defined
         - set_fact:
             features_passed: "{{ features_passed | int + 1 }}"
       rescue:
@@ -326,13 +352,17 @@
             fail_msg: "FAIL: externalAuthProviders not configured"
             success_msg: "PASS: externalAuthProviders configured (CRD fallback)"
           when: not ocm_available
+        - name: Fail if neither check ran
+          fail:
+            msg: "BUG: neither OCM nor CRD check executed for external_oidc"
+          when: ocm_available is not defined
         - set_fact:
             features_passed: "{{ features_passed | int + 1 }}"
       rescue:
         - include_tasks: "{{ playbook_dir }}/../tasks/verify_feature_rescue.yml"
           vars:
             feature_id: external_oidc
-            fail_detail: "external OIDC auth not enabled"
+            fail_detail: "external OIDC auth not enabled (ocm_available={{ ocm_available | default('?') }})"
 
     # --- fips ---
     - name: "CHECK: FIPS Mode (via AWS CLI)"
@@ -368,8 +398,8 @@
           assert:
             that:
               - "'fips' in (aws_ami_info.Name | default('') | lower) or 'fips' in (aws_ami_info.Description | default('') | lower)"
-            fail_msg: "FAIL: Worker AMI does not appear to be FIPS-enabled"
-            success_msg: "PASS: Worker AMI is FIPS-enabled"
+            fail_msg: "FAIL: Worker AMI '{{ aws_ami_info.Name | default('unknown') }}' does not appear to be FIPS-enabled"
+            success_msg: "PASS: Worker AMI is FIPS-enabled ({{ aws_ami_info.Name | default('') }})"
 
         - set_fact:
             features_passed: "{{ features_passed | int + 1 }}"
@@ -466,9 +496,9 @@
           assert:
             that:
               - aws_asgs | length > 0
-              - aws_asgs | selectattr('Max', 'gt', aws_asgs | map(attribute='Min') | first) | list | length > 0
-            fail_msg: "FAIL: No ASGs found for cluster {{ cluster_name }} or MaxSize == MinSize (autoscaling not enabled)"
-            success_msg: "PASS: {{ aws_asgs | length }} ASG(s) found with scaling enabled"
+              - aws_asgs[0].Max | int > aws_asgs[0].Min | int
+            fail_msg: "FAIL: No ASGs found for cluster {{ cluster_name }} or MaxSize ({{ aws_asgs[0].Max | default('?') }}) == MinSize ({{ aws_asgs[0].Min | default('?') }})"
+            success_msg: "PASS: {{ aws_asgs | length }} ASG(s) found, scaling enabled (min={{ aws_asgs[0].Min }}, max={{ aws_asgs[0].Max }})"
 
         - name: Assert expander strategy via CRD (not exposed in AWS)
           assert:
@@ -514,13 +544,17 @@
             fail_msg: "FAIL: clusterRegistryConfig missing or incomplete"
             success_msg: "PASS: clusterRegistryConfig structure present (CRD fallback)"
           when: not ocm_available
+        - name: Fail if neither check ran
+          fail:
+            msg: "BUG: neither OCM nor CRD check executed for image_registry"
+          when: ocm_available is not defined
         - set_fact:
             features_passed: "{{ features_passed | int + 1 }}"
       rescue:
         - include_tasks: "{{ playbook_dir }}/../tasks/verify_feature_rescue.yml"
           vars:
             feature_id: image_registry
-            fail_detail: "registry config not set"
+            fail_detail: "registry config not set (ocm_available={{ ocm_available | default('?') }})"
 
     # --- additional_tags ---
     - name: "CHECK: Additional Tags (via AWS CLI)"
@@ -544,9 +578,13 @@
           set_fact:
             aws_tags_list: "{{ aws_tags_raw.stdout | from_json }}"
 
+        - name: Reset AWS tags dict
+          set_fact:
+            aws_tags: {}
+
         - name: Convert AWS tags to dict
           set_fact:
-            aws_tags: "{{ aws_tags | default({}) | combine({item.Key: item.Value}) }}"
+            aws_tags: "{{ aws_tags | combine({item.Key: item.Value}) }}"
           loop: "{{ aws_tags_list }}"
 
         - name: Assert default tags present on AWS resources
@@ -602,13 +640,17 @@
             fail_msg: "FAIL: domainPrefix does not match expected"
             success_msg: "PASS: domainPrefix matches expected (CRD fallback)"
           when: not ocm_available
+        - name: Fail if neither check ran
+          fail:
+            msg: "BUG: neither OCM nor CRD check executed for domain_prefix"
+          when: ocm_available is not defined
         - set_fact:
             features_passed: "{{ features_passed | int + 1 }}"
       rescue:
         - include_tasks: "{{ playbook_dir }}/../tasks/verify_feature_rescue.yml"
           vars:
             feature_id: domain_prefix
-            fail_detail: "domainPrefix does not match expected"
+            fail_detail: "domainPrefix does not match expected '{{ expected_prefix }}'"
 
     # --- channel_group ---
     - name: "CHECK: Channel Group (via OCM API)"
@@ -634,13 +676,17 @@
             fail_msg: "FAIL: channelGroup does not match expected"
             success_msg: "PASS: channelGroup matches expected (CRD fallback)"
           when: not ocm_available
+        - name: Fail if neither check ran
+          fail:
+            msg: "BUG: neither OCM nor CRD check executed for channel_group"
+          when: ocm_available is not defined
         - set_fact:
             features_passed: "{{ features_passed | int + 1 }}"
       rescue:
         - include_tasks: "{{ playbook_dir }}/../tasks/verify_feature_rescue.yml"
           vars:
             feature_id: channel_group
-            fail_detail: "channelGroup does not match expected"
+            fail_detail: "channelGroup does not match expected '{{ expected_channel_group }}'"
 
     # --- default_autoscaling ---
     - name: "CHECK: Default MachinePool Autoscaling (via AWS CLI)"
@@ -906,17 +952,17 @@
           shell: >
             aws s3api head-bucket
             --bucket {{ log_forward_s3_bucket }}
-            2>&1 && echo "EXISTS" || echo "NOT_FOUND"
           register: aws_s3_bucket_check
           changed_when: false
+          failed_when: false
           when: log_forward_s3_bucket is defined and (log_forward_s3_bucket | length > 0)
 
         - name: Assert S3 bucket exists
           assert:
             that:
-              - "'EXISTS' in aws_s3_bucket_check.stdout"
-            fail_msg: "FAIL: S3 bucket not found in AWS"
-            success_msg: "PASS: S3 bucket exists"
+              - aws_s3_bucket_check.rc == 0
+            fail_msg: "FAIL: S3 bucket '{{ log_forward_s3_bucket }}' not found in AWS"
+            success_msg: "PASS: S3 bucket '{{ log_forward_s3_bucket }}' exists"
           when: log_forward_s3_bucket is defined and (log_forward_s3_bucket | length > 0)
 
         - set_fact:
