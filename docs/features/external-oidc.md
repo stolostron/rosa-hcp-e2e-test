@@ -65,14 +65,32 @@ Without OIDC details, only `enableExternalAuthProviders: true` is rendered.
 
 ## Verification
 
-Uses OCM API to verify external OIDC configuration:
+### External auth enabled (OCM API + CRD fallback)
 
+Uses OCM API to verify external OIDC is enabled on the cluster:
+
+```
 GET /api/clusters_mgmt/v1/clusters/{id}
+```
 
 Asserts:
 - `.external_auth_config.enabled` is true
-- External authentication providers are properly configured
 - Falls back to ROSAControlPlane K8s spec if OCM is unavailable
+
+### OIDC issuer validation (Day1)
+
+Validates the OIDC issuer URL is reachable and returns a valid OpenID
+Connect discovery document:
+
+```bash
+curl -s https://<issuer_url>/.well-known/openid-configuration
+```
+
+Asserts:
+- Issuer URL returns HTTP 200
+- Discovery document `issuer` field matches the configured URL
+- Audiences array is non-empty
+- Claim mappings (username claim) are configured
 
 ## Related
 
