@@ -225,7 +225,7 @@ suites:
         type: action
         mutable: false
         applies_to: [verify]
-        default: false
+        default: null
         k8s_field: ".spec.externalAuthProviders"
         resource: ROSAControlPlane
         min_version: "4.19"

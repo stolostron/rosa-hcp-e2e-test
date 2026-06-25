@@ -150,11 +150,7 @@
 
     - name: "DIAGNOSTIC: CAPA controller logs"
       debug:
-        msg: |
-          Break-glass log entries: {{ capa_logs_result.stdout_lines | default([]) | length }}
-          {% for line in (capa_logs_result.stdout_lines | default([]))[:5] %}
-          {{ line }}
-          {% endfor %}
+        msg: "Break-glass related log entries found: {{ capa_logs_result.stdout_lines | default([]) | length }}"
 
     - name: "DIAGNOSTIC: OCM role permissions"
       debug:
@@ -165,11 +161,9 @@
           AMS access_review denial: {{ 'YES' if break_glass_403_is_ams_denial | default(false) | bool else 'NO' }}
           Role check status: {{ 'FAILED' if ocm_role_check_failed | default(false) else 'OK' }}
 
-    - name: "DIAGNOSTIC: Root cause and error context"
+    - name: "DIAGNOSTIC: Error summary"
       debug:
-        msg: |
-          Error: {{ break_glass_error_detail | default('No specific error detail captured') }}
-          ========================================
+        msg: "Error type: {{ break_glass_error_detail | default('No specific error detail captured') }}"
 
     - name: Set root cause and remediation facts
       set_fact:
