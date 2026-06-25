@@ -224,9 +224,9 @@ suites:
         description: Validate OCM break-glass credential create/list for external-auth clusters (diagnoses 403 Forbidden)
         type: action
         mutable: false
-        applies_to: [create]
+        applies_to: [verify]
         default: false
-        k8s_field: ".spec.enableExternalAuthProviders"
+        k8s_field: ".spec.externalAuthProviders"
         resource: ROSAControlPlane
         min_version: "4.19"
         playbook: playbooks/verify_break_glass_credentials.yml
