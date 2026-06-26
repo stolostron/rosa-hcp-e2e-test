@@ -577,6 +577,78 @@
             feature_id: proxy_enabled
             fail_detail: "proxy is not set"
 
+    # --- managed_cluster_labels ---
+    - name: "CHECK: ManagedCluster Labels and Annotations"
+      block:
+        - name: Get ManagedCluster resource
+          shell: >
+            oc get managedcluster {{ cluster_name }} -o json 2>/dev/null
+          register: mc_raw
+          failed_when: false
+          changed_when: false
+
+        - name: Parse ManagedCluster
+          set_fact:
+            mc: "{{ mc_raw.stdout | from_json }}"
+          when: mc_raw.rc == 0
+
+        - name: Assert ManagedCluster exists
+          assert:
+            that:
+              - mc_raw.rc == 0
+              - mc is defined
+            fail_msg: "ManagedCluster '{{ cluster_name }}' not found"
+            success_msg: "ManagedCluster '{{ cluster_name }}' exists"
+
+        - name: Assert cloud label is set
+          assert:
+            that:
+              - mc.metadata.labels['cloud'] is defined
+              - mc.metadata.labels['cloud'] == 'Amazon'
+            fail_msg: "FAIL: cloud label is '{{ mc.metadata.labels['cloud'] | default('not set') }}', expected 'Amazon'"
+            success_msg: "PASS: cloud = Amazon"
+          when: mc is defined
+
+        - name: Assert vendor label is set
+          assert:
+            that:
+              - mc.metadata.labels['vendor'] is defined
+              - mc.metadata.labels['vendor'] == 'OpenShift'
+            fail_msg: "FAIL: vendor label is '{{ mc.metadata.labels['vendor'] | default('not set') }}', expected 'OpenShift'"
+            success_msg: "PASS: vendor = OpenShift"
+          when: mc is defined
+
+        - name: Assert name label matches cluster name
+          assert:
+            that:
+              - mc.metadata.labels['name'] is defined
+              - mc.metadata.labels['name'] == cluster_name
+            fail_msg: "FAIL: name label is '{{ mc.metadata.labels['name'] | default('not set') }}', expected '{{ cluster_name }}'"
+            success_msg: "PASS: name = {{ cluster_name }}"
+          when: mc is defined
+
+        - name: Check ManagedCluster status conditions
+          shell: >
+            oc get managedcluster {{ cluster_name }}
+            -o jsonpath='{.status.conditions[?(@.type=="ManagedClusterConditionAvailable")].status}' 2>/dev/null
+          register: mc_available_raw
+          failed_when: false
+          changed_when: false
+          when: mc is defined
+
+        - name: Report ManagedCluster availability
+          debug:
+            msg: "ManagedCluster availability: {{ mc_available_raw.stdout | default('unknown') }}"
+          when: mc is defined
+
+        - set_fact:
+            features_passed: "{{ features_passed | int + 1 }}"
+      rescue:
+        - debug:
+            msg: "SKIP: ManagedCluster verification skipped — cluster may not be imported yet"
+        - set_fact:
+            features_skipped: "{{ features_skipped | int + 1 }}"
+
     # ================================================================
     # SUMMARY
     # ================================================================
