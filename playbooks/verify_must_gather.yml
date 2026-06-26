@@ -1,0 +1,22 @@
+---
+- name: Verify must-gather diagnostic collection for CAPI/CAPA resources
+  hosts: localhost
+  any_errors_fatal: true
+  gather_facts: true
+  vars_files:
+    - ../vars/vars.yml
+  vars:
+    capa_system_namespace: "{{ capa_system_namespace | default('multicluster-engine') }}"
+    must_gather_dir: "/tmp/must-gather-capi-{{ ansible_date_time.epoch }}"
+  tasks:
+    - name: Set cluster credentials
+      set_fact:
+        ocp_user: "{{ OCP_HUB_CLUSTER_USER }}"
+        ocp_password: "{{ OCP_HUB_CLUSTER_PASSWORD }}"
+        api_url: "{{ OCP_HUB_API_URL }}"
+
+    - name: Login to OpenShift Hub Cluster
+      include_tasks: "{{ playbook_dir }}/../tasks/login_ocp.yml"
+
+    - name: Run must-gather verification
+      include_tasks: "{{ playbook_dir }}/../tasks/verify_must_gather.yml"
