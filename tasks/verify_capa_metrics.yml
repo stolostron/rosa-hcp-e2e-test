@@ -53,6 +53,7 @@
   register: prom_token_raw
   failed_when: false
   changed_when: false
+  no_log: true
 
 - name: Get Thanos Querier route
   shell: >
@@ -67,6 +68,7 @@
     prom_token: "{{ prom_token_raw.stdout }}"
     thanos_host: "{{ thanos_host_raw.stdout }}"
     prom_available: "{{ (prom_token_raw.stdout | length > 0) and (thanos_host_raw.stdout | length > 0) }}"
+  no_log: true
 
 - name: Query controller_runtime_reconcile_total
   uri:

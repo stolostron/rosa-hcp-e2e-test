@@ -641,12 +641,15 @@
             msg: "ManagedCluster availability: {{ mc_available_raw.stdout | default('unknown') }}"
           when: mc is defined
 
-        - set_fact:
+        - name: Record ManagedCluster check passed
+          set_fact:
             features_passed: "{{ features_passed | int + 1 }}"
       rescue:
-        - debug:
+        - name: Report ManagedCluster check skipped
+          debug:
             msg: "SKIP: ManagedCluster verification skipped — cluster may not be imported yet"
-        - set_fact:
+        - name: Record ManagedCluster check skipped
+          set_fact:
             features_skipped: "{{ features_skipped | int + 1 }}"
 
     # ================================================================
