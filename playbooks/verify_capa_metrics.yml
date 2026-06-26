@@ -1,0 +1,20 @@
+---
+- name: Verify CAPA controller and CAPI Prometheus metrics
+  hosts: localhost
+  any_errors_fatal: true
+  vars_files:
+    - ../vars/vars.yml
+  vars:
+    capa_system_namespace: "{{ capa_system_namespace | default('multicluster-engine') }}"
+  tasks:
+    - name: Set cluster credentials
+      set_fact:
+        ocp_user: "{{ OCP_HUB_CLUSTER_USER }}"
+        ocp_password: "{{ OCP_HUB_CLUSTER_PASSWORD }}"
+        api_url: "{{ OCP_HUB_API_URL }}"
+
+    - name: Login to OpenShift Hub Cluster
+      include_tasks: "{{ playbook_dir }}/../tasks/login_ocp.yml"
+
+    - name: Verify CAPA metrics
+      include_tasks: "{{ playbook_dir }}/../tasks/verify_capa_metrics.yml"
