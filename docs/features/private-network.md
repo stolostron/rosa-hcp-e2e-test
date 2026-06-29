@@ -56,7 +56,7 @@ configuration.
 ```
 Step 1  ROSARoleConfig       AWS IAM roles + OIDC provider
 Step 2  ROSANetwork          VPC, subnets, NAT GWs (CloudFormation)
-Step 2.5  extract_private_subnets.yml
+Step 2.6  extract_private_subnets.yml
           |-- Source: user-provided private_subnet_ids OR ROSANetwork status
           |-- Extracts privateSubnet from each AZ (skips publicSubnet)
           |-- Validates subnet ID format (subnet-<hex>)

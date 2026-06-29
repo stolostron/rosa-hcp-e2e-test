@@ -199,7 +199,7 @@
             that:
               - aws_nlbs | selectattr('Scheme', 'equalto', 'internet-facing') | list | length == 0
             fail_msg: "FAIL: Found internet-facing load balancer(s) in VPC — cluster is not private"
-            success_msg: "PASS: All load balancers are internal — cluster is private ({{ aws_nlbs | length }} LB(s))"
+            success_msg: "PASS: All load balancers are internal — cluster is private ({{ aws_nlbs | length }} LB(s), {{ aws_igws | length }} IGW(s))"
 
         - set_fact:
             features_passed: "{{ features_passed | int + 1 }}"
