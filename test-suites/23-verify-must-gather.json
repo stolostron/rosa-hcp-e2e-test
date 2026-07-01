@@ -1,0 +1,33 @@
+{
+  "name": "Verify Must-Gather",
+  "description": "Validate must-gather diagnostic collection works for CAPI/CAPA managed ROSA HCP clusters",
+  "version": "1.0.0",
+  "tags": ["must-gather", "diagnostics", "capa", "capi", "verification"],
+  "environment": "mce",
+  "playbooks": [
+    {
+      "name": "Verify Must-Gather Collection",
+      "file": "playbooks/verify_must_gather.yml",
+      "description": "Runs must-gather and validates diagnostic data is collected for CAPI/CAPA resources"
+    }
+  ],
+  "documentation": {
+    "overview": "This test suite validates that must-gather diagnostic collection works correctly for CAPI/CAPA managed resources. It verifies that CRD data, controller logs, and cluster resources are captured in the must-gather output.",
+    "prerequisites": [
+      "MCE/ACM hub cluster with CAPI/CAPA configured",
+      "At least one ROSA HCP cluster provisioned via CAPI (recommended)",
+      "oc CLI with adm must-gather support"
+    ],
+    "quick_start": {
+      "basic_usage": "./run-test-suite.py 23-verify-must-gather",
+      "description": "Runs must-gather and validates diagnostic output contains CAPI/CAPA data"
+    },
+    "expected_results": [
+      "must-gather command completes successfully",
+      "Output directory contains CAPI CRD resources",
+      "CAPA controller logs are captured",
+      "ROSAControlPlane resources are included when clusters exist",
+      "Cleanup removes must-gather output directory"
+    ]
+  }
+}

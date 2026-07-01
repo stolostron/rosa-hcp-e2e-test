@@ -22,6 +22,8 @@ SUITE_FILES = [
     "05-verify-mce-environment.json",
     "10-configure-mce-environment.json",
     "20-rosa-hcp-provision.json",
+    "22-verify-metrics.json",
+    "23-verify-must-gather.json",
     "27-rosa-hcp-add-machinepool.json",
     "28-rosa-hcp-delete-machinepool.json",
     "30-rosa-hcp-delete.json",
@@ -33,6 +35,8 @@ SUITE_FILES = [
 SUITES_WITH_DOCUMENTATION = [
     "05-verify-mce-environment.json",
     "20-rosa-hcp-provision.json",
+    "22-verify-metrics.json",
+    "23-verify-must-gather.json",
     "27-rosa-hcp-add-machinepool.json",
     "28-rosa-hcp-delete-machinepool.json",
     "30-rosa-hcp-delete.json",

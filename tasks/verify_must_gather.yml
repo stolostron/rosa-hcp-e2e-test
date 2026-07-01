@@ -1,0 +1,121 @@
+---
+- name: Create must-gather output directory
+  file:
+    path: "{{ must_gather_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: Run must-gather and verify output
+  block:
+    - name: Run oc adm must-gather
+      shell: >
+        oc adm must-gather
+        --dest-dir="{{ must_gather_dir }}" 2>&1
+      register: must_gather_result
+      timeout: 600
+      failed_when: false
+      changed_when: false
+
+    - name: Assert must-gather completed
+      assert:
+        that:
+          - must_gather_result.rc == 0
+        fail_msg: "must-gather failed with rc={{ must_gather_result.rc }}: {{ must_gather_result.stderr | default('') | truncate(500) }}"
+        success_msg: "must-gather completed successfully"
+
+    - name: Check must-gather output has content
+      shell: >
+        find "{{ must_gather_dir }}" -type f | wc -l
+      register: mg_file_count
+      changed_when: false
+
+    - name: Assert must-gather produced files
+      assert:
+        that:
+          - mg_file_count.stdout | int > 0
+        fail_msg: "must-gather output directory is empty"
+        success_msg: "must-gather produced {{ mg_file_count.stdout }} files"
+
+    - name: Search for CAPI CRD resources in must-gather output
+      shell: >
+        find "{{ must_gather_dir }}" -type f \( -name "*.yaml" -o -name "*.json" \) |
+        xargs -r grep -l -i "rosacontrolplane\|rosamachinepool\|rosanetwork\|cluster.x-k8s.io" 2>/dev/null |
+        head -20
+      register: capi_resources_found
+      failed_when: false
+      changed_when: false
+
+    - name: Report CAPI resources in must-gather
+      debug:
+        msg: "CAPI/CAPA resources found in must-gather: {{ capi_resources_found.stdout_lines | length }} files"
+
+    - name: Search for CAPA controller logs in must-gather output
+      shell: >
+        find "{{ must_gather_dir }}" -type f \( -path "*capa-controller*" -o -name "*capa*log*" \) 2>/dev/null |
+        head -10
+      register: capa_logs_found
+      failed_when: false
+      changed_when: false
+
+    - name: Report CAPA logs in must-gather
+      debug:
+        msg: "CAPA controller logs found: {{ capa_logs_found.stdout_lines | length }} files"
+
+    - name: Collect CAPA controller logs directly
+      shell: >
+        oc logs deployment/capa-controller-manager
+        -n {{ capa_system_namespace }}
+        --tail=50 2>/dev/null
+      register: capa_direct_logs
+      failed_when: false
+      changed_when: false
+
+    - name: Assert CAPA controller logs are accessible
+      assert:
+        that:
+          - capa_direct_logs.rc == 0
+          - capa_direct_logs.stdout | length > 0
+        fail_msg: "Cannot retrieve CAPA controller logs directly"
+        success_msg: "CAPA controller logs accessible ({{ capa_direct_logs.stdout_lines | length }} lines)"
+
+    - name: Collect CAPI controller logs directly
+      shell: >
+        oc logs deployment/capi-controller-manager
+        -n {{ capa_system_namespace }}
+        --tail=50 2>/dev/null
+      register: capi_direct_logs
+      failed_when: false
+      changed_when: false
+
+    - name: Assert CAPI controller logs are accessible
+      assert:
+        that:
+          - capi_direct_logs.rc == 0
+          - capi_direct_logs.stdout | length > 0
+        fail_msg: "Cannot retrieve CAPI controller logs directly"
+        success_msg: "CAPI controller logs accessible ({{ capi_direct_logs.stdout_lines | length }} lines)"
+
+    - name: Must-gather verification summary
+      debug:
+        msg: |
+
+          ═══════════════════════════════════════════════════════════════
+          MUST-GATHER VERIFICATION SUMMARY
+          ═══════════════════════════════════════════════════════════════
+
+          Must-Gather Exit Code: {{ must_gather_result.rc }}
+          Output Directory: {{ must_gather_dir }}
+          Total Files Collected: {{ mg_file_count.stdout }}
+          CAPI Resource Files: {{ capi_resources_found.stdout_lines | length }}
+          CAPA Log Files: {{ capa_logs_found.stdout_lines | length }}
+
+          Direct Log Access:
+            CAPA Controller: {{ 'accessible' if capa_direct_logs.rc == 0 else 'not accessible' }}
+            CAPI Controller: {{ 'accessible' if capi_direct_logs.rc == 0 else 'not accessible' }}
+          ═══════════════════════════════════════════════════════════════
+
+  always:
+    - name: Cleanup must-gather output
+      file:
+        path: "{{ must_gather_dir }}"
+        state: absent

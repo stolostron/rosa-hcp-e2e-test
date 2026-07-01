@@ -1,0 +1,206 @@
+---
+- name: Check CAPA ServiceMonitor exists
+  shell: >
+    oc get servicemonitor -n {{ capa_system_namespace }}
+    -o jsonpath='{.items[*].metadata.name}' 2>/dev/null
+  register: servicemonitor_raw
+  failed_when: false
+  changed_when: false
+
+- name: Parse ServiceMonitor list
+  set_fact:
+    servicemonitors: "{{ servicemonitor_raw.stdout.split() }}"
+
+- name: Report ServiceMonitor status
+  debug:
+    msg: "ServiceMonitors in {{ capa_system_namespace }}: {{ servicemonitors | join(', ') | default('none found', true) }}"
+
+- name: Check CAPA controller manager pod is running
+  shell: >
+    oc get pods -n {{ capa_system_namespace }}
+    -l control-plane=capa-controller-manager
+    -o jsonpath='{.items[0].status.phase}' 2>/dev/null
+  register: capa_pod_status
+  failed_when: false
+  changed_when: false
+
+- name: Assert CAPA controller pod is Running
+  assert:
+    that:
+      - capa_pod_status.rc == 0
+      - capa_pod_status.stdout == 'Running'
+    fail_msg: "CAPA controller pod not running: {{ capa_pod_status.stdout | default('not found') }}"
+    success_msg: "CAPA controller pod is Running"
+
+- name: Get CAPA controller metrics port
+  shell: >
+    oc get pods -n {{ capa_system_namespace }}
+    -l control-plane=capa-controller-manager
+    -o jsonpath='{.items[0].spec.containers[0].ports[*].containerPort}' 2>/dev/null
+  register: capa_ports_raw
+  failed_when: false
+  changed_when: false
+
+- name: Report CAPA controller ports
+  debug:
+    msg: "CAPA controller ports: {{ capa_ports_raw.stdout | default('none detected') }}"
+
+- name: Get Prometheus bearer token
+  shell: >
+    oc create token prometheus-k8s -n openshift-monitoring --duration=300s 2>/dev/null ||
+    oc sa get-token prometheus-k8s -n openshift-monitoring 2>/dev/null ||
+    echo ""
+  register: prom_token_raw
+  failed_when: false
+  changed_when: false
+  no_log: true
+
+- name: Get Thanos Querier route
+  shell: >
+    oc get route thanos-querier -n openshift-monitoring
+    -o jsonpath='{.spec.host}' 2>/dev/null
+  register: thanos_host_raw
+  failed_when: false
+  changed_when: false
+
+- name: Set Prometheus query facts
+  set_fact:
+    prom_token: "{{ prom_token_raw.stdout }}"
+    thanos_host: "{{ thanos_host_raw.stdout }}"
+    prom_available: "{{ (prom_token_raw.stdout | length > 0) and (thanos_host_raw.stdout | length > 0) }}"
+  no_log: true
+
+- name: Query controller_runtime_reconcile_total
+  uri:
+    url: "https://{{ thanos_host }}/api/v1/query"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ prom_token }}"
+    body_format: form-urlencoded
+    body:
+      query: "controller_runtime_reconcile_total{namespace='{{ capa_system_namespace }}'}"
+    validate_certs: false
+    return_content: true
+    status_code: [200, 400, 500, 502, 503]
+  register: reconcile_total_raw
+  failed_when: false
+  changed_when: false
+  when: prom_available | bool
+
+- name: Query controller_runtime_reconcile_errors_total
+  uri:
+    url: "https://{{ thanos_host }}/api/v1/query"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ prom_token }}"
+    body_format: form-urlencoded
+    body:
+      query: "controller_runtime_reconcile_errors_total{namespace='{{ capa_system_namespace }}'}"
+    validate_certs: false
+    return_content: true
+    status_code: [200, 400, 500, 502, 503]
+  register: reconcile_errors_raw
+  failed_when: false
+  changed_when: false
+  when: prom_available | bool
+
+- name: Query workqueue_depth
+  uri:
+    url: "https://{{ thanos_host }}/api/v1/query"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ prom_token }}"
+    body_format: form-urlencoded
+    body:
+      query: "workqueue_depth{namespace='{{ capa_system_namespace }}'}"
+    validate_certs: false
+    return_content: true
+    status_code: [200, 400, 500, 502, 503]
+  register: workqueue_depth_raw
+  failed_when: false
+  changed_when: false
+  when: prom_available | bool
+
+- name: Query workqueue_adds_total
+  uri:
+    url: "https://{{ thanos_host }}/api/v1/query"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ prom_token }}"
+    body_format: form-urlencoded
+    body:
+      query: "workqueue_adds_total{namespace='{{ capa_system_namespace }}'}"
+    validate_certs: false
+    return_content: true
+    status_code: [200, 400, 500, 502, 503]
+  register: workqueue_adds_raw
+  failed_when: false
+  changed_when: false
+  when: prom_available | bool
+
+- name: Evaluate metrics results
+  set_fact:
+    reconcile_series_count: "{{ (reconcile_total_raw.json.data.result | default([])) | length }}"
+    error_series_count: "{{ (reconcile_errors_raw.json.data.result | default([])) | length }}"
+    workqueue_series_count: "{{ (workqueue_depth_raw.json.data.result | default([])) | length }}"
+    workqueue_adds_count: "{{ (workqueue_adds_raw.json.data.result | default([])) | length }}"
+  when: prom_available | bool
+
+- name: Assert reconcile metrics exist
+  assert:
+    that:
+      - reconcile_series_count | int > 0
+    fail_msg: "No controller_runtime_reconcile_total series found for namespace {{ capa_system_namespace }}"
+    success_msg: "Found {{ reconcile_series_count }} reconcile_total metric series"
+  when: prom_available | bool
+
+- name: Assert workqueue metrics exist
+  assert:
+    that:
+      - workqueue_adds_count | int > 0
+    fail_msg: "No workqueue_adds_total series found for namespace {{ capa_system_namespace }}"
+    success_msg: "Found {{ workqueue_adds_count }} workqueue_adds_total metric series"
+  when: prom_available | bool
+
+- name: Check CAPI controller metrics
+  shell: >
+    oc get pods -n {{ capa_system_namespace }}
+    -l control-plane=capi-controller-manager
+    -o jsonpath='{.items[0].status.phase}' 2>/dev/null
+  register: capi_pod_status
+  failed_when: false
+  changed_when: false
+
+- name: Assert CAPI controller pod is Running
+  assert:
+    that:
+      - capi_pod_status.rc == 0
+      - capi_pod_status.stdout == 'Running'
+    fail_msg: "CAPI controller pod not running: {{ capi_pod_status.stdout | default('not found') }}"
+    success_msg: "CAPI controller pod is Running"
+
+- name: Metrics verification summary
+  debug:
+    msg: |
+
+      ═══════════════════════════════════════════════════════════════
+      CAPA/CAPI METRICS VERIFICATION SUMMARY
+      ═══════════════════════════════════════════════════════════════
+
+      Namespace: {{ capa_system_namespace }}
+      Prometheus Available: {{ prom_available }}
+      ServiceMonitors: {{ servicemonitors | join(', ') | default('none', true) }}
+
+      CAPA Controller: {{ capa_pod_status.stdout | default('unknown') }}
+      CAPI Controller: {{ capi_pod_status.stdout | default('unknown') }}
+
+      {% if prom_available | bool %}
+      Metric Series Counts:
+        controller_runtime_reconcile_total: {{ reconcile_series_count }}
+        controller_runtime_reconcile_errors_total: {{ error_series_count }}
+        workqueue_depth: {{ workqueue_series_count }}
+        workqueue_adds_total: {{ workqueue_adds_count }}
+      {% else %}
+      Prometheus not reachable — skipped metric value checks
+      {% endif %}
+      ═══════════════════════════════════════════════════════════════

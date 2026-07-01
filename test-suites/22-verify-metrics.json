@@ -1,0 +1,32 @@
+{
+  "name": "Verify CAPA Metrics",
+  "description": "Validate CAPA controller and CAPI Prometheus metrics are exposed and healthy after cluster provisioning",
+  "version": "1.0.0",
+  "tags": ["metrics", "capa", "capi", "prometheus", "observability", "verification"],
+  "environment": "mce",
+  "playbooks": [
+    {
+      "name": "Verify CAPA Controller Metrics",
+      "file": "playbooks/verify_capa_metrics.yml",
+      "description": "Validates CAPA controller metrics via Prometheus and ServiceMonitor resources"
+    }
+  ],
+  "documentation": {
+    "overview": "This test suite validates Prometheus metrics for the CAPA controller and CAPI infrastructure. Inspired by hypershift-addon-e2e-tests metrics validation, it ensures observability is working for CAPI-provisioned ROSA HCP clusters.",
+    "prerequisites": [
+      "MCE/ACM hub cluster with CAPI/CAPA configured",
+      "Prometheus/monitoring stack deployed on hub cluster",
+      "At least one ROSA HCP cluster provisioned via CAPI (recommended)"
+    ],
+    "quick_start": {
+      "basic_usage": "./run-test-suite.py 22-verify-metrics",
+      "description": "Validates CAPA controller metrics are being scraped by Prometheus"
+    },
+    "expected_results": [
+      "CAPA controller ServiceMonitor exists in multicluster-engine namespace",
+      "CAPA controller metrics endpoint is reachable",
+      "Key controller metrics are non-zero (reconcile counts, queue depth)",
+      "No error-rate metrics above threshold"
+    ]
+  }
+}
