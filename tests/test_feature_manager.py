@@ -542,6 +542,7 @@ def _render_template(template_name, version, extra_vars=None):
     base = Path(__file__).parent.parent / "templates" / "versions" / version / "features"
     env = Environment(loader=FileSystemLoader(str(base)), undefined=Undefined)
     env.filters["regex_replace"] = lambda v, p, r="": re.sub(p, r, str(v))
+    env.filters["bool"] = lambda v: str(v).lower() in ("true", "yes", "on", "1")
     template = env.get_template(template_name)
     vars = {
         "cluster_name": "test-cluster",
@@ -553,6 +554,8 @@ def _render_template(template_name, version, extra_vars=None):
         "domain_prefix": "test",
         "machine_pool": {"instance_type": "m5.xlarge", "min_replicas": 2, "max_replicas": 2, "replicas": 2},
         "cluster_network": {"machine_cidr": "10.0.0.0/16", "pod_cidr": "10.128.0.0/14", "service_cidr": "172.30.0.0/16"},
+        "rosa_network_config": {"identity_name": "default", "cidr_block": "10.0.0.0/16", "availability_zones": ["us-west-2a", "us-west-2b"]},
+        "rosa_role_config": {"identity_name": "default", "prefix": "test", "version": f"{version}.0", "enabled": True},
     }
     if extra_vars:
         vars.update(extra_vars)
@@ -601,3 +604,101 @@ class TestFeatureRegistrySecurityGroups:
     def test_security_groups_var_mapping(self, fm):
         result = fm.resolve_to_extra_vars(["security_groups"])
         assert "feature_security_groups_enabled" in result
+
+
+class TestBYON:
+    def test_byon_alias(self, fm):
+        assert fm.resolve_alias("byon-vpc") == "byon"
+
+    def test_byon_in_cli_features(self, fm):
+        features = fm.list_features()
+        ids = [f["id"] for f in features]
+        assert "byon" in ids
+
+    def test_byon_depends_on_private_network(self, fm):
+        resolved = fm.auto_resolve_deps(["byon"])
+        assert "private_network" in resolved
+        assert "byon" in resolved
+
+    def test_byon_feature_metadata(self, fm):
+        feat = fm.get_feature("byon")
+        assert feat is not None
+        assert feat["resource"] == "ROSAControlPlane"
+        assert feat["k8s_field"] == ".spec.subnets"
+        assert feat.get("requires_input") is True
+
+    def test_byon_var_mapping(self, fm):
+        result = fm.resolve_to_extra_vars(["byon"])
+        assert "byon_vpc" in result
+
+    def test_byon_valid_on_422(self, fm):
+        errors = fm.validate_features(["byon"], "4.22")
+        assert errors == []
+
+    @pytest.mark.parametrize("version,template_name", [
+        ("4.22", "rosa-controlplane-only.yaml.j2"),
+        ("4.22", "rosa-combined-automation.yaml.j2"),
+        ("4.21", "rosa-controlplane-only.yaml.j2"),
+        ("4.20", "rosa-controlplane-only.yaml.j2"),
+        ("4.20", "rosa-combined-automation.yaml.j2"),
+    ])
+    def test_byon_subnets_rendered(self, version, template_name):
+        docs = _render_template(template_name, version, {
+            "byon_subnet_ids": ["subnet-0abc1234", "subnet-0def5678"],
+            "byon_availability_zones": ["us-west-2a", "us-west-2b"],
+        })
+        rcp = next((d for d in docs if d.get("kind") == "ROSAControlPlane"), None)
+        assert rcp is not None
+        assert rcp["spec"]["subnets"] == ["subnet-0abc1234", "subnet-0def5678"]
+        assert rcp["spec"]["availabilityZones"] == ["us-west-2a", "us-west-2b"]
+        assert "rosaNetworkRef" not in rcp.get("spec", {})
+
+    @pytest.mark.parametrize("version,template_name", [
+        ("4.22", "rosa-controlplane-only.yaml.j2"),
+        ("4.22", "rosa-combined-automation.yaml.j2"),
+        ("4.21", "rosa-controlplane-only.yaml.j2"),
+        ("4.20", "rosa-controlplane-only.yaml.j2"),
+        ("4.20", "rosa-combined-automation.yaml.j2"),
+    ])
+    def test_no_byon_keeps_network_ref(self, version, template_name):
+        docs = _render_template(template_name, version)
+        rcp = next((d for d in docs if d.get("kind") == "ROSAControlPlane"), None)
+        assert rcp is not None
+        assert "rosaNetworkRef" in rcp.get("spec", {})
+        assert "subnets" not in rcp.get("spec", {})
+
+    @pytest.mark.parametrize("version,template_name", [
+        ("4.22", "rosa-controlplane-only.yaml.j2"),
+        ("4.22", "rosa-combined-automation.yaml.j2"),
+        ("4.21", "rosa-controlplane-only.yaml.j2"),
+        ("4.20", "rosa-controlplane-only.yaml.j2"),
+        ("4.20", "rosa-combined-automation.yaml.j2"),
+    ])
+    def test_byon_with_private(self, version, template_name):
+        docs = _render_template(template_name, version, {
+            "private": True,
+            "byon_subnet_ids": ["subnet-0aaa1111", "subnet-0bbb2222"],
+            "byon_availability_zones": ["us-west-2a", "us-west-2b"],
+        })
+        rcp = next((d for d in docs if d.get("kind") == "ROSAControlPlane"), None)
+        assert rcp is not None
+        assert rcp["spec"]["endpointAccess"] == "Private"
+        assert rcp["spec"]["subnets"] == ["subnet-0aaa1111", "subnet-0bbb2222"]
+        assert "rosaNetworkRef" not in rcp.get("spec", {})
+
+    @pytest.mark.parametrize("version,template_name", [
+        ("4.22", "rosa-controlplane-only.yaml.j2"),
+        ("4.22", "rosa-combined-automation.yaml.j2"),
+        ("4.21", "rosa-controlplane-only.yaml.j2"),
+        ("4.20", "rosa-controlplane-only.yaml.j2"),
+        ("4.20", "rosa-combined-automation.yaml.j2"),
+    ])
+    def test_byon_without_azs_renders_subnets_only(self, version, template_name):
+        docs = _render_template(template_name, version, {
+            "byon_subnet_ids": ["subnet-0abc1234", "subnet-0def5678"],
+        })
+        rcp = next((d for d in docs if d.get("kind") == "ROSAControlPlane"), None)
+        assert rcp is not None
+        assert rcp["spec"]["subnets"] == ["subnet-0abc1234", "subnet-0def5678"]
+        assert "availabilityZones" not in rcp.get("spec", {})
+        assert "rosaNetworkRef" not in rcp.get("spec", {})
