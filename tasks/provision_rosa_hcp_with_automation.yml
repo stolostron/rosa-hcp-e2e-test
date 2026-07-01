@@ -63,11 +63,21 @@
   fail:
     msg: >
       BYON (Bring Your Own Network) requires subnet IDs.
-      Pass them with: -e 'byon_subnet_ids=["subnet-abc123","subnet-def456"]'
+      Pass them with: -e 'byon_subnet_ids=["subnet-0abc1234","subnet-0def5678"]'
       and availability zones: -e 'byon_availability_zones=["us-west-2a","us-west-2b"]'
   when:
     - byon_vpc is defined and byon_vpc | bool
     - byon_subnet_ids is not defined or byon_subnet_ids | length == 0
+
+- name: Validate BYON availability zones provided
+  fail:
+    msg: >
+      BYON (Bring Your Own Network) requires availability zones.
+      Pass them with: -e 'byon_availability_zones=["us-west-2a","us-west-2b"]'
+  when:
+    - byon_vpc is defined and byon_vpc | bool
+    - byon_subnet_ids is defined and byon_subnet_ids | length > 0
+    - byon_availability_zones is not defined or byon_availability_zones | length == 0
 
 - name: Ensure boolean types for flags
   set_fact:

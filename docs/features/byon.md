@@ -26,7 +26,7 @@ ROSAControlPlane spec.
 
 ```bash
 ./run-test-suite.py 20-rosa-hcp-provision --feature byon-vpc \
-  -e 'byon_subnet_ids=["subnet-abc123","subnet-def456"]' \
+  -e 'byon_subnet_ids=["subnet-0abc1234","subnet-0def5678"]' \
   -e 'byon_availability_zones=["us-west-2a","us-west-2b"]'
 ```
 
@@ -40,8 +40,8 @@ When `byon_subnet_ids` is provided:
 spec:
   endpointAccess: Private
   subnets:
-    - subnet-abc123
-    - subnet-def456
+    - subnet-0abc1234
+    - subnet-0def5678
   availabilityZones:
     - us-west-2a
     - us-west-2b
@@ -53,7 +53,7 @@ ROSANetwork resource.
 
 ## Provisioning Flow
 
-```
+```text
 Step 1  ROSARoleConfig       AWS IAM roles + OIDC provider
 Step 2  SKIPPED              ROSANetwork not created (BYON)
 Step 3  ROSAControlPlane     Uses user-provided subnets directly
