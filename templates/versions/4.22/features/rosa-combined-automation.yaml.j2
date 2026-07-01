@@ -60,8 +60,10 @@ metadata:
     automation.acm.redhat.com/network-automation: "true"
     automation.acm.redhat.com/role-automation: "true"
 spec:
+{% if cluster_private_subnets is not defined or cluster_private_subnets | length == 0 %}
   rosaNetworkRef:
     name: {{ cluster_name }}-network
+{% endif %}
 
   rosaRoleConfigRef:
     name: {{ cluster_name }}-roles
@@ -84,6 +86,24 @@ spec:
   endpointAccess: Private
 {% else %}
   endpointAccess: Public
+{% endif %}
+
+{% if private is defined and private | bool and cluster_private_subnets is defined and cluster_private_subnets | length > 0 %}
+  subnets:
+{% for subnet in cluster_private_subnets %}
+    - {{ subnet }}
+{% endfor %}
+{% if rosa_network_subnets is defined and rosa_network_subnets | length > 0 %}
+  availabilityZones:
+{% for subnet_info in rosa_network_subnets %}
+    - {{ subnet_info.availabilityZone }}
+{% endfor %}
+{% elif private_availability_zones is defined and private_availability_zones | length > 0 %}
+  availabilityZones:
+{% for az in private_availability_zones %}
+    - {{ az }}
+{% endfor %}
+{% endif %}
 {% endif %}
 
   defaultMachinePoolSpec:
