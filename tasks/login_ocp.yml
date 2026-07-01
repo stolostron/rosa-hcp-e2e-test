@@ -39,9 +39,11 @@
      ocp_password == 'your-password' or
      ocp_password == '')
 
-- name: Attempt OCP login with {{ ocp_user }}
+- name: Attempt OCP login
+  no_log: true
   shell: |
-    oc --insecure-skip-tls-verify login -u {{ ocp_user }} -p {{ ocp_password }} -s {{ api_url }}
+    oc login -u {{ ocp_user }} -p {{ ocp_password }} -s {{ api_url }} \
+      {% if ocp_ca_bundle is defined and ocp_ca_bundle %}--certificate-authority={{ ocp_ca_bundle }}{% else %}--insecure-skip-tls-verify{% endif %}
   register: ocp_login_result
   failed_when: false
   changed_when: ocp_login_result.rc == 0
