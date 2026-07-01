@@ -56,7 +56,9 @@ Without `--feature no-cni`, the `networkType` line is omitted entirely
 
 Uses OCM API to verify no-cni configuration:
 
+```text
 GET /api/clusters_mgmt/v1/clusters/{id}
+```
 
 Asserts:
 - `.network.type == 'Other'`

@@ -48,7 +48,9 @@ The resulting cluster API URL becomes `https://api.<prefix>.<base_domain>:443`.
 
 Uses OCM API to verify domain prefix configuration:
 
+```text
 GET /api/clusters_mgmt/v1/clusters/{id}
+```
 
 Asserts:
 - `.domain_prefix` is defined and non-empty

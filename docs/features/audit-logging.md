@@ -5,7 +5,7 @@
 | Feature ID | `audit_logging` |
 | CLI Flag | `--feature log-forwarding` |
 | Category | Operations |
-| Phase | Day1 |
+| Phase | Day1 + Day2 (mutable) |
 | Type | boolean |
 | Mutable | Yes |
 | Requires Input | Yes |

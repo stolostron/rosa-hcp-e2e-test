@@ -54,7 +54,9 @@ spec:
 
 Uses OCM API to verify image registry configuration:
 
+```text
 GET /api/clusters_mgmt/v1/clusters/{id}
+```
 
 Asserts:
 - `.registry_config` structure is present

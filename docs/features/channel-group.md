@@ -47,7 +47,9 @@ spec:
 
 Uses OCM API to verify channel group configuration:
 
+```text
 GET /api/clusters_mgmt/v1/clusters/{id}
+```
 
 Asserts:
 - `.version.channel_group` is defined and matches expected value

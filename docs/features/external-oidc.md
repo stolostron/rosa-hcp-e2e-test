@@ -69,7 +69,7 @@ Without OIDC details, only `enableExternalAuthProviders: true` is rendered.
 
 Uses OCM API to verify external OIDC is enabled on the cluster:
 
-```
+```text
 GET /api/clusters_mgmt/v1/clusters/{id}
 ```
 

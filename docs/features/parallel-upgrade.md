@@ -54,7 +54,9 @@ spec:
 
 Uses OCM API to verify parallel upgrade configuration:
 
+```text
 GET /api/clusters_mgmt/v1/clusters/{id}/node_pools
+```
 
 Asserts:
 - `.management_upgrade` configuration is present
