@@ -158,22 +158,42 @@
         stack_name: "{{ cluster_name }}-rosa-network-stack"
       block:
         - name: Query VPC ID from CloudFormation stack subnets
-          shell: >
-            aws ec2 describe-subnets
-            --filters "Name=tag:aws:cloudformation:stack-name,Values={{ stack_name }}"
-            --region {{ verify_region }}
-            --query 'Subnets[0].VpcId'
-            --output text
+          command:
+            argv:
+              - aws
+              - ec2
+              - describe-subnets
+              - --filters
+              - "Name=tag:aws:cloudformation:stack-name,Values={{ stack_name }}"
+              - --region
+              - "{{ verify_region }}"
+              - --query
+              - "Subnets[0].VpcId"
+              - --output
+              - text
           register: aws_vpc_id_raw
           changed_when: false
 
+        - name: Assert VPC ID was resolved from stack
+          assert:
+            that:
+              - (aws_vpc_id_raw.stdout | trim) not in ['', 'None', 'null']
+            fail_msg: "FAIL: Could not resolve VPC ID from stack '{{ stack_name }}' in region '{{ verify_region }}'"
+
         - name: Check for internet gateway attached to VPC
-          shell: >
-            aws ec2 describe-internet-gateways
-            --filters "Name=attachment.vpc-id,Values={{ aws_vpc_id_raw.stdout | trim }}"
-            --region {{ verify_region }}
-            --query 'InternetGateways[].InternetGatewayId'
-            --output json
+          command:
+            argv:
+              - aws
+              - ec2
+              - describe-internet-gateways
+              - --filters
+              - "Name=attachment.vpc-id,Values={{ aws_vpc_id_raw.stdout | trim }}"
+              - --region
+              - "{{ verify_region }}"
+              - --query
+              - "InternetGateways[].InternetGatewayId"
+              - --output
+              - json
           register: aws_igw_raw
           changed_when: false
 
@@ -182,11 +202,17 @@
             aws_igws: "{{ aws_igw_raw.stdout | from_json }}"
 
         - name: Query load balancers in the VPC
-          shell: >
-            aws elbv2 describe-load-balancers
-            --region {{ verify_region }}
-            --query "LoadBalancers[?VpcId=='{{ aws_vpc_id_raw.stdout | trim }}'].{Name:LoadBalancerName,Scheme:Scheme}"
-            --output json
+          command:
+            argv:
+              - aws
+              - elbv2
+              - describe-load-balancers
+              - --region
+              - "{{ verify_region }}"
+              - --query
+              - "LoadBalancers[?VpcId=='{{ aws_vpc_id_raw.stdout | trim }}'].{Name:LoadBalancerName,Scheme:Scheme}"
+              - --output
+              - json
           register: aws_nlb_raw
           changed_when: false
 

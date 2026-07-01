@@ -367,6 +367,8 @@
         template_vars:
           cluster_name: "{{ cluster_name }}"
           rcp_version: "{{ openshift_version }}"
+          private: "{{ private | default(false) }}"
+          cluster_private_subnets: "{{ cluster_private_subnets | default([]) }}"
           rosa_role_config_ref: "{{ rosa_role_config_name if (create_rosa_roles | bool) else omit }}"
           rosa_network_ref: "{{ rosa_network_name if (create_rosa_network | bool) else omit }}"
           create_rosa_roles: "{{ create_rosa_roles | bool }}"

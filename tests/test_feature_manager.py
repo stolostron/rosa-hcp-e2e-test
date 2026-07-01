@@ -542,7 +542,7 @@ def _render_template(template_name, version, extra_vars=None):
     base = Path(__file__).parent.parent / "templates" / "versions" / version / "features"
     env = Environment(loader=FileSystemLoader(str(base)), undefined=Undefined)
     env.filters["regex_replace"] = lambda v, p, r="": re.sub(p, r, str(v))
-    env.filters["bool"] = lambda v: str(v).lower() in ("true", "yes", "1")
+    env.filters["bool"] = lambda v: str(v).lower() in ("true", "yes", "on", "1")
     template = env.get_template(template_name)
     vars = {
         "cluster_name": "test-cluster",
@@ -614,13 +614,13 @@ class TestPrivateClusterSubnets:
     def test_private_subnets_rendered_on_controlplane(self, version, template_name):
         docs = _render_template(template_name, version, {
             "private": True,
-            "cluster_private_subnets": ["subnet-abc123", "subnet-def456"],
+            "cluster_private_subnets": ["subnet-0abc1234", "subnet-0def5678"],
         })
         assert docs, f"{template_name}: rendered no YAML documents"
         rcp = next((d for d in docs if d.get("kind") == "ROSAControlPlane"), None)
         assert rcp is not None, f"{template_name}: no ROSAControlPlane document"
         assert rcp["spec"]["endpointAccess"] == "Private"
-        assert rcp["spec"]["subnets"] == ["subnet-abc123", "subnet-def456"]
+        assert rcp["spec"]["subnets"] == ["subnet-0abc1234", "subnet-0def5678"]
 
     @pytest.mark.parametrize("version,template_name", [
         ("4.22", "rosa-controlplane-only.yaml.j2"),
@@ -659,17 +659,17 @@ class TestPrivateClusterSubnets:
     def test_rosanetworkref_excluded_when_subnets_set(self, version, template_name):
         docs = _render_template(template_name, version, {
             "private": True,
-            "cluster_private_subnets": ["subnet-abc123", "subnet-def456"],
+            "cluster_private_subnets": ["subnet-0abc1234", "subnet-0def5678"],
             "rosa_network_subnets": [
-                {"availabilityZone": "us-west-2a", "privateSubnet": "subnet-abc123", "publicSubnet": "subnet-pub1"},
-                {"availabilityZone": "us-west-2b", "privateSubnet": "subnet-def456", "publicSubnet": "subnet-pub2"},
+                {"availabilityZone": "us-west-2a", "privateSubnet": "subnet-0abc1234", "publicSubnet": "subnet-0aaa1111"},
+                {"availabilityZone": "us-west-2b", "privateSubnet": "subnet-0def5678", "publicSubnet": "subnet-0bbb2222"},
             ],
         })
         rcp = next((d for d in docs if d.get("kind") == "ROSAControlPlane"), None)
         assert rcp is not None
         assert "rosaNetworkRef" not in rcp.get("spec", {}), \
             f"{template_name}: rosaNetworkRef should be excluded when subnets are set"
-        assert rcp["spec"]["subnets"] == ["subnet-abc123", "subnet-def456"]
+        assert rcp["spec"]["subnets"] == ["subnet-0abc1234", "subnet-0def5678"]
         assert rcp["spec"]["availabilityZones"] == ["us-west-2a", "us-west-2b"]
 
     @pytest.mark.parametrize("version,template_name", [
@@ -694,7 +694,7 @@ class TestPrivateClusterSubnets:
     def test_subnets_not_rendered_when_public_even_if_var_present(self, version, template_name):
         docs = _render_template(template_name, version, {
             "private": False,
-            "cluster_private_subnets": ["subnet-abc123"],
+            "cluster_private_subnets": ["subnet-0abc1234"],
         })
         rcp = next((d for d in docs if d.get("kind") == "ROSAControlPlane"), None)
         assert rcp is not None
@@ -721,12 +721,12 @@ class TestPrivateClusterSubnets:
     def test_private_availability_zones_fallback(self, version, template_name):
         docs = _render_template(template_name, version, {
             "private": True,
-            "cluster_private_subnets": ["subnet-abc123", "subnet-def456"],
+            "cluster_private_subnets": ["subnet-0abc1234", "subnet-0def5678"],
             "private_availability_zones": ["us-west-2a", "us-west-2c"],
         })
         rcp = next((d for d in docs if d.get("kind") == "ROSAControlPlane"), None)
         assert rcp is not None
-        assert rcp["spec"]["subnets"] == ["subnet-abc123", "subnet-def456"]
+        assert rcp["spec"]["subnets"] == ["subnet-0abc1234", "subnet-0def5678"]
         assert rcp["spec"]["availabilityZones"] == ["us-west-2a", "us-west-2c"]
 
     @pytest.mark.parametrize("version,template_name", [
@@ -738,9 +738,9 @@ class TestPrivateClusterSubnets:
     def test_rosa_network_subnets_take_priority_over_fallback(self, version, template_name):
         docs = _render_template(template_name, version, {
             "private": True,
-            "cluster_private_subnets": ["subnet-abc123"],
+            "cluster_private_subnets": ["subnet-0abc1234"],
             "rosa_network_subnets": [
-                {"availabilityZone": "us-west-2a", "privateSubnet": "subnet-abc123", "publicSubnet": "subnet-pub1"},
+                {"availabilityZone": "us-west-2a", "privateSubnet": "subnet-0abc1234", "publicSubnet": "subnet-0aaa1111"},
             ],
             "private_availability_zones": ["us-west-2b"],
         })

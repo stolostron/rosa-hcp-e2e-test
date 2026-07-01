@@ -18,7 +18,7 @@
       assert:
         that:
           - private_subnet_ids | length > 0
-          - private_subnet_ids | map('regex_search', '^subnet-[a-f0-9]+$') | select | list | length == private_subnet_ids | length
+          - private_subnet_ids | map('regex_search', '^subnet-([a-f0-9]{8}|[a-f0-9]{17})$') | select | list | length == private_subnet_ids | length
         fail_msg: "Invalid subnet IDs: {{ private_subnet_ids }}. Expected format: subnet-<hex>"
 
     - name: Set private subnets from user input
@@ -46,7 +46,7 @@
       assert:
         that:
           - cluster_private_subnets | length > 0
-          - cluster_private_subnets | map('regex_search', '^subnet-[a-f0-9]+$') | select | list | length == cluster_private_subnets | length
+          - cluster_private_subnets | map('regex_search', '^subnet-([a-f0-9]{8}|[a-f0-9]{17})$') | select | list | length == cluster_private_subnets | length
         fail_msg: "Failed to extract valid private subnet IDs from ROSANetwork status"
 
     - name: Display extracted subnets

@@ -43,7 +43,7 @@ The framework:
 
 ```bash
 ./run-test-suite.py 20-rosa-hcp-provision --feature private \
-  -e '{"private_subnet_ids": ["subnet-abc123", "subnet-def456"]}'
+  -e '{"private_subnet_ids": ["subnet-0abc1234", "subnet-0def5678"]}'
 ```
 
 When `private_subnet_ids` is provided, the framework skips ROSANetwork
@@ -53,7 +53,7 @@ configuration.
 
 ## Provisioning Flow
 
-```
+```text
 Step 1  ROSARoleConfig       AWS IAM roles + OIDC provider
 Step 2  ROSANetwork          VPC, subnets, NAT GWs (CloudFormation)
 Step 2.6  extract_private_subnets.yml
@@ -79,8 +79,8 @@ kind: ROSAControlPlane
 spec:
   endpointAccess: Private
   subnets:
-    - subnet-abc123
-    - subnet-def456
+    - subnet-0abc1234
+    - subnet-0def5678
   availabilityZones:
     - us-west-2a
     - us-west-2b
