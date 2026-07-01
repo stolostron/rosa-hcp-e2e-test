@@ -94,10 +94,10 @@ pipeline {
     parameters {
         string(name:'OCP_HUB_API_URL', defaultValue: '', description: 'Hub OCP API url')
         string(name:'OCP_HUB_CLUSTER_USER', defaultValue: 'kubeadmin', description: 'Hub OCP username')
-        string(name:'OCP_HUB_CLUSTER_PASSWORD', defaultValue: '', description: 'Hub cluster password')
+        password(name:'OCP_HUB_CLUSTER_PASSWORD', defaultValue: '', description: 'Hub cluster password')
         string(name:'MCE_NAMESPACE', defaultValue: 'multicluster-engine', description: 'The Namespace where MCE is installed')
         string(name:'OCM_CLIENT_ID', defaultValue: '', description: 'OCM client ID for ROSA provisioning')
-        string(name:'OCM_CLIENT_SECRET', defaultValue: '', description: 'OCM client secret for ROSA provisioning')
+        password(name:'OCM_CLIENT_SECRET', defaultValue: '', description: 'OCM client secret for ROSA provisioning')
         string(name:'TEST_GIT_BRANCH', defaultValue: 'main', description: 'Git branch to test (for reference/documentation)')
         string(name:'NAME_PREFIX', defaultValue: 'jnk', description: 'Cluster name prefix (creates {prefix}-rosa-hcp)')
         string(name:'CLUSTER_FEATURES', defaultValue: '', description: 'Comma-separated cluster features (e.g., no-cni,external-oidc,autoscaler). Run --list-features to see options.')
@@ -171,16 +171,11 @@ pipeline {
                                 # Execute the CAPI/CAPA configuration test suite (RHACM4K-61722) with maximum verbosity
                                 # Pass all credentials and cluster info as Ansible extra vars (UPPERCASE names match playbook expectations)
                                 # AI agents enabled for autonomous issue detection and remediation
-                                ./run-test-suite.py 10-configure-mce-environment --format junit -vvv --ai-agent \
+                                ./run-test-suite.py 10-configure-mce-environment --format junit -v --ai-agent \
                                   -e OCP_HUB_API_URL="${OCP_HUB_API_URL}" \
                                   -e OCP_HUB_CLUSTER_USER="${OCP_HUB_CLUSTER_USER}" \
-                                  -e OCP_HUB_CLUSTER_PASSWORD="${OCP_HUB_CLUSTER_PASSWORD}" \
                                   -e MCE_NAMESPACE="${MCE_NAMESPACE}" \
-                                  -e AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID}" \
-                                  -e AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY}" \
-                                  -e AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID}" \
-                                  -e OCM_CLIENT_ID="${OCM_CLIENT_ID}" \
-                                  -e OCM_CLIENT_SECRET="${OCM_CLIENT_SECRET}"
+                                  -e AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID}"
                             '''
                         }
                         // Archive results from both old and new test systems, including AI agent logs
@@ -285,15 +280,10 @@ pipeline {
                                 # Execute the ROSA HCP provisioning test suite with maximum verbosity
                                 # Pass Jenkins parameters and credentials as Ansible extra vars
                                 # AI agents enabled for autonomous issue detection and remediation
-                                ./run-test-suite.py 20-rosa-hcp-provision --format junit -vvv --ai-agent ${FEATURE_FLAGS} \
+                                ./run-test-suite.py 20-rosa-hcp-provision --format junit -v --ai-agent ${FEATURE_FLAGS} \
                                   -e OCP_HUB_API_URL="${OCP_HUB_API_URL}" \
                                   -e OCP_HUB_CLUSTER_USER="${OCP_HUB_CLUSTER_USER}" \
-                                  -e OCP_HUB_CLUSTER_PASSWORD="${OCP_HUB_CLUSTER_PASSWORD}" \
                                   -e MCE_NAMESPACE="${MCE_NAMESPACE}" \
-                                  -e OCM_CLIENT_ID="${OCM_CLIENT_ID}" \
-                                  -e OCM_CLIENT_SECRET="${OCM_CLIENT_SECRET}" \
-                                  -e AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID}" \
-                                  -e AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY}" \
                                   -e AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID}" \
                                   -e AWS_REGION="us-west-2" \
                                   -e name_prefix="${NAME_PREFIX}" \
@@ -336,10 +326,9 @@ pipeline {
                             for feature in $(echo "${CLUSTER_FEATURES}" | tr ',' ' '); do
                                 FEATURE_FLAGS="${FEATURE_FLAGS} --feature ${feature}"
                             done
-                            ./run-test-suite.py 21-verify-feature-flags --format junit -vvv --ai-agent ${FEATURE_FLAGS} \
+                            ./run-test-suite.py 21-verify-feature-flags --format junit -v --ai-agent ${FEATURE_FLAGS} \
                               -e OCP_HUB_API_URL="${OCP_HUB_API_URL}" \
                               -e OCP_HUB_CLUSTER_USER="${OCP_HUB_CLUSTER_USER}" \
-                              -e OCP_HUB_CLUSTER_PASSWORD="${OCP_HUB_CLUSTER_PASSWORD}" \
                               -e MCE_NAMESPACE="${MCE_NAMESPACE}" \
                               -e cluster_name="${NAME_PREFIX}-rosa-hcp"
                         '''
@@ -367,10 +356,9 @@ pipeline {
                     try {
                         sh '''
                             cd rosa-hcp-e2e-test
-                            ./run-test-suite.py 27-rosa-hcp-add-machinepool --format junit -vvv --ai-agent \
+                            ./run-test-suite.py 27-rosa-hcp-add-machinepool --format junit -v --ai-agent \
                               -e OCP_HUB_API_URL="${OCP_HUB_API_URL}" \
                               -e OCP_HUB_CLUSTER_USER="${OCP_HUB_CLUSTER_USER}" \
-                              -e OCP_HUB_CLUSTER_PASSWORD="${OCP_HUB_CLUSTER_PASSWORD}" \
                               -e MCE_NAMESPACE="${MCE_NAMESPACE}" \
                               -e cluster_name="${NAME_PREFIX}-rosa-hcp" \
                               -e pool_name="${NAME_PREFIX}-mp"
@@ -399,10 +387,9 @@ pipeline {
                     try {
                         sh '''
                             cd rosa-hcp-e2e-test
-                            ./run-test-suite.py 28-rosa-hcp-delete-machinepool --format junit -vvv --ai-agent \
+                            ./run-test-suite.py 28-rosa-hcp-delete-machinepool --format junit -v --ai-agent \
                               -e OCP_HUB_API_URL="${OCP_HUB_API_URL}" \
                               -e OCP_HUB_CLUSTER_USER="${OCP_HUB_CLUSTER_USER}" \
-                              -e OCP_HUB_CLUSTER_PASSWORD="${OCP_HUB_CLUSTER_PASSWORD}" \
                               -e MCE_NAMESPACE="${MCE_NAMESPACE}" \
                               -e cluster_name="${NAME_PREFIX}-rosa-hcp" \
                               -e pool_name="${NAME_PREFIX}-mp"
@@ -443,15 +430,10 @@ pipeline {
                             timeout(time: 90, unit: 'MINUTES') {
                                 sh '''
                                     cd rosa-hcp-e2e-test
-                                    ./run-test-suite.py 25-rosa-hcp-upgrade-control-plane --format junit -vvv --ai-agent \
+                                    ./run-test-suite.py 25-rosa-hcp-upgrade-control-plane --format junit -v --ai-agent \
                                       -e OCP_HUB_API_URL="${OCP_HUB_API_URL}" \
                                       -e OCP_HUB_CLUSTER_USER="${OCP_HUB_CLUSTER_USER}" \
-                                      -e OCP_HUB_CLUSTER_PASSWORD="${OCP_HUB_CLUSTER_PASSWORD}" \
                                       -e MCE_NAMESPACE="${MCE_NAMESPACE}" \
-                                      -e OCM_CLIENT_ID="${OCM_CLIENT_ID}" \
-                                      -e OCM_CLIENT_SECRET="${OCM_CLIENT_SECRET}" \
-                                      -e AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID}" \
-                                      -e AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY}" \
                                       -e AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID}" \
                                       -e AWS_REGION="us-west-2" \
                                       -e cluster_name="${UPGRADE_CLUSTER_NAME}"
@@ -494,15 +476,10 @@ pipeline {
                             timeout(time: 180, unit: 'MINUTES') {
                                 sh '''
                                     cd rosa-hcp-e2e-test
-                                    ./run-test-suite.py 26-rosa-hcp-upgrade-machine-pool --format junit -vvv --ai-agent \
+                                    ./run-test-suite.py 26-rosa-hcp-upgrade-machine-pool --format junit -v --ai-agent \
                                       -e OCP_HUB_API_URL="${OCP_HUB_API_URL}" \
                                       -e OCP_HUB_CLUSTER_USER="${OCP_HUB_CLUSTER_USER}" \
-                                      -e OCP_HUB_CLUSTER_PASSWORD="${OCP_HUB_CLUSTER_PASSWORD}" \
                                       -e MCE_NAMESPACE="${MCE_NAMESPACE}" \
-                                      -e OCM_CLIENT_ID="${OCM_CLIENT_ID}" \
-                                      -e OCM_CLIENT_SECRET="${OCM_CLIENT_SECRET}" \
-                                      -e AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID}" \
-                                      -e AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY}" \
                                       -e AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID}" \
                                       -e AWS_REGION="us-west-2" \
                                       -e cluster_name="${UPGRADE_CLUSTER_NAME}"
@@ -547,16 +524,12 @@ pipeline {
                                     # Execute the ROSA HCP deletion test suite
                                     # Pass all required credentials and parameters (same as provisioning)
                                     # AI agents enabled for autonomous issue detection and remediation
-                                    ./run-test-suite.py 30-rosa-hcp-delete --format junit -vvv --ai-agent \
+                                    ./run-test-suite.py 30-rosa-hcp-delete --format junit -v --ai-agent \
                                       -e OCP_HUB_API_URL="${OCP_HUB_API_URL}" \
                                       -e OCP_HUB_CLUSTER_USER="${OCP_HUB_CLUSTER_USER}" \
-                                      -e OCP_HUB_CLUSTER_PASSWORD="${OCP_HUB_CLUSTER_PASSWORD}" \
                                       -e MCE_NAMESPACE="${MCE_NAMESPACE}" \
-                                      -e AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID}" \
-                                      -e AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY}" \
+                                      -e AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID}" \
                                       -e AWS_REGION="us-west-2" \
-                                      -e OCM_CLIENT_ID="${OCM_CLIENT_ID}" \
-                                      -e OCM_CLIENT_SECRET="${OCM_CLIENT_SECRET}" \
                                       -e name_prefix="${NAME_PREFIX}"
                                 '''
                             }
@@ -588,10 +561,9 @@ pipeline {
                         echo 'Restoring HyperShift: disabling CAPI/CAPA and re-enabling HyperShift components'
                         sh '''
                             cd rosa-hcp-e2e-test
-                            ./run-test-suite.py 41-disable-capi-enable-hypershift --format junit -vvv --ai-agent \
+                            ./run-test-suite.py 41-disable-capi-enable-hypershift --format junit -v --ai-agent \
                               -e OCP_HUB_API_URL="${OCP_HUB_API_URL}" \
                               -e OCP_HUB_CLUSTER_USER="${OCP_HUB_CLUSTER_USER}" \
-                              -e OCP_HUB_CLUSTER_PASSWORD="${OCP_HUB_CLUSTER_PASSWORD}" \
                               -e MCE_NAMESPACE="${MCE_NAMESPACE}"
                         '''
                     }
