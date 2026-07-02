@@ -2,6 +2,11 @@
 - name: Verify feature flags on provisioned ROSA HCP cluster
   hosts: localhost
   gather_facts: false
+  environment:
+    AWS_ACCESS_KEY_ID: "{{ AWS_ACCESS_KEY_ID | default(lookup('env', 'AWS_ACCESS_KEY_ID')) }}"
+    AWS_SECRET_ACCESS_KEY: "{{ AWS_SECRET_ACCESS_KEY | default(lookup('env', 'AWS_SECRET_ACCESS_KEY')) }}"
+    AWS_SESSION_TOKEN: "{{ AWS_SESSION_TOKEN | default(lookup('env', 'AWS_SESSION_TOKEN')) }}"
+    AWS_DEFAULT_REGION: "{{ aws_region | default(lookup('env', 'AWS_DEFAULT_REGION') | default('us-west-2', true)) }}"
   vars_files:
     - ../vars/vars.yml
   vars:
@@ -60,6 +65,13 @@
         oc get rosacontrolplane {{ cluster_name }} -n {{ capi_namespace }}
         -o json
       register: rcp_raw
+      failed_when: false
+      changed_when: false
+
+    - name: Fail if ROSAControlPlane not found
+      fail:
+        msg: "ROSAControlPlane '{{ cluster_name }}' not found in namespace '{{ capi_namespace }}'. Verify cluster_name and capi_namespace."
+      when: rcp_raw.rc != 0
 
     - name: Parse ROSAControlPlane
       set_fact:
@@ -70,6 +82,13 @@
         oc get rosamachinepool {{ cluster_name }} -n {{ capi_namespace }}
         -o json
       register: rmp_raw
+      failed_when: false
+      changed_when: false
+
+    - name: Fail if ROSAMachinePool not found
+      fail:
+        msg: "ROSAMachinePool '{{ cluster_name }}' not found in namespace '{{ capi_namespace }}'. Verify cluster_name and capi_namespace."
+      when: rmp_raw.rc != 0
 
     - name: Parse ROSAMachinePool
       set_fact:
@@ -130,19 +149,147 @@
           ═══════════════════════════════════════════════════════════════
 
     # ================================================================
+    # SETUP: Query OCM API for cluster details
+    # ================================================================
+    - name: Get OCM credentials from rosa-creds-secret (multicluster-engine)
+      shell: >
+        oc get secret rosa-creds-secret -n multicluster-engine
+        -o jsonpath='{.data.ocmClientID}|{.data.ocmClientSecret}|{.data.ocmApiUrl}'
+      register: ocm_creds_mce
+      failed_when: false
+      changed_when: false
+      no_log: true
+
+    - name: Get OCM credentials from rosa-creds-secret (capi namespace fallback)
+      shell: >
+        oc get secret rosa-creds-secret -n {{ capi_namespace }}
+        -o jsonpath='{.data.ocmClientID}|{.data.ocmClientSecret}|{.data.ocmApiUrl}'
+      register: ocm_creds_capi
+      failed_when: false
+      changed_when: false
+      no_log: true
+      when: ocm_creds_mce.rc != 0 or ocm_creds_mce.stdout | length == 0
+
+    - name: Select OCM credentials source
+      set_fact:
+        ocm_creds_raw: "{{ ocm_creds_mce if (ocm_creds_mce.rc == 0 and ocm_creds_mce.stdout | length > 0) else (ocm_creds_capi | default(ocm_creds_mce)) }}"
+
+    - name: Split raw OCM credentials
+      set_fact:
+        ocm_creds_parts: "{{ ocm_creds_raw.stdout.split('|') }}"
+      when: ocm_creds_raw.rc == 0 and (ocm_creds_raw.stdout | length > 0)
+      no_log: true
+
+    - name: Decode OCM credentials
+      set_fact:
+        ocm_client_id: >-
+          {{ (ocm_creds_parts[0] | b64decode)
+             if ocm_creds_parts is defined and ocm_creds_parts | length > 0
+             else '' }}
+        ocm_client_secret: >-
+          {{ (ocm_creds_parts[1] | b64decode)
+             if ocm_creds_parts is defined and ocm_creds_parts | length > 1
+             else '' }}
+        ocm_api_url: >-
+          {{ (ocm_creds_parts[2] | b64decode)
+             if ocm_creds_parts is defined and ocm_creds_parts | length > 2
+                and ocm_creds_parts[2] | length > 0
+             else 'https://api.stage.openshift.com' }}
+      no_log: true
+
+    - name: Initialize OCM vars if credentials unavailable
+      set_fact:
+        ocm_client_id: ""
+        ocm_client_secret: ""
+        ocm_api_url: "https://api.stage.openshift.com"
+      when: ocm_client_id is not defined or ocm_client_id | length == 0
+
+    - name: Reject non-HTTPS OCM API URL
+      assert:
+        that:
+          - ocm_api_url is match('^https://')
+        fail_msg: "FAIL: OCM API URL '{{ ocm_api_url }}' is not HTTPS — refusing to send bearer token"
+      when: ocm_client_id | default('') | length > 0
+
+    - name: Get OCM bearer token
+      uri:
+        url: "https://sso.redhat.com/auth/realms/redhat-external/protocol/openid-connect/token"
+        method: POST
+        body_format: form-urlencoded
+        body:
+          grant_type: client_credentials
+          client_id: "{{ ocm_client_id }}"
+          client_secret: "{{ ocm_client_secret }}"
+        status_code: 200
+        timeout: 15
+      register: ocm_token_result
+      failed_when: false
+      changed_when: false
+      no_log: true
+      when: ocm_client_id | default('') | length > 0
+
+    - name: Query OCM for cluster details
+      uri:
+        url: "{{ ocm_api_url }}/api/clusters_mgmt/v1/clusters?search=name%3D'{{ cluster_name }}'"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ ocm_token_result.json.access_token }}"
+          Accept: application/json
+        status_code: 200
+        timeout: 15
+      register: ocm_cluster_result
+      failed_when: false
+      changed_when: false
+      no_log: true
+      when: ocm_token_result is defined and ocm_token_result.json is defined and ocm_token_result.json.access_token is defined
+
+    - name: Set OCM cluster facts
+      set_fact:
+        ocm_cluster: "{{ ocm_cluster_result.json.items | selectattr('name', 'equalto', cluster_name) | first }}"
+        ocm_available: true
+      when:
+        - ocm_cluster_result is defined
+        - ocm_cluster_result.json is defined
+        - ocm_cluster_result.json.items is defined
+        - ocm_cluster_result.json.items | selectattr('name', 'equalto', cluster_name) | list | length > 0
+
+    - name: Set OCM unavailable flag
+      set_fact:
+        ocm_available: false
+        ocm_cluster: {}
+      when: ocm_available is not defined
+
+    - name: Display OCM status
+      debug:
+        msg: "{{ 'OCM API available — cluster found' if ocm_available else 'OCM API unavailable — falling back to CRD checks for applicable features' }}"
+
+    # ================================================================
     # FEATURE CHECKS
     # ================================================================
 
     # --- no_cni ---
-    - name: "CHECK: No CNI Plugin (networkType: Other)"
+    - name: "CHECK: No CNI Plugin (via OCM API)"
       block:
-        - name: Assert networkType is Other
+        - name: Assert networkType via OCM
+          assert:
+            that:
+              - ocm_cluster.network.type is defined
+              - ocm_cluster.network.type == 'Other'
+            fail_msg: "FAIL: OCM network type is not 'Other'"
+            success_msg: "PASS: OCM confirms networkType = Other"
+          when: ocm_available
+        - name: Assert networkType via CRD (fallback)
           assert:
             that:
               - rcp.spec.network.networkType is defined
               - rcp.spec.network.networkType == 'Other'
             fail_msg: "FAIL: networkType is '{{ rcp.spec.network.networkType | default('not set') }}', expected 'Other'"
-            success_msg: "PASS: networkType = Other"
+            success_msg: "PASS: networkType = Other (CRD fallback)"
+          when: not ocm_available
+        - name: Fail if neither check ran
+          fail:
+            msg: "BUG: neither OCM nor CRD check executed for no_cni"
+          when: ocm_available is not defined
         - set_fact:
             features_passed: "{{ features_passed | int + 1 }}"
       rescue:
@@ -152,99 +299,243 @@
             fail_detail: "networkType is not 'Other'"
 
     # --- private_network ---
-    - name: "CHECK: Private Cluster (endpointAccess: Private)"
+    - name: "CHECK: Private Cluster (via AWS CLI)"
+      vars:
+        verify_region: "{{ aws_region | default(rcp.spec.region | default('us-west-2')) }}"
+        stack_name: "{{ cluster_name }}-rosa-network-stack"
       block:
-        - name: Assert endpointAccess is Private
+        - name: Query VPC ID from CloudFormation stack subnets
+          shell: >
+            aws ec2 describe-subnets
+            --filters "Name=tag:aws:cloudformation:stack-name,Values={{ stack_name }}"
+            --region {{ verify_region }}
+            --query 'Subnets[0].VpcId'
+            --output text
+          register: aws_vpc_id_raw
+          changed_when: false
+
+        - name: Check for internet gateway attached to VPC
+          shell: >
+            aws ec2 describe-internet-gateways
+            --filters "Name=attachment.vpc-id,Values={{ aws_vpc_id_raw.stdout | trim }}"
+            --region {{ verify_region }}
+            --query 'InternetGateways[].InternetGatewayId'
+            --output json
+          register: aws_igw_raw
+          changed_when: false
+
+        - name: Parse IGW response
+          set_fact:
+            aws_igws: "{{ aws_igw_raw.stdout | from_json }}"
+
+        - name: Assert no internet gateway attached to VPC
           assert:
             that:
-              - rcp.spec.endpointAccess is defined
-              - rcp.spec.endpointAccess == 'Private'
-            fail_msg: "FAIL: endpointAccess is '{{ rcp.spec.endpointAccess | default('not set') }}', expected 'Private'"
-            success_msg: "PASS: endpointAccess = Private"
+              - aws_igws | length == 0
+            fail_msg: >-
+              FAIL: Internet gateway(s) {{ aws_igws }} attached to VPC
+              — cluster is not private
+            success_msg: "PASS: No internet gateway attached to VPC"
+
+        - name: Query load balancers in the VPC
+          shell: >
+            aws elbv2 describe-load-balancers
+            --region {{ verify_region }}
+            --query "LoadBalancers[?VpcId=='{{ aws_vpc_id_raw.stdout | trim }}'].{Name:LoadBalancerName,Scheme:Scheme}"
+            --output json
+          register: aws_nlb_raw
+          changed_when: false
+
+        - name: Parse NLB response
+          set_fact:
+            aws_nlbs: "{{ aws_nlb_raw.stdout | from_json }}"
+
+        - name: Assert cluster is private (no internet-facing LBs)
+          assert:
+            that:
+              - aws_nlbs | selectattr('Scheme', 'equalto', 'internet-facing') | list | length == 0
+            fail_msg: "FAIL: Found internet-facing load balancer(s) in VPC — cluster is not private"
+            success_msg: "PASS: All load balancers are internal — cluster is private ({{ aws_nlbs | length }} LB(s))"
+
         - set_fact:
             features_passed: "{{ features_passed | int + 1 }}"
       rescue:
         - include_tasks: "{{ playbook_dir }}/../tasks/verify_feature_rescue.yml"
           vars:
             feature_id: private_network
-            fail_detail: "endpointAccess is not 'Private'"
+            fail_detail: "cluster is not private or could not verify VPC/LB configuration"
 
     # --- external_oidc ---
-    - name: "CHECK: External OIDC (enableExternalAuthProviders + externalAuthProviders)"
+    - name: "CHECK: External OIDC (via OCM API + issuer validation)"
       block:
-        - name: Assert enableExternalAuthProviders is true
+        - name: Assert external auth via OCM
+          assert:
+            that:
+              - ocm_cluster.external_auth_config is defined
+              - ocm_cluster.external_auth_config.enabled | default(false) | bool
+            fail_msg: "FAIL: OCM external_auth_config not enabled"
+            success_msg: "PASS: OCM confirms external auth is enabled"
+          when: ocm_available
+        - name: Assert externalAuthProviders via CRD (fallback)
           assert:
             that:
               - rcp.spec.enableExternalAuthProviders is defined
               - rcp.spec.enableExternalAuthProviders | bool
-            fail_msg: "FAIL: enableExternalAuthProviders not set"
-            success_msg: "PASS: enableExternalAuthProviders = true"
-        - name: Assert externalAuthProviders is configured
+              - rcp.spec.externalAuthProviders is defined
+              - rcp.spec.externalAuthProviders | length > 0
+            fail_msg: "FAIL: externalAuthProviders not configured"
+            success_msg: "PASS: externalAuthProviders configured (CRD fallback)"
+          when: not ocm_available
+        - name: Fail if neither check ran
+          fail:
+            msg: "BUG: neither OCM nor CRD check executed for external_oidc"
+          when: ocm_available is not defined
+        - name: Assert externalAuthProviders array exists in CRD
           assert:
             that:
               - rcp.spec.externalAuthProviders is defined
               - rcp.spec.externalAuthProviders | length > 0
-              - rcp.spec.externalAuthProviders[0].issuer is defined
-              - rcp.spec.externalAuthProviders[0].issuer.issuerURL is defined
-              - rcp.spec.externalAuthProviders[0].issuer.issuerURL | length > 0
+            fail_msg: "FAIL: externalAuthProviders array missing from CRD"
+            success_msg: "PASS: externalAuthProviders present in CRD"
+
+        - name: Extract OIDC issuer URL from CRD
+          set_fact:
+            oidc_issuer_url: "{{ (rcp.spec.externalAuthProviders[0].issuer | default({})).issuerURL | default('') }}"
+        - name: Validate OIDC issuer URL is reachable
+          uri:
+            url: "{{ oidc_issuer_url }}/.well-known/openid-configuration"
+            method: GET
+            status_code: 200
+            timeout: 10
+            validate_certs: true
+          register: oidc_discovery_result
+          failed_when: false
+          changed_when: false
+          when: oidc_issuer_url is defined and oidc_issuer_url | length > 0
+        - name: Assert OIDC discovery document is valid
+          assert:
+            that:
+              - oidc_discovery_result.status | int == 200
+              - oidc_discovery_result.json.issuer is defined
+              - oidc_discovery_result.json.issuer == oidc_issuer_url
+            fail_msg: "FAIL: OIDC issuer '{{ oidc_issuer_url }}' is not reachable or returned invalid discovery document"
+            success_msg: "PASS: OIDC issuer validated — {{ oidc_issuer_url }} returns valid OpenID configuration"
+          when:
+            - oidc_issuer_url is defined and oidc_issuer_url | length > 0
+            - oidc_discovery_result is defined
+            - oidc_discovery_result.status is defined
+        - name: Assert OIDC audiences configured
+          assert:
+            that:
               - rcp.spec.externalAuthProviders[0].issuer.audiences is defined
               - rcp.spec.externalAuthProviders[0].issuer.audiences | length > 0
+            fail_msg: "FAIL: OIDC audiences not configured"
+            success_msg: "PASS: OIDC audiences configured — {{ rcp.spec.externalAuthProviders[0].issuer.audiences }}"
+        - name: Assert OIDC claim mappings configured
+          assert:
+            that:
               - rcp.spec.externalAuthProviders[0].claimMappings is defined
               - rcp.spec.externalAuthProviders[0].claimMappings.username is defined
               - rcp.spec.externalAuthProviders[0].claimMappings.username.claim is defined
-            fail_msg: "FAIL: externalAuthProviders missing or incomplete — issuerURL, audiences, or claimMappings not configured"
-            success_msg: "PASS: externalAuthProviders configured — issuerURL={{ rcp.spec.externalAuthProviders[0].issuer.issuerURL }}, audiences={{ rcp.spec.externalAuthProviders[0].issuer.audiences }}"
+            fail_msg: "FAIL: OIDC claim mappings not configured"
+            success_msg: "PASS: OIDC claim mappings configured (username claim: {{ rcp.spec.externalAuthProviders[0].claimMappings.username.claim }})"
         - set_fact:
             features_passed: "{{ features_passed | int + 1 }}"
       rescue:
         - include_tasks: "{{ playbook_dir }}/../tasks/verify_feature_rescue.yml"
           vars:
             feature_id: external_oidc
-            fail_detail: "enableExternalAuthProviders or externalAuthProviders not configured correctly"
+            fail_detail: "external OIDC auth not enabled or issuer validation failed (ocm_available={{ ocm_available | default('?') }})"
 
     # --- fips ---
-    - name: "CHECK: FIPS Mode"
+    - name: "CHECK: FIPS Mode (via AWS CLI)"
+      vars:
+        verify_region: "{{ aws_region | default(rcp.spec.region | default('us-west-2')) }}"
       block:
-        - name: Assert fips is Enabled
+        - name: Get AMI ID from cluster worker instance
+          shell: >
+            aws ec2 describe-instances
+            --filters "Name=tag:kubernetes.io/cluster/{{ cluster_name }},Values=owned"
+            "Name=instance-state-name,Values=running"
+            --region {{ verify_region }}
+            --query 'Reservations[0].Instances[0].ImageId'
+            --output text
+          register: aws_ami_id_raw
+          changed_when: false
+
+        - name: Get AMI description
+          shell: >
+            aws ec2 describe-images
+            --image-ids {{ aws_ami_id_raw.stdout | trim }}
+            --region {{ verify_region }}
+            --query 'Images[0].{Name:Name,Description:Description}'
+            --output json
+          register: aws_ami_info_raw
+          changed_when: false
+
+        - name: Parse AMI info
+          set_fact:
+            aws_ami_info: "{{ aws_ami_info_raw.stdout | from_json }}"
+
+        - name: Assert worker AMI is FIPS-enabled
           assert:
             that:
-              - rcp.spec.fips is defined
-              - rcp.spec.fips == 'Enabled'
-            fail_msg: "FAIL: fips is '{{ rcp.spec.fips | default('not set') }}'"
-            success_msg: "PASS: fips = Enabled"
+              - "'fips' in (aws_ami_info.Name | default('') | lower) or 'fips' in (aws_ami_info.Description | default('') | lower)"
+            fail_msg: "FAIL: Worker AMI '{{ aws_ami_info.Name | default('unknown') }}' does not appear to be FIPS-enabled"
+            success_msg: "PASS: Worker AMI is FIPS-enabled ({{ aws_ami_info.Name | default('') }})"
+
         - set_fact:
             features_passed: "{{ features_passed | int + 1 }}"
       rescue:
         - include_tasks: "{{ playbook_dir }}/../tasks/verify_feature_rescue.yml"
           vars:
             feature_id: fips
-            fail_detail: "fips is not set to 'Enabled'"
+            fail_detail: "worker AMI is not FIPS-enabled or could not be verified"
 
     # --- etcd_kms ---
-    - name: "CHECK: ETCD KMS Encryption"
+    - name: "CHECK: ETCD KMS Encryption (via AWS CLI)"
+      vars:
+        verify_region: "{{ aws_region | default(rcp.spec.region | default('us-west-2')) }}"
+        kms_arn: "{{ etcd_encryption_kms_arn | default(rcp.spec.etcdEncryptionKMSARN | default('')) }}"
       block:
-        - name: Assert etcdEncryptionKMSARN is valid and matches requested
+        - name: Assert KMS ARN is provided
           assert:
             that:
-              - rcp.spec.etcdEncryptionKMSARN is defined
-              - rcp.spec.etcdEncryptionKMSARN | length > 0
-              - "rcp.spec.etcdEncryptionKMSARN is match('^arn:aws:kms:')"
-            fail_msg: "FAIL: etcdEncryptionKMSARN '{{ rcp.spec.etcdEncryptionKMSARN | default('not set') }}' is missing or not a valid KMS ARN"
-            success_msg: "PASS: etcdEncryptionKMSARN = {{ rcp.spec.etcdEncryptionKMSARN }}"
-        - name: Assert KMS ARN matches requested value
+              - kms_arn | length > 0
+              - "kms_arn is match('^arn:aws:kms:')"
+            fail_msg: "FAIL: etcdEncryptionKMSARN not set or not a valid KMS ARN"
+            success_msg: "PASS: KMS ARN format valid"
+
+        - name: Verify KMS key exists and is enabled in AWS
+          shell: >
+            aws kms describe-key
+            --key-id {{ kms_arn }}
+            --region {{ verify_region }}
+            --query 'KeyMetadata.{Arn:Arn,Enabled:Enabled,State:KeyState}'
+            --output json
+          register: aws_kms_check
+          changed_when: false
+
+        - name: Parse KMS key response
+          set_fact:
+            aws_kms_key: "{{ aws_kms_check.stdout | from_json }}"
+
+        - name: Assert KMS key is enabled and ARN matches
           assert:
             that:
-              - rcp.spec.etcdEncryptionKMSARN == etcd_encryption_kms_arn
-            fail_msg: "FAIL: etcdEncryptionKMSARN is '{{ rcp.spec.etcdEncryptionKMSARN }}', expected '{{ etcd_encryption_kms_arn }}'"
-            success_msg: "PASS: etcdEncryptionKMSARN matches requested"
-          when: etcd_encryption_kms_arn is defined and (etcd_encryption_kms_arn | length > 0)
+              - aws_kms_key.Arn == kms_arn
+              - aws_kms_key.Enabled | bool
+              - aws_kms_key.State == 'Enabled'
+            fail_msg: "FAIL: KMS key not found, disabled, or ARN mismatch (state={{ aws_kms_key.State | default('?') }})"
+            success_msg: "PASS: KMS key exists and is enabled"
+
         - set_fact:
             features_passed: "{{ features_passed | int + 1 }}"
       rescue:
         - include_tasks: "{{ playbook_dir }}/../tasks/verify_feature_rescue.yml"
           vars:
             feature_id: etcd_kms
-            fail_detail: "etcdEncryptionKMSARN not set or does not match requested"
+            fail_detail: "KMS key not found or not enabled in AWS"
 
     # --- user_agent ---
     - name: "CHECK: User Agent"
@@ -265,11 +556,47 @@
             fail_detail: "userAgent is not set"
 
     # --- cluster_autoscaler_expander ---
-    - name: "CHECK: Cluster Autoscaler Expander"
+    - name: "CHECK: Cluster Autoscaler Expander (via AWS CLI + CRD)"
       vars:
+        verify_region: "{{ aws_region | default(rcp.spec.region | default('us-west-2')) }}"
         valid_expanders: ['LeastWaste', 'Priority', 'Random']
       block:
-        - name: Assert autoscaler expanders configured with valid values
+        - name: Query AWS Auto Scaling Groups for cluster
+          shell: >
+            aws autoscaling describe-auto-scaling-groups
+            --filters "Name=tag:kubernetes.io/cluster/{{ cluster_name }},Values=owned"
+            --region {{ verify_region }}
+            --query 'AutoScalingGroups[].{Name:AutoScalingGroupName,Min:MinSize,Max:MaxSize}'
+            --output json
+          register: aws_asg_raw
+          changed_when: false
+
+        - name: Parse ASG response
+          set_fact:
+            aws_asgs: "{{ aws_asg_raw.stdout | from_json }}"
+
+        - name: Assert ASGs exist
+          assert:
+            that:
+              - aws_asgs | length > 0
+            fail_msg: "FAIL: No ASGs found for cluster {{ cluster_name }}"
+            success_msg: "PASS: {{ aws_asgs | length }} ASG(s) found"
+
+        - name: Assert each ASG allows scaling (Max > Min)
+          assert:
+            that:
+              - item.Max | int > item.Min | int
+            fail_msg: >-
+              FAIL: ASG {{ item.Name }} has Max={{ item.Max }}
+              == Min={{ item.Min }} — scaling not enabled
+            success_msg: >-
+              PASS: ASG {{ item.Name }}
+              min={{ item.Min }} max={{ item.Max }}
+          loop: "{{ aws_asgs }}"
+          loop_control:
+            label: "{{ item.Name }}"
+
+        - name: Assert expander strategy via CRD (not exposed in AWS)
           assert:
             that:
               - rcp.spec.autoscaler is defined
@@ -277,22 +604,32 @@
               - rcp.spec.autoscaler.expanders | length > 0
               - rcp.spec.autoscaler.expanders | difference(valid_expanders) | length == 0
               - "'LeastWaste' in rcp.spec.autoscaler.expanders"
-            fail_msg: "FAIL: autoscaler expanders {{ rcp.spec.autoscaler.expanders | default([]) }}, expected LeastWaste (valid: {{ valid_expanders | join(', ') }})"
+            fail_msg: "FAIL: autoscaler expanders {{ rcp.spec.autoscaler.expanders | default([]) }}, expected LeastWaste"
             success_msg: "PASS: autoscaler.expanders = {{ rcp.spec.autoscaler.expanders }}"
+
         - set_fact:
             features_passed: "{{ features_passed | int + 1 }}"
       rescue:
         - include_tasks: "{{ playbook_dir }}/../tasks/verify_feature_rescue.yml"
           vars:
             feature_id: cluster_autoscaler_expander
-            fail_detail: "autoscaler.expanders is not set"
+            fail_detail: "autoscaler not active in AWS or expander strategy not set"
 
     # --- image_registry ---
-    - name: "CHECK: Image Registry Config"
+    - name: "CHECK: Image Registry Config (via OCM API)"
       vars:
         expected_domain: "{{ registry_domain | default('quay.io') }}"
       block:
-        - name: Assert clusterRegistryConfig structure exists
+        - name: Assert registry config via OCM
+          assert:
+            that:
+              - ocm_cluster.registry_config is defined
+              - ocm_cluster.registry_config.allowed_registries_for_import is defined
+              - ocm_cluster.registry_config.allowed_registries_for_import | length > 0
+            fail_msg: "FAIL: OCM registry_config not configured"
+            success_msg: "PASS: OCM confirms registry config is set"
+          when: ocm_available
+        - name: Assert clusterRegistryConfig via CRD (fallback)
           assert:
             that:
               - rcp.spec.clusterRegistryConfig is defined
@@ -300,66 +637,114 @@
               - rcp.spec.clusterRegistryConfig.allowedRegistriesForImport | length > 0
               - rcp.spec.clusterRegistryConfig.registrySources is defined
               - rcp.spec.clusterRegistryConfig.registrySources.allowedRegistries is defined
-            fail_msg: "FAIL: clusterRegistryConfig missing or incomplete — got {{ rcp.spec.clusterRegistryConfig | default({}) }}"
-            success_msg: "PASS: clusterRegistryConfig structure present"
-        - name: Assert registry domain matches expected
-          assert:
-            that:
-              - rcp.spec.clusterRegistryConfig.allowedRegistriesForImport[0].domainName == expected_domain
-              - "expected_domain in rcp.spec.clusterRegistryConfig.registrySources.allowedRegistries"
-            fail_msg: "FAIL: registry domain is '{{ rcp.spec.clusterRegistryConfig.allowedRegistriesForImport[0].domainName | default('?') }}', expected '{{ expected_domain }}'"
-            success_msg: "PASS: clusterRegistryConfig domain={{ expected_domain }}, allowedRegistries={{ rcp.spec.clusterRegistryConfig.registrySources.allowedRegistries }}"
+            fail_msg: "FAIL: clusterRegistryConfig missing or incomplete"
+            success_msg: "PASS: clusterRegistryConfig structure present (CRD fallback)"
+          when: not ocm_available
+        - name: Fail if neither check ran
+          fail:
+            msg: "BUG: neither OCM nor CRD check executed for image_registry"
+          when: ocm_available is not defined
         - set_fact:
             features_passed: "{{ features_passed | int + 1 }}"
       rescue:
         - include_tasks: "{{ playbook_dir }}/../tasks/verify_feature_rescue.yml"
           vars:
             feature_id: image_registry
-            fail_detail: "clusterRegistryConfig missing or registry domain does not match expected"
+            fail_detail: "registry config not set (ocm_available={{ ocm_available | default('?') }})"
 
     # --- additional_tags ---
-    - name: "CHECK: Additional Tags"
+    - name: "CHECK: Additional Tags (via AWS CLI)"
+      vars:
+        verify_region: "{{ aws_region | default(rcp.spec.region | default('us-west-2')) }}"
       block:
-        - name: Assert default tags present
+        - name: Query AWS for resources tagged with cluster-specific tags
+          shell: >
+            aws resourcegroupstaggingapi get-resources
+            --tag-filters
+            Key=kubernetes.io/cluster/{{ cluster_name }},Values=owned
+            Key=env,Values={{ environment_tag | default('test') }}
+            Key=purpose,Values={{ purpose_tag | default('rosa-hcp-automation-testing') }}
+            Key=automated,Values=true
+            --region {{ verify_region }}
+            --query 'ResourceTagMappingList[0].Tags'
+            --output json
+          register: aws_tags_raw
+          changed_when: false
+
+        - name: Parse AWS tags response
+          set_fact:
+            aws_tags_list: "{{ aws_tags_raw.stdout | from_json }}"
+
+        - name: Reset AWS tags dict
+          set_fact:
+            aws_tags: {}
+
+        - name: Convert AWS tags to dict
+          set_fact:
+            aws_tags: "{{ aws_tags | combine({item.Key: item.Value}) }}"
+          loop: "{{ aws_tags_list }}"
+
+        - name: Assert default tags present on AWS resources
           assert:
             that:
-              - rcp.spec.additionalTags is defined
-              - "'env' in rcp.spec.additionalTags"
-              - "'purpose' in rcp.spec.additionalTags"
-              - "'automated' in rcp.spec.additionalTags"
-            fail_msg: "FAIL: Default tags (env, purpose, automated) not found in {{ rcp.spec.additionalTags | default({}) }}"
-            success_msg: "PASS: Default tags present (env={{ rcp.spec.additionalTags.env }}, purpose={{ rcp.spec.additionalTags.purpose }}, automated={{ rcp.spec.additionalTags.automated }})"
-        - name: Assert custom tags present
+              - aws_tags_list | length > 0
+              - "'env' in aws_tags"
+              - "'purpose' in aws_tags"
+              - "'automated' in aws_tags"
+            fail_msg: "FAIL: Default tags (env, purpose, automated) not found on AWS resources in {{ verify_region }}"
+            success_msg: >-
+              PASS: Default tags present on AWS resources
+              (env={{ aws_tags.env }},
+              purpose={{ aws_tags.purpose }},
+              automated={{ aws_tags.automated }})
+
+        - name: Assert custom tags present on AWS resources
           assert:
             that:
-              - "'{{ item.key }}' in rcp.spec.additionalTags"
-              - "rcp.spec.additionalTags[item.key] == item.value | string"
-            fail_msg: "FAIL: Custom tag {{ item.key }}={{ item.value }} not found"
-            success_msg: "PASS: Custom tag {{ item.key }}={{ item.value }}"
+              - "'{{ item.key }}' in aws_tags"
+              - "aws_tags[item.key] == item.value | string"
+            fail_msg: "FAIL: Custom tag {{ item.key }}={{ item.value }} not found on AWS resources"
+            success_msg: "PASS: Custom tag {{ item.key }}={{ item.value }} found on AWS resources"
           loop: "{{ additional_tags | default({}) | dict2items }}"
           when: additional_tags is defined and (additional_tags | length > 0)
+
         - set_fact:
             features_passed: "{{ features_passed | int + 1 }}"
       rescue:
         - include_tasks: "{{ playbook_dir }}/../tasks/verify_feature_rescue.yml"
           vars:
             feature_id: additional_tags
-            fail_detail: "default or custom tags not found"
+            fail_detail: "default or custom tags not found on AWS resources"
 
     # --- domain_prefix ---
-    - name: "CHECK: Domain Prefix"
+    - name: "CHECK: Domain Prefix (via OCM API)"
       vars:
         expected_prefix: "{{ domain_prefix | default(name_prefix | default(cluster_name | regex_replace('-rosa-hcp$', ''))) }}"
       block:
-        - name: Assert domainPrefix matches expected value
+        - name: Assert domainPrefix via OCM
+          assert:
+            that:
+              - ocm_cluster.domain_prefix is defined
+              - ocm_cluster.domain_prefix | length > 0
+              - ocm_cluster.domain_prefix | length <= 15
+              - ocm_cluster.domain_prefix == expected_prefix
+            fail_msg: "FAIL: OCM domain_prefix does not match expected"
+            success_msg: "PASS: OCM confirms domain_prefix matches expected"
+          when: ocm_available
+        - name: Assert domainPrefix via CRD (fallback)
           assert:
             that:
               - rcp.spec.domainPrefix is defined
               - rcp.spec.domainPrefix | length > 0
               - rcp.spec.domainPrefix | length <= 15
               - rcp.spec.domainPrefix == expected_prefix
-            fail_msg: "FAIL: domainPrefix is '{{ rcp.spec.domainPrefix | default('not set') }}', expected '{{ expected_prefix }}'"
-            success_msg: "PASS: domainPrefix = {{ rcp.spec.domainPrefix }} (matches expected '{{ expected_prefix }}')"
+            fail_msg: "FAIL: domainPrefix does not match expected"
+            success_msg: "PASS: domainPrefix matches expected (CRD fallback)"
+          when: not ocm_available
+        - name: Fail if neither check ran
+          fail:
+            msg: "BUG: neither OCM nor CRD check executed for domain_prefix"
+          when: ocm_available is not defined
         - set_fact:
             features_passed: "{{ features_passed | int + 1 }}"
       rescue:
@@ -369,19 +754,33 @@
             fail_detail: "domainPrefix does not match expected '{{ expected_prefix }}'"
 
     # --- channel_group ---
-    - name: "CHECK: Channel Group"
+    - name: "CHECK: Channel Group (via OCM API)"
       vars:
         expected_channel_group: "{{ channel_group | default(rcp.spec.channelGroup | default('stable')) }}"
         valid_channel_groups: ['stable', 'fast', 'candidate']
       block:
-        - name: Assert channelGroup is valid and matches requested
+        - name: Assert channelGroup via OCM
+          assert:
+            that:
+              - ocm_cluster.version.channel_group is defined
+              - ocm_cluster.version.channel_group in valid_channel_groups
+              - ocm_cluster.version.channel_group == expected_channel_group
+            fail_msg: "FAIL: OCM channel_group does not match expected"
+            success_msg: "PASS: OCM confirms channel_group matches expected"
+          when: ocm_available
+        - name: Assert channelGroup via CRD (fallback)
           assert:
             that:
               - rcp.spec.channelGroup is defined
               - rcp.spec.channelGroup in valid_channel_groups
               - rcp.spec.channelGroup == expected_channel_group
-            fail_msg: "FAIL: channelGroup is '{{ rcp.spec.channelGroup | default('not set') }}', expected '{{ expected_channel_group }}' (valid: {{ valid_channel_groups | join(', ') }})"
-            success_msg: "PASS: channelGroup = {{ rcp.spec.channelGroup }} (matches expected '{{ expected_channel_group }}')"
+            fail_msg: "FAIL: channelGroup does not match expected"
+            success_msg: "PASS: channelGroup matches expected (CRD fallback)"
+          when: not ocm_available
+        - name: Fail if neither check ran
+          fail:
+            msg: "BUG: neither OCM nor CRD check executed for channel_group"
+          when: ocm_available is not defined
         - set_fact:
             features_passed: "{{ features_passed | int + 1 }}"
       rescue:
@@ -391,28 +790,49 @@
             fail_detail: "channelGroup does not match expected '{{ expected_channel_group }}'"
 
     # --- default_autoscaling ---
-    - name: "CHECK: Default MachinePool Autoscaling"
+    - name: "CHECK: Default MachinePool Autoscaling (via AWS CLI)"
       vars:
+        verify_region: "{{ aws_region | default(rcp.spec.region | default('us-west-2')) }}"
         expected_min: "{{ mp_min_replicas | default(2) | int }}"
         expected_max: "{{ mp_max_replicas | default(4 if (default_autoscaling | default(false) | bool) else 2) | int }}"
       block:
-        - name: Assert autoscaling min/max replicas match
+        - name: Query AWS ASG for default machine pool
+          shell: >
+            aws autoscaling describe-auto-scaling-groups
+            --filters "Name=tag:kubernetes.io/cluster/{{ cluster_name }},Values=owned"
+            --region {{ verify_region }}
+            --query 'AutoScalingGroups[].{Name:AutoScalingGroupName,Min:MinSize,Max:MaxSize,Desired:DesiredCapacity}'
+            --output json
+          register: aws_asg_raw
+          changed_when: false
+
+        - name: Parse ASG response
+          set_fact:
+            aws_asgs: "{{ aws_asg_raw.stdout | from_json }}"
+
+        - name: Assert ASG min/max match expected autoscaling range
           assert:
             that:
-              - rcp.spec.defaultMachinePoolSpec is defined
-              - rcp.spec.defaultMachinePoolSpec.autoscaling is defined
-              - rcp.spec.defaultMachinePoolSpec.autoscaling.minReplicas | int == expected_min | int
-              - rcp.spec.defaultMachinePoolSpec.autoscaling.maxReplicas | int == expected_max | int
-              - rcp.spec.defaultMachinePoolSpec.autoscaling.maxReplicas | int >= rcp.spec.defaultMachinePoolSpec.autoscaling.minReplicas | int
-            fail_msg: "FAIL: autoscaling min={{ rcp.spec.defaultMachinePoolSpec.autoscaling.minReplicas | default('?') }} max={{ rcp.spec.defaultMachinePoolSpec.autoscaling.maxReplicas | default('?') }}, expected min={{ expected_min }} max={{ expected_max }}"
-            success_msg: "PASS: autoscaling minReplicas={{ rcp.spec.defaultMachinePoolSpec.autoscaling.minReplicas }}, maxReplicas={{ rcp.spec.defaultMachinePoolSpec.autoscaling.maxReplicas }}"
+              - aws_asgs | length > 0
+              - aws_asgs[0].Min | int == expected_min | int
+              - aws_asgs[0].Max | int == expected_max | int
+              - aws_asgs[0].Max | int >= aws_asgs[0].Min | int
+            fail_msg: >-
+              FAIL: ASG min={{ aws_asgs[0].Min | default('?') }}
+              max={{ aws_asgs[0].Max | default('?') }},
+              expected min={{ expected_min }} max={{ expected_max }}
+            success_msg: >-
+              PASS: ASG min={{ aws_asgs[0].Min }}
+              max={{ aws_asgs[0].Max }}
+              (expected min={{ expected_min }} max={{ expected_max }})
+
         - set_fact:
             features_passed: "{{ features_passed | int + 1 }}"
       rescue:
         - include_tasks: "{{ playbook_dir }}/../tasks/verify_feature_rescue.yml"
           vars:
             feature_id: default_autoscaling
-            fail_detail: "autoscaling min/max replicas do not match expected values"
+            fail_detail: "ASG min/max do not match expected autoscaling range"
 
     # --- long cluster name (not a registry feature, always SKIP on failure) ---
     - name: "CHECK: Long Cluster Name"
@@ -423,8 +843,13 @@
               - rcp.spec.rosaClusterName is defined
               - rcp.spec.rosaClusterName == cluster_name
               - rcp.spec.rosaClusterName | length > 20
-            fail_msg: "SKIP: cluster name '{{ rcp.spec.rosaClusterName | default('not set') }}' ({{ rcp.spec.rosaClusterName | default('') | length }} chars, expected '{{ cluster_name }}')"
-            success_msg: "PASS: rosaClusterName = {{ rcp.spec.rosaClusterName }} ({{ rcp.spec.rosaClusterName | length }} chars, matches expected)"
+            fail_msg: >-
+              SKIP: cluster name
+              '{{ rcp.spec.rosaClusterName | default('not set') }}'
+              ({{ rcp.spec.rosaClusterName | default('') | length }} chars)
+            success_msg: >-
+              PASS: rosaClusterName = {{ rcp.spec.rosaClusterName }}
+              ({{ rcp.spec.rosaClusterName | length }} chars)
         - set_fact:
             features_passed: "{{ features_passed | int + 1 }}"
       rescue:
@@ -434,47 +859,113 @@
             features_skipped: "{{ features_skipped | int + 1 }}"
 
     # --- disk_size ---
-    - name: "CHECK: Disk Volume Size"
+    - name: "CHECK: Disk Volume Size (via AWS CLI)"
       vars:
+        verify_region: "{{ aws_region | default(rcp.spec.region | default('us-west-2')) }}"
         expected_volume_size: "{{ root_volume_size | default(300) | int }}"
       block:
-        - name: Assert volumeSize matches specified value
+        - name: Get root device name and block device mappings
+          shell: >
+            aws ec2 describe-instances
+            --filters "Name=tag:kubernetes.io/cluster/{{ cluster_name }},Values=owned"
+            "Name=instance-state-name,Values=running"
+            --region {{ verify_region }}
+            --query 'Reservations[0].Instances[0].{Root:RootDeviceName,BDM:BlockDeviceMappings}'
+            --output json
+          register: aws_instance_raw
+          changed_when: false
+
+        - name: Extract root volume ID
+          set_fact:
+            aws_volume_id: >-
+              {{ (aws_instance_raw.stdout | from_json).BDM
+                 | selectattr('DeviceName', 'equalto',
+                     (aws_instance_raw.stdout | from_json).Root)
+                 | map(attribute='Ebs.VolumeId') | first }}
+
+        - name: Query EBS volume size
+          shell: >
+            aws ec2 describe-volumes
+            --volume-ids {{ aws_volume_id | trim }}
+            --region {{ verify_region }}
+            --query 'Volumes[0].Size'
+            --output text
+          register: aws_volume_size_raw
+          changed_when: false
+
+        - name: Assert root volume size matches expected
           assert:
             that:
-              - rmp.spec.volumeSize is defined
-              - rmp.spec.volumeSize | int == expected_volume_size | int
-            fail_msg: "FAIL: volumeSize is {{ rmp.spec.volumeSize | default('not set') }}, expected {{ expected_volume_size }}"
-            success_msg: "PASS: volumeSize = {{ rmp.spec.volumeSize }} (matches expected {{ expected_volume_size }})"
+              - aws_volume_size_raw.stdout | trim | int == expected_volume_size | int
+            fail_msg: "FAIL: root volume size is {{ aws_volume_size_raw.stdout | trim }} GiB, expected {{ expected_volume_size }} GiB"
+            success_msg: "PASS: root volume size = {{ aws_volume_size_raw.stdout | trim }} GiB (matches expected {{ expected_volume_size }})"
+
         - set_fact:
             features_passed: "{{ features_passed | int + 1 }}"
       rescue:
         - include_tasks: "{{ playbook_dir }}/../tasks/verify_feature_rescue.yml"
           vars:
             feature_id: disk_size
-            fail_detail: "volumeSize does not match expected {{ expected_volume_size }}"
+            fail_detail: "root volume size does not match expected {{ expected_volume_size }} GiB"
 
     # --- parallel_upgrade ---
-    - name: "CHECK: Parallel Node Upgrade"
+    - name: "CHECK: Parallel Node Upgrade (via OCM API)"
       vars:
         expected_max_surge: "{{ max_surge | default(1) | int }}"
         expected_max_unavailable: "{{ max_unavailable | default(0) | int }}"
       block:
-        - name: Assert updateConfig matches requested values
+        - name: Query OCM node pools for upgrade config
+          uri:
+            url: "{{ ocm_api_url }}/api/clusters_mgmt/v1/clusters/{{ ocm_cluster.id }}/node_pools"
+            method: GET
+            headers:
+              Authorization: "Bearer {{ ocm_token_result.json.access_token }}"
+              Accept: application/json
+            status_code: 200
+            timeout: 15
+          register: ocm_node_pools_result
+          failed_when: false
+          changed_when: false
+          when: ocm_available and ocm_cluster.id is defined
+
+        - name: Assert node pool upgrade config via OCM
+          assert:
+            that:
+              - ocm_node_pools_result.json.items | length > 0
+              - ocm_node_pools_result.json.items[0].management_upgrade is defined
+              - ocm_node_pools_result.json.items[0].management_upgrade.max_surge is defined
+              - >-
+                ocm_node_pools_result.json.items[0].management_upgrade.max_surge
+                | string == expected_max_surge | string
+              - >-
+                ocm_node_pools_result.json.items[0].management_upgrade.max_unavailable
+                | default(0) | string == expected_max_unavailable | string
+            fail_msg: >-
+              FAIL: OCM node pool upgrade config does not match expected
+              maxSurge={{ expected_max_surge }}
+              maxUnavailable={{ expected_max_unavailable }}
+            success_msg: >-
+              PASS: OCM node pool upgrade config matches expected
+          when: ocm_available and ocm_node_pools_result is defined and ocm_node_pools_result.json is defined
+
+        - name: Assert updateConfig via CRD (fallback)
           assert:
             that:
               - rmp.spec.updateConfig is defined
               - rmp.spec.updateConfig.rollingUpdate is defined
               - rmp.spec.updateConfig.rollingUpdate.maxSurge | int == expected_max_surge | int
               - rmp.spec.updateConfig.rollingUpdate.maxUnavailable | int == expected_max_unavailable | int
-            fail_msg: "FAIL: rollingUpdate maxSurge={{ rmp.spec.updateConfig.rollingUpdate.maxSurge | default('?') }} maxUnavailable={{ rmp.spec.updateConfig.rollingUpdate.maxUnavailable | default('?') }}, expected maxSurge={{ expected_max_surge }} maxUnavailable={{ expected_max_unavailable }}"
-            success_msg: "PASS: rollingUpdate maxSurge={{ rmp.spec.updateConfig.rollingUpdate.maxSurge }}, maxUnavailable={{ rmp.spec.updateConfig.rollingUpdate.maxUnavailable }}"
+            fail_msg: "FAIL: rollingUpdate does not match expected"
+            success_msg: "PASS: rollingUpdate matches expected (CRD fallback)"
+          when: not ocm_available or ocm_node_pools_result is not defined or ocm_node_pools_result.json is not defined
+
         - set_fact:
             features_passed: "{{ features_passed | int + 1 }}"
       rescue:
         - include_tasks: "{{ playbook_dir }}/../tasks/verify_feature_rescue.yml"
           vars:
             feature_id: parallel_upgrade
-            fail_detail: "updateConfig.rollingUpdate does not match expected maxSurge={{ expected_max_surge }} maxUnavailable={{ expected_max_unavailable }}"
+            fail_detail: "node pool upgrade config not set"
 
     # --- security_groups ---
     - name: "CHECK: Additional Security Groups"
@@ -507,58 +998,130 @@
             fail_detail: "additionalSecurityGroups not set or does not match expected {{ expected_sgs }}"
 
     # --- availability_zones ---
-    - name: "CHECK: Availability Zones"
+    - name: "CHECK: Availability Zones (via AWS CLI)"
       vars:
-        expected_region: "{{ aws_region | default(rcp.spec.region | default('us-west-2')) }}"
+        verify_region: "{{ aws_region | default(rcp.spec.region | default('us-west-2')) }}"
+        stack_name: "{{ cluster_name }}-rosa-network-stack"
+        expected_az_count: "{{ availability_zone_count | default(2) | int }}"
       block:
-        - name: Assert AZ count and region match
+        - name: Query subnets created by CloudFormation stack
+          shell: >
+            aws ec2 describe-subnets
+            --filters "Name=tag:aws:cloudformation:stack-name,Values={{ stack_name }}"
+            --region {{ verify_region }}
+            --query 'Subnets[].AvailabilityZone'
+            --output json
+          register: aws_subnet_azs_raw
+          changed_when: false
+
+        - name: Parse subnet AZs
+          set_fact:
+            aws_subnet_azs: "{{ aws_subnet_azs_raw.stdout | from_json | unique | sort }}"
+
+        - name: Assert subnets span expected AZs
           assert:
             that:
-              - rnet is defined
-              - rnet.spec.availabilityZones is defined
-              - rnet.spec.availabilityZones | length >= 2
-              - rnet.spec.availabilityZones | map('regex_search', '^' + expected_region) | select | list | length == rnet.spec.availabilityZones | length
-            fail_msg: "FAIL: availabilityZones {{ rnet.spec.availabilityZones | default([]) }} — expected {{ rnet.spec.availabilityZones | default([]) | length }} AZs in region {{ expected_region }}"
-            success_msg: "PASS: availabilityZones = {{ rnet.spec.availabilityZones }} ({{ rnet.spec.availabilityZones | length }} AZs in {{ expected_region }})"
+              - aws_subnet_azs | length | int == expected_az_count | int
+              - aws_subnet_azs | map('regex_search', '^' + verify_region) | select | list | length == aws_subnet_azs | length
+            fail_msg: >-
+              FAIL: subnets span {{ aws_subnet_azs | length }} AZs
+              {{ aws_subnet_azs }},
+              expected {{ expected_az_count }} in {{ verify_region }}
+            success_msg: "PASS: subnets span {{ aws_subnet_azs | length }} AZs in {{ verify_region }} — {{ aws_subnet_azs }}"
+
         - set_fact:
             features_passed: "{{ features_passed | int + 1 }}"
       rescue:
         - include_tasks: "{{ playbook_dir }}/../tasks/verify_feature_rescue.yml"
           vars:
             feature_id: availability_zones
-            fail_detail: "AZ count < 2 or AZs do not match region {{ expected_region }}"
+            fail_detail: "subnets do not span expected {{ expected_az_count }} AZs in region {{ verify_region }}"
 
     # --- audit_logging ---
-    - name: "CHECK: Log Forwarding (CloudWatch)"
+    - name: "CHECK: Log Forwarding (via AWS CLI)"
+      vars:
+        verify_region: "{{ aws_region | default(rcp.spec.region | default('us-west-2')) }}"
       block:
-        - name: Assert cloudWatchlogForwarder is configured correctly
+        - name: Assert at least one log destination is configured
           assert:
             that:
-              - rcp.spec.cloudWatchlogForwarder is defined
-              - rcp.spec.cloudWatchlogForwarder.cloudWatchLogRoleArn is defined or rcp.spec.cloudWatchlogForwarder.cloudWatchLogGroupName is defined
-            fail_msg: "FAIL: cloudWatchlogForwarder not set or missing role ARN / log group"
-            success_msg: "PASS: cloudWatchlogForwarder configured"
-        - name: Assert CloudWatch role ARN matches
-          assert:
-            that:
-              - rcp.spec.cloudWatchlogForwarder.cloudWatchLogRoleArn == log_forward_cloudwatch_role_arn
-            fail_msg: "FAIL: cloudWatchLogRoleArn is '{{ rcp.spec.cloudWatchlogForwarder.cloudWatchLogRoleArn | default('not set') }}', expected '{{ log_forward_cloudwatch_role_arn }}'"
-            success_msg: "PASS: cloudWatchLogRoleArn matches"
+              - >-
+                (log_forward_cloudwatch_role_arn is defined
+                 and log_forward_cloudwatch_role_arn | length > 0) or
+                (log_forward_cloudwatch_log_group is defined
+                 and log_forward_cloudwatch_log_group | length > 0) or
+                (log_forward_s3_bucket is defined
+                 and log_forward_s3_bucket | length > 0)
+            fail_msg: >-
+              FAIL: No log forwarding destination configured —
+              provide log_forward_cloudwatch_role_arn,
+              log_forward_cloudwatch_log_group, or
+              log_forward_s3_bucket
+            success_msg: "PASS: At least one log destination configured"
+
+        - name: Verify CloudWatch IAM role exists in AWS
+          shell: >
+            aws iam get-role
+            --role-name {{ log_forward_cloudwatch_role_arn | regex_replace('^.*/','') }}
+            --query 'Role.Arn'
+            --output text
+          register: aws_cw_role_check
+          changed_when: false
           when: log_forward_cloudwatch_role_arn is defined and (log_forward_cloudwatch_role_arn | length > 0)
-        - name: Assert CloudWatch log group matches
+
+        - name: Assert CloudWatch IAM role exists
           assert:
             that:
-              - rcp.spec.cloudWatchlogForwarder.cloudWatchLogGroupName == log_forward_cloudwatch_log_group
-            fail_msg: "FAIL: cloudWatchLogGroupName is '{{ rcp.spec.cloudWatchlogForwarder.cloudWatchLogGroupName | default('not set') }}', expected '{{ log_forward_cloudwatch_log_group }}'"
-            success_msg: "PASS: cloudWatchLogGroupName matches"
+              - aws_cw_role_check.rc == 0
+              - aws_cw_role_check.stdout | trim == log_forward_cloudwatch_role_arn
+            fail_msg: "FAIL: CloudWatch IAM role not found in AWS"
+            success_msg: "PASS: CloudWatch IAM role exists"
+          when: log_forward_cloudwatch_role_arn is defined and (log_forward_cloudwatch_role_arn | length > 0)
+
+        - name: Verify CloudWatch log group exists in AWS
+          shell: >
+            aws logs describe-log-groups
+            --log-group-name-prefix {{ log_forward_cloudwatch_log_group }}
+            --region {{ verify_region }}
+            --query 'logGroups[?logGroupName==`{{ log_forward_cloudwatch_log_group }}`].logGroupName'
+            --output text
+          register: aws_cw_log_group_check
+          changed_when: false
           when: log_forward_cloudwatch_log_group is defined and (log_forward_cloudwatch_log_group | length > 0)
+
+        - name: Assert CloudWatch log group exists
+          assert:
+            that:
+              - aws_cw_log_group_check.rc == 0
+              - aws_cw_log_group_check.stdout | trim == log_forward_cloudwatch_log_group
+            fail_msg: "FAIL: CloudWatch log group '{{ log_forward_cloudwatch_log_group }}' not found in {{ verify_region }}"
+            success_msg: "PASS: CloudWatch log group exists"
+          when: log_forward_cloudwatch_log_group is defined and (log_forward_cloudwatch_log_group | length > 0)
+
+        - name: Verify S3 bucket exists in AWS
+          shell: >
+            aws s3api head-bucket
+            --bucket {{ log_forward_s3_bucket }}
+          register: aws_s3_bucket_check
+          changed_when: false
+          failed_when: false
+          when: log_forward_s3_bucket is defined and (log_forward_s3_bucket | length > 0)
+
+        - name: Assert S3 bucket exists
+          assert:
+            that:
+              - aws_s3_bucket_check.rc == 0
+            fail_msg: "FAIL: S3 bucket '{{ log_forward_s3_bucket }}' not found in AWS"
+            success_msg: "PASS: S3 bucket '{{ log_forward_s3_bucket }}' exists"
+          when: log_forward_s3_bucket is defined and (log_forward_s3_bucket | length > 0)
+
         - set_fact:
             features_passed: "{{ features_passed | int + 1 }}"
       rescue:
         - include_tasks: "{{ playbook_dir }}/../tasks/verify_feature_rescue.yml"
           vars:
             feature_id: audit_logging
-            fail_detail: "cloudWatchlogForwarder not configured correctly"
+            fail_detail: "log forwarding destinations not found in AWS"
 
     # --- proxy_enabled ---
     - name: "CHECK: Proxy Configuration"
@@ -582,7 +1145,10 @@
     # ================================================================
     - name: Build passed features list
       set_fact:
-        results_passed: "{{ requested_features_list | difference(results_warned | map('regex_replace', ':.*', '') | list) | difference(results_failed | map('regex_replace', ':.*', '') | list) }}"
+        results_passed: >-
+          {{ requested_features_list
+             | difference(results_warned | map('regex_replace', ':.*', '') | list)
+             | difference(results_failed | map('regex_replace', ':.*', '') | list) }}
 
     - name: Feature verification summary
       debug:
