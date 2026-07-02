@@ -47,9 +47,11 @@ worker nodes are running a FIPS-enabled AMI:
 ```bash
 aws ec2 describe-instances \
   --filters "Name=tag:kubernetes.io/cluster/<cluster>,Values=owned" \
+  --region <region> \
   --query 'Reservations[0].Instances[0].ImageId'
 
 aws ec2 describe-images --image-ids <ami_id> \
+  --region <region> \
   --query 'Images[0].{Name:Name,Description:Description}'
 ```
 

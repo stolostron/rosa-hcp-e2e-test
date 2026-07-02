@@ -1,6 +1,8 @@
 # Automated Feature Verification
 
-The verification playbook (`playbooks/verify_feature_flags.yml`) automatically checks that requested features are correctly rendered on the cluster after provisioning.
+The verification playbook (`playbooks/verify_feature_flags.yml`) automatically
+checks that requested features are correctly rendered on the cluster after
+provisioning.
 
 ## Usage
 
@@ -25,4 +27,4 @@ The verification playbook (`playbooks/verify_feature_flags.yml`) automatically c
 
 ## Related
 
-- [FeatureGuard](../feature-guard.md)
+- [Feature Registry](../../templates/schemas/feature-registry.yml)

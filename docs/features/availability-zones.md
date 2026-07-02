@@ -110,4 +110,5 @@ Asserts:
 
 ## Related
 
+- [Automated Feature Verification](automated-feature-verification.md)
 - Feature Group: `day1-basic`

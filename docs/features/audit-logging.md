@@ -89,6 +89,7 @@ spec:
     applications:
       - application
       - infrastructure
+      - audit-webhook
     s3ConfigBucketName: my-audit-bucket
     s3ConfigBucketPrefix: rosa/logs
 ```
@@ -122,4 +123,5 @@ Asserts:
 
 ## Related
 
+- [Automated Feature Verification](automated-feature-verification.md)
 - Feature Group: `day1-networking`

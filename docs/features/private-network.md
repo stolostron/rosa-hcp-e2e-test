@@ -64,8 +64,11 @@ spec:
     - us-west-2b
 ```
 
-Without `--feature private`, `endpointAccess` defaults to `Public` and
-no `subnets` field is rendered.
+The template renders `endpointAccess: Private`. The `subnets` and
+`availabilityZones` fields are populated by the ROSANetwork controller
+or passed directly when using BYON (bring your own network).
+
+Without `--feature private`, `endpointAccess` defaults to `Public`.
 
 ## Verification
 
@@ -74,9 +77,16 @@ Uses AWS CLI to verify the cluster VPC has no internet-facing load balancers:
 ```bash
 aws ec2 describe-subnets \
   --filters "Name=tag:aws:cloudformation:stack-name,Values=<cluster>-rosa-network-stack" \
+  --region <region> \
   --query 'Subnets[0].VpcId'
 
+aws ec2 describe-internet-gateways \
+  --filters "Name=attachment.vpc-id,Values=<vpc_id>" \
+  --region <region> \
+  --query 'InternetGateways[].InternetGatewayId'
+
 aws elbv2 describe-load-balancers \
+  --region <region> \
   --query "LoadBalancers[?VpcId=='<vpc_id>'].{Name:LoadBalancerName,Scheme:Scheme}"
 ```
 

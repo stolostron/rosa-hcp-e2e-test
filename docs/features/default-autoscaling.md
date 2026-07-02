@@ -17,8 +17,9 @@
 ## Description
 
 Enables autoscaling on the default machine pool. When enabled, the
-default replicas range is min=2, max=4. Without autoscaling, replicas
-are fixed at min=2, max=2.
+default replicas range is min=2, max=4. Without the autoscaling
+feature flag, the range is derived from the AZ count
+(min=`len(AZs)`, max=`len(AZs)*2`).
 
 ## Usage
 
@@ -49,15 +50,15 @@ spec:
       maxReplicas: 4
 ```
 
-Without autoscaling (default):
+Without autoscaling (derived from AZ count):
 
 ```yaml
 spec:
   defaultMachinePoolSpec:
     instanceType: m5.xlarge
     autoscaling:
-      minReplicas: 2
-      maxReplicas: 2
+      minReplicas: 1   # len(availability_zones_list), default 1
+      maxReplicas: 2   # len(availability_zones_list) * 2
 ```
 
 ## Verification
@@ -75,7 +76,7 @@ aws autoscaling describe-auto-scaling-groups \
 Asserts:
 - At least one ASG exists for the cluster
 - ASG `MinSize` matches expected `minReplicas` (default: 2)
-- ASG `MaxSize` matches expected `maxReplicas` (default: 4 when autoscaling enabled, 2 otherwise)
+- ASG `MaxSize` matches expected `maxReplicas` (default: 4 when autoscaling enabled)
 - `MaxSize >= MinSize`
 
 ## Related

@@ -73,11 +73,9 @@ Uses OCM API to verify external OIDC is enabled on the cluster:
 GET /api/clusters_mgmt/v1/clusters/{id}
 ```
 
-Asserts:
-- `.external_auth_config.enabled` is true
-- Falls back to ROSAControlPlane K8s spec if OCM is unavailable
+Falls back to ROSAControlPlane CRD if OCM is unavailable.
 
-### OIDC issuer validation (Day1)
+### OIDC issuer validation
 
 Validates the OIDC issuer URL is reachable and returns a valid OpenID
 Connect discovery document:
@@ -87,8 +85,8 @@ curl -s https://<issuer_url>/.well-known/openid-configuration
 ```
 
 Asserts:
-- Issuer URL returns HTTP 200
-- Discovery document `issuer` field matches the configured URL
+- `.external_auth_config.enabled` is true (via OCM)
+- OIDC issuer URL returns HTTP 200 with valid discovery document
 - Audiences array is non-empty
 - Claim mappings (username claim) are configured
 
@@ -96,4 +94,4 @@ Asserts:
 
 - [Automated Feature Verification](automated-feature-verification.md)
 - Break-Glass Credentials (depends on this feature, not yet automated)
-- Feature Group: `day1-networking`
+- Feature Group: `day1-security`

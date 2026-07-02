@@ -45,19 +45,23 @@ These tags are rendered by the template regardless of `--feature tags`:
 
 ```yaml
 additionalTags:
-  env: test
-  purpose: rosa-hcp-automation-testing
+  env: {{ environment_tag | default('test') }}
+  purpose: {{ purpose_tag | default('<template-specific>') }}
   automated: "true"
   network-automation: "true"
   role-automation: "true"
 ```
+
+The `purpose` tag default varies by template:
+- `rosa-combined-automation`: `acm21174-combined-testing`
+- `rosa-controlplane-only`: `rosa-hcp-automation-testing`
 
 When `--feature tags` is used, the CI defaults are merged on top:
 
 ```yaml
 additionalTags:
   env: test
-  purpose: rosa-hcp-automation-testing
+  purpose: <template-specific>
   automated: "true"
   network-automation: "true"
   role-automation: "true"
@@ -73,7 +77,7 @@ to actual AWS resources:
 ```bash
 aws resourcegroupstaggingapi get-resources \
   --tag-filters Key=env,Values=test \
-  Key=purpose,Values=rosa-hcp-automation-testing \
+  Key=purpose,Values=<purpose_tag> \
   Key=automated,Values=true \
   --region <region>
 ```

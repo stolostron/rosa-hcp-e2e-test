@@ -62,7 +62,9 @@ aws ec2 describe-instances \
   --region <region> \
   --query 'Reservations[0].Instances[0].BlockDeviceMappings[0].Ebs.VolumeId'
 
-aws ec2 describe-volumes --volume-ids <volume_id> --query 'Volumes[0].Size'
+aws ec2 describe-volumes --volume-ids <volume_id> \
+  --region <region> \
+  --query 'Volumes[0].Size'
 ```
 
 Asserts:
