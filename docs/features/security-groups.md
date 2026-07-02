@@ -30,7 +30,7 @@ test security group in the cluster VPC (Step 2.5) and injects it into the
 
 ### Provisioning Flow
 
-```
+```text
 Step 1  ROSARoleConfig       AWS IAM roles + OIDC provider
 Step 2  ROSANetwork          VPC, subnets, NAT GWs (CloudFormation)
 Step 2.5  create_security_group.yml
@@ -49,7 +49,7 @@ Step 4  Wait for cluster ready
 
 ### Deletion Flow
 
-```
+```text
 delete_rosa_hcp_resources.yml
   |-- Wait for ROSAControlPlane deletion
   |-- delete_security_group.yml   <-- before VPC deletion
