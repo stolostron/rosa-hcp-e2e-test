@@ -117,6 +117,7 @@ aws s3api head-bucket --bucket <bucket_name>
 ```
 
 Asserts:
+- At least one log destination is configured (fails if none provided)
 - CloudWatch IAM role exists and ARN matches the requested value
 - CloudWatch log group exists in the target region
 - S3 bucket exists (if `log_forward_s3_bucket` was provided)

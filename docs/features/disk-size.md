@@ -60,12 +60,16 @@ aws ec2 describe-instances \
   --filters "Name=tag:kubernetes.io/cluster/<cluster>,Values=owned" \
   "Name=instance-state-name,Values=running" \
   --region <region> \
-  --query 'Reservations[0].Instances[0].BlockDeviceMappings[0].Ebs.VolumeId'
+  --query 'Reservations[0].Instances[0].{Root:RootDeviceName,BDM:BlockDeviceMappings}'
 
-aws ec2 describe-volumes --volume-ids <volume_id> \
+aws ec2 describe-volumes --volume-ids <root_volume_id> \
   --region <region> \
   --query 'Volumes[0].Size'
 ```
+
+The root volume is identified by matching `RootDeviceName` against
+`BlockDeviceMappings[].DeviceName` (index 0 is not guaranteed to be
+the root device on multi-volume instances).
 
 Asserts:
 - Root EBS volume size matches expected value (CI default: 500 GiB)

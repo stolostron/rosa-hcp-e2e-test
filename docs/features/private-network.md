@@ -91,6 +91,7 @@ aws elbv2 describe-load-balancers \
 ```
 
 Asserts:
+- No internet gateway is attached to the cluster VPC
 - All load balancers in the cluster VPC have `Scheme: internal` (none are `internet-facing`)
 
 ## Related
