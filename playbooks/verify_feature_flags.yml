@@ -5,7 +5,8 @@
   environment:
     AWS_ACCESS_KEY_ID: "{{ AWS_ACCESS_KEY_ID | default(lookup('env', 'AWS_ACCESS_KEY_ID')) }}"
     AWS_SECRET_ACCESS_KEY: "{{ AWS_SECRET_ACCESS_KEY | default(lookup('env', 'AWS_SECRET_ACCESS_KEY')) }}"
-    AWS_DEFAULT_REGION: "{{ aws_region | default('us-west-2') }}"
+    AWS_SESSION_TOKEN: "{{ AWS_SESSION_TOKEN | default(lookup('env', 'AWS_SESSION_TOKEN')) }}"
+    AWS_DEFAULT_REGION: "{{ aws_region | default(lookup('env', 'AWS_DEFAULT_REGION') | default('us-west-2', true)) }}"
   vars_files:
     - ../vars/vars.yml
   vars:
@@ -173,11 +174,27 @@
       set_fact:
         ocm_creds_raw: "{{ ocm_creds_mce if (ocm_creds_mce.rc == 0 and ocm_creds_mce.stdout | length > 0) else (ocm_creds_capi | default(ocm_creds_mce)) }}"
 
+    - name: Split raw OCM credentials
+      set_fact:
+        ocm_creds_parts: "{{ ocm_creds_raw.stdout.split('|') }}"
+      when: ocm_creds_raw.rc == 0 and (ocm_creds_raw.stdout | length > 0)
+      no_log: true
+
     - name: Decode OCM credentials
       set_fact:
-        ocm_client_id: "{{ (ocm_creds_raw.stdout.split('|')[0] | b64decode) if ocm_creds_raw.rc == 0 and ocm_creds_raw.stdout | length > 0 else '' }}"
-        ocm_client_secret: "{{ (ocm_creds_raw.stdout.split('|')[1] | b64decode) if ocm_creds_raw.rc == 0 and ocm_creds_raw.stdout.split('|') | length > 1 else '' }}"
-        ocm_api_url: "{{ (ocm_creds_raw.stdout.split('|')[2] | b64decode) if ocm_creds_raw.rc == 0 and ocm_creds_raw.stdout.split('|') | length > 2 and ocm_creds_raw.stdout.split('|')[2] | length > 0 else 'https://api.stage.openshift.com' }}"
+        ocm_client_id: >-
+          {{ (ocm_creds_parts[0] | b64decode)
+             if ocm_creds_parts is defined and ocm_creds_parts | length > 0
+             else '' }}
+        ocm_client_secret: >-
+          {{ (ocm_creds_parts[1] | b64decode)
+             if ocm_creds_parts is defined and ocm_creds_parts | length > 1
+             else '' }}
+        ocm_api_url: >-
+          {{ (ocm_creds_parts[2] | b64decode)
+             if ocm_creds_parts is defined and ocm_creds_parts | length > 2
+                and ocm_creds_parts[2] | length > 0
+             else 'https://api.stage.openshift.com' }}
       no_log: true
 
     - name: Initialize OCM vars if credentials unavailable
@@ -186,6 +203,13 @@
         ocm_client_secret: ""
         ocm_api_url: "https://api.stage.openshift.com"
       when: ocm_client_id is not defined or ocm_client_id | length == 0
+
+    - name: Reject non-HTTPS OCM API URL
+      assert:
+        that:
+          - ocm_api_url is match('^https://')
+        fail_msg: "FAIL: OCM API URL '{{ ocm_api_url }}' is not HTTPS — refusing to send bearer token"
+      when: ocm_client_id | default('') | length > 0
 
     - name: Get OCM bearer token
       uri:
@@ -216,6 +240,7 @@
       register: ocm_cluster_result
       failed_when: false
       changed_when: false
+      no_log: true
       when: ocm_token_result is defined and ocm_token_result.json is defined and ocm_token_result.json.access_token is defined
 
     - name: Set OCM cluster facts
@@ -303,6 +328,15 @@
           set_fact:
             aws_igws: "{{ aws_igw_raw.stdout | from_json }}"
 
+        - name: Assert no internet gateway attached to VPC
+          assert:
+            that:
+              - aws_igws | length == 0
+            fail_msg: >-
+              FAIL: Internet gateway(s) {{ aws_igws }} attached to VPC
+              — cluster is not private
+            success_msg: "PASS: No internet gateway attached to VPC"
+
         - name: Query load balancers in the VPC
           shell: >
             aws elbv2 describe-load-balancers
@@ -356,10 +390,17 @@
           fail:
             msg: "BUG: neither OCM nor CRD check executed for external_oidc"
           when: ocm_available is not defined
+        - name: Assert externalAuthProviders array exists in CRD
+          assert:
+            that:
+              - rcp.spec.externalAuthProviders is defined
+              - rcp.spec.externalAuthProviders | length > 0
+            fail_msg: "FAIL: externalAuthProviders array missing from CRD"
+            success_msg: "PASS: externalAuthProviders present in CRD"
+
         - name: Extract OIDC issuer URL from CRD
           set_fact:
             oidc_issuer_url: "{{ (rcp.spec.externalAuthProviders[0].issuer | default({})).issuerURL | default('') }}"
-          when: rcp.spec.externalAuthProviders is defined and rcp.spec.externalAuthProviders | length > 0
         - name: Validate OIDC issuer URL is reachable
           uri:
             url: "{{ oidc_issuer_url }}/.well-known/openid-configuration"
@@ -390,7 +431,6 @@
               - rcp.spec.externalAuthProviders[0].issuer.audiences | length > 0
             fail_msg: "FAIL: OIDC audiences not configured"
             success_msg: "PASS: OIDC audiences configured — {{ rcp.spec.externalAuthProviders[0].issuer.audiences }}"
-          when: rcp.spec.externalAuthProviders is defined and rcp.spec.externalAuthProviders | length > 0
         - name: Assert OIDC claim mappings configured
           assert:
             that:
@@ -399,7 +439,6 @@
               - rcp.spec.externalAuthProviders[0].claimMappings.username.claim is defined
             fail_msg: "FAIL: OIDC claim mappings not configured"
             success_msg: "PASS: OIDC claim mappings configured (username claim: {{ rcp.spec.externalAuthProviders[0].claimMappings.username.claim }})"
-          when: rcp.spec.externalAuthProviders is defined and rcp.spec.externalAuthProviders | length > 0
         - set_fact:
             features_passed: "{{ features_passed | int + 1 }}"
       rescue:
@@ -536,13 +575,26 @@
           set_fact:
             aws_asgs: "{{ aws_asg_raw.stdout | from_json }}"
 
-        - name: Assert ASGs exist and allow scaling
+        - name: Assert ASGs exist
           assert:
             that:
               - aws_asgs | length > 0
-              - aws_asgs[0].Max | int > aws_asgs[0].Min | int
-            fail_msg: "FAIL: No ASGs found for cluster {{ cluster_name }} or MaxSize ({{ aws_asgs[0].Max | default('?') }}) == MinSize ({{ aws_asgs[0].Min | default('?') }})"
-            success_msg: "PASS: {{ aws_asgs | length }} ASG(s) found, scaling enabled (min={{ aws_asgs[0].Min }}, max={{ aws_asgs[0].Max }})"
+            fail_msg: "FAIL: No ASGs found for cluster {{ cluster_name }}"
+            success_msg: "PASS: {{ aws_asgs | length }} ASG(s) found"
+
+        - name: Assert each ASG allows scaling (Max > Min)
+          assert:
+            that:
+              - item.Max | int > item.Min | int
+            fail_msg: >-
+              FAIL: ASG {{ item.Name }} has Max={{ item.Max }}
+              == Min={{ item.Min }} — scaling not enabled
+            success_msg: >-
+              PASS: ASG {{ item.Name }}
+              min={{ item.Min }} max={{ item.Max }}
+          loop: "{{ aws_asgs }}"
+          loop_control:
+            label: "{{ item.Name }}"
 
         - name: Assert expander strategy via CRD (not exposed in AWS)
           assert:
@@ -609,6 +661,7 @@
           shell: >
             aws resourcegroupstaggingapi get-resources
             --tag-filters
+            Key=kubernetes.io/cluster/{{ cluster_name }},Values=owned
             Key=env,Values={{ environment_tag | default('test') }}
             Key=purpose,Values={{ purpose_tag | default('rosa-hcp-automation-testing') }}
             Key=automated,Values=true
@@ -639,7 +692,11 @@
               - "'purpose' in aws_tags"
               - "'automated' in aws_tags"
             fail_msg: "FAIL: Default tags (env, purpose, automated) not found on AWS resources in {{ verify_region }}"
-            success_msg: "PASS: Default tags present on AWS resources (env={{ aws_tags.env }}, purpose={{ aws_tags.purpose }}, automated={{ aws_tags.automated }})"
+            success_msg: >-
+              PASS: Default tags present on AWS resources
+              (env={{ aws_tags.env }},
+              purpose={{ aws_tags.purpose }},
+              automated={{ aws_tags.automated }})
 
         - name: Assert custom tags present on AWS resources
           assert:
@@ -760,8 +817,14 @@
               - aws_asgs[0].Min | int == expected_min | int
               - aws_asgs[0].Max | int == expected_max | int
               - aws_asgs[0].Max | int >= aws_asgs[0].Min | int
-            fail_msg: "FAIL: ASG min={{ aws_asgs[0].Min | default('?') }} max={{ aws_asgs[0].Max | default('?') }}, expected min={{ expected_min }} max={{ expected_max }}"
-            success_msg: "PASS: ASG minSize={{ aws_asgs[0].Min }}, maxSize={{ aws_asgs[0].Max }} (matches expected min={{ expected_min }} max={{ expected_max }})"
+            fail_msg: >-
+              FAIL: ASG min={{ aws_asgs[0].Min | default('?') }}
+              max={{ aws_asgs[0].Max | default('?') }},
+              expected min={{ expected_min }} max={{ expected_max }}
+            success_msg: >-
+              PASS: ASG min={{ aws_asgs[0].Min }}
+              max={{ aws_asgs[0].Max }}
+              (expected min={{ expected_min }} max={{ expected_max }})
 
         - set_fact:
             features_passed: "{{ features_passed | int + 1 }}"
@@ -780,8 +843,13 @@
               - rcp.spec.rosaClusterName is defined
               - rcp.spec.rosaClusterName == cluster_name
               - rcp.spec.rosaClusterName | length > 20
-            fail_msg: "SKIP: cluster name '{{ rcp.spec.rosaClusterName | default('not set') }}' ({{ rcp.spec.rosaClusterName | default('') | length }} chars, expected '{{ cluster_name }}')"
-            success_msg: "PASS: rosaClusterName = {{ rcp.spec.rosaClusterName }} ({{ rcp.spec.rosaClusterName | length }} chars, matches expected)"
+            fail_msg: >-
+              SKIP: cluster name
+              '{{ rcp.spec.rosaClusterName | default('not set') }}'
+              ({{ rcp.spec.rosaClusterName | default('') | length }} chars)
+            success_msg: >-
+              PASS: rosaClusterName = {{ rcp.spec.rosaClusterName }}
+              ({{ rcp.spec.rosaClusterName | length }} chars)
         - set_fact:
             features_passed: "{{ features_passed | int + 1 }}"
       rescue:
@@ -796,21 +864,29 @@
         verify_region: "{{ aws_region | default(rcp.spec.region | default('us-west-2')) }}"
         expected_volume_size: "{{ root_volume_size | default(300) | int }}"
       block:
-        - name: Query EC2 instances for cluster worker root volume size
+        - name: Get root device name and block device mappings
           shell: >
             aws ec2 describe-instances
             --filters "Name=tag:kubernetes.io/cluster/{{ cluster_name }},Values=owned"
             "Name=instance-state-name,Values=running"
             --region {{ verify_region }}
-            --query 'Reservations[0].Instances[0].BlockDeviceMappings[0].Ebs.VolumeId'
-            --output text
-          register: aws_volume_id_raw
+            --query 'Reservations[0].Instances[0].{Root:RootDeviceName,BDM:BlockDeviceMappings}'
+            --output json
+          register: aws_instance_raw
           changed_when: false
+
+        - name: Extract root volume ID
+          set_fact:
+            aws_volume_id: >-
+              {{ (aws_instance_raw.stdout | from_json).BDM
+                 | selectattr('DeviceName', 'equalto',
+                     (aws_instance_raw.stdout | from_json).Root)
+                 | map(attribute='Ebs.VolumeId') | first }}
 
         - name: Query EBS volume size
           shell: >
             aws ec2 describe-volumes
-            --volume-ids {{ aws_volume_id_raw.stdout | trim }}
+            --volume-ids {{ aws_volume_id | trim }}
             --region {{ verify_region }}
             --query 'Volumes[0].Size'
             --output text
@@ -858,8 +934,18 @@
               - ocm_node_pools_result.json.items | length > 0
               - ocm_node_pools_result.json.items[0].management_upgrade is defined
               - ocm_node_pools_result.json.items[0].management_upgrade.max_surge is defined
-            fail_msg: "FAIL: OCM node pool upgrade config not set"
-            success_msg: "PASS: OCM confirms node pool upgrade config is set"
+              - >-
+                ocm_node_pools_result.json.items[0].management_upgrade.max_surge
+                | string == expected_max_surge | string
+              - >-
+                ocm_node_pools_result.json.items[0].management_upgrade.max_unavailable
+                | default(0) | string == expected_max_unavailable | string
+            fail_msg: >-
+              FAIL: OCM node pool upgrade config does not match expected
+              maxSurge={{ expected_max_surge }}
+              maxUnavailable={{ expected_max_unavailable }}
+            success_msg: >-
+              PASS: OCM node pool upgrade config matches expected
           when: ocm_available and ocm_node_pools_result is defined and ocm_node_pools_result.json is defined
 
         - name: Assert updateConfig via CRD (fallback)
@@ -937,7 +1023,10 @@
             that:
               - aws_subnet_azs | length | int == expected_az_count | int
               - aws_subnet_azs | map('regex_search', '^' + verify_region) | select | list | length == aws_subnet_azs | length
-            fail_msg: "FAIL: subnets span {{ aws_subnet_azs | length }} AZs {{ aws_subnet_azs }}, expected {{ expected_az_count }} in region {{ verify_region }}"
+            fail_msg: >-
+              FAIL: subnets span {{ aws_subnet_azs | length }} AZs
+              {{ aws_subnet_azs }},
+              expected {{ expected_az_count }} in {{ verify_region }}
             success_msg: "PASS: subnets span {{ aws_subnet_azs | length }} AZs in {{ verify_region }} — {{ aws_subnet_azs }}"
 
         - set_fact:
@@ -953,6 +1042,23 @@
       vars:
         verify_region: "{{ aws_region | default(rcp.spec.region | default('us-west-2')) }}"
       block:
+        - name: Assert at least one log destination is configured
+          assert:
+            that:
+              - >-
+                (log_forward_cloudwatch_role_arn is defined
+                 and log_forward_cloudwatch_role_arn | length > 0) or
+                (log_forward_cloudwatch_log_group is defined
+                 and log_forward_cloudwatch_log_group | length > 0) or
+                (log_forward_s3_bucket is defined
+                 and log_forward_s3_bucket | length > 0)
+            fail_msg: >-
+              FAIL: No log forwarding destination configured —
+              provide log_forward_cloudwatch_role_arn,
+              log_forward_cloudwatch_log_group, or
+              log_forward_s3_bucket
+            success_msg: "PASS: At least one log destination configured"
+
         - name: Verify CloudWatch IAM role exists in AWS
           shell: >
             aws iam get-role
@@ -1039,7 +1145,10 @@
     # ================================================================
     - name: Build passed features list
       set_fact:
-        results_passed: "{{ requested_features_list | difference(results_warned | map('regex_replace', ':.*', '') | list) | difference(results_failed | map('regex_replace', ':.*', '') | list) }}"
+        results_passed: >-
+          {{ requested_features_list
+             | difference(results_warned | map('regex_replace', ':.*', '') | list)
+             | difference(results_failed | map('regex_replace', ':.*', '') | list) }}
 
     - name: Feature verification summary
       debug:
