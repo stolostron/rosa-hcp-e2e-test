@@ -142,11 +142,11 @@ pipeline {
         stage ('Verify OCP Credentials') {
             when {
                 expression {
-                    return (params.OCP_HUB_CLUSTER_API_URL == '' || params.OCP_HUB_CLUSTER_PASSWORD == '')
+                    return (params.OCP_HUB_API_URL == '' || params.OCP_HUB_CLUSTER_PASSWORD == '')
                 }
             }
             steps {
-                error ('OCP_HUB_CLUSTER_API_URL, OCP_HUB_CLUSTER_PASSWORD must be set to run the pipeline!')
+                error ('OCP_HUB_API_URL, OCP_HUB_CLUSTER_PASSWORD must be set to run the pipeline!')
             }
         }
         stage('Configure CAPI/CAPA Environment') {
