@@ -9,7 +9,7 @@
 
 - name: Set automation path
   set_fact:
-    automation_path: "{{ AUTOMATION_PATH | default(playbook_dir) }}"
+    automation_path: "{{ AUTOMATION_PATH | default(playbook_dir + '/..') }}"
 
 # ======================================================
 # STEP 1: Enable CAPI/CAPA (Disables Hypershift First)
