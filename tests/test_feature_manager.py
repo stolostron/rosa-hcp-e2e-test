@@ -851,3 +851,57 @@ class TestBYON:
         assert rcp["spec"]["subnets"] == ["subnet-0abc1234", "subnet-0def5678"]
         assert "availabilityZones" not in rcp.get("spec", {})
         assert "rosaNetworkRef" not in rcp.get("spec", {})
+
+
+class TestBreakGlassCredentials:
+    def test_break_glass_alias(self, fm):
+        assert fm.resolve_alias("break-glass") == "break_glass_credentials"
+
+    def test_break_glass_in_cli_features(self, fm):
+        features = fm.list_features()
+        ids = [f["id"] for f in features]
+        assert "break_glass_credentials" in ids
+
+    def test_break_glass_feature_metadata(self, fm):
+        feat = fm.get_feature("break_glass_credentials")
+        assert feat is not None
+        assert feat["name"] == "Break Glass Credentials"
+        assert feat["type"] == "action"
+        assert feat["resource"] == "ROSAControlPlane"
+
+    def test_break_glass_depends_on_external_oidc(self, fm):
+        resolved = fm.auto_resolve_deps(["break_glass_credentials"])
+        assert "external_oidc" in resolved
+        assert "break_glass_credentials" in resolved
+
+    def test_break_glass_valid_on_419(self, fm):
+        errors = fm.validate_features(["break_glass_credentials"], "4.19")
+        assert errors == []
+
+    def test_break_glass_invalid_on_418(self, fm):
+        errors = fm.validate_features(["break_glass_credentials"], "4.18")
+        assert len(errors) == 1
+        assert "requires OpenShift >= 4.19" in errors[0]
+
+    def test_break_glass_valid_on_422(self, fm):
+        errors = fm.validate_features(["break_glass_credentials"], "4.22")
+        assert errors == []
+
+    def test_break_glass_var_mapping(self, fm):
+        result = fm.resolve_to_extra_vars(["break_glass_credentials"])
+        assert "feature_break_glass_credentials_enabled" in result
+
+    def test_break_glass_alias_resolves_in_extra_vars(self, fm):
+        result = fm.resolve_to_extra_vars(["break-glass"])
+        assert "break_glass_credentials" in result["requested_features"]
+        assert result["feature_break_glass_credentials_enabled"] == "true"
+
+    def test_break_glass_not_in_418_list(self, fm):
+        features = fm.list_features(version="4.18")
+        ids = [f["id"] for f in features]
+        assert "break_glass_credentials" not in ids
+
+    def test_break_glass_in_419_list(self, fm):
+        features = fm.list_features(version="4.19")
+        ids = [f["id"] for f in features]
+        assert "break_glass_credentials" in ids

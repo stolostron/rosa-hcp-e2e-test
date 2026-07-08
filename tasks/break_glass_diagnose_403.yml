@@ -1,0 +1,218 @@
+---
+- name: Set default variables for diagnosis
+  set_fact:
+    capi_namespace: "{{ capi_namespace | default('ns-rosa-hcp') }}"
+    capa_system_namespace: "{{ capa_system_namespace | default('multicluster-engine') }}"
+
+- name: Skip diagnosis if no 403 detected
+  debug:
+    msg: "Skipping 403 diagnosis - no break_glass_403_detected flag found"
+  when: not (break_glass_403_detected | default(false) | bool)
+
+- name: Perform 403 diagnostics
+  block:
+    - name: Check OCM token validity
+      shell: |
+        ocm whoami
+      register: ocm_whoami_result
+      failed_when: false
+      changed_when: false
+
+    - name: Parse OCM identity information
+      set_fact:
+        ocm_identity: "{{ ocm_whoami_result.stdout | from_json }}"
+        ocm_email: "{{ (ocm_whoami_result.stdout | from_json).email | default('unknown') }}"
+        ocm_organization_id: "{{ (ocm_whoami_result.stdout | from_json).organization.id | default('unknown') }}"
+      no_log: true
+      when: ocm_whoami_result.rc == 0
+
+    - name: Check cluster's limited support status
+      shell: |
+        ocm get "/api/clusters_mgmt/v1/clusters/{{ cluster_id }}/limited_support_reasons"
+      register: limited_support_result
+      failed_when: false
+      changed_when: false
+
+    - name: Parse limited support information
+      set_fact:
+        limited_support_reasons: "{{ (limited_support_result.stdout | from_json).items | default([]) if limited_support_result.rc == 0 else [] }}"
+        cluster_in_limited_support: "{{ ((limited_support_result.stdout | from_json).items | default([]) | length > 0) if limited_support_result.rc == 0 else false }}"
+
+    - name: Check external auth configuration from cluster info
+      set_fact:
+        cluster_external_auth_status: "{{ cluster_info.external_auth_config.enabled | default(cluster_info.external_authentication.enabled | default('unknown')) }}"
+      when: cluster_info is defined
+
+    - name: List all secrets in CAPI namespace matching cluster
+      shell: |
+        oc get secrets -n {{ capi_namespace | quote }} --no-headers 2>/dev/null | grep -F {{ cluster_name | quote }}
+      register: cluster_secrets_result
+      failed_when: false
+      changed_when: false
+      when: cluster_name is defined and cluster_name != ""
+
+    - name: Parse cluster secrets inventory
+      set_fact:
+        cluster_secrets_list: "{{ cluster_secrets_result.stdout_lines | default([]) }}"
+        kubeconfig_secret_found: "{{ cluster_secrets_result.stdout | regex_search((cluster_name | regex_escape) + '-kubeconfig') | default('') != '' }}"
+        bootstrap_kubeconfig_secret_found: "{{ cluster_secrets_result.stdout | regex_search((cluster_name | regex_escape) + '-bootstrap-kubeconfig') | default('') != '' }}"
+      when: cluster_secrets_result is defined
+
+    - name: Check secret ages if they exist
+      shell: |
+        oc get secret {{ (cluster_name + '-kubeconfig') | quote }} -n {{ capi_namespace | quote }} -o jsonpath='{.metadata.creationTimestamp}' 2>/dev/null
+      register: kubeconfig_secret_age
+      failed_when: false
+      changed_when: false
+      when: 
+        - cluster_name is defined
+        - kubeconfig_secret_found | default(false)
+
+    - name: Check bootstrap secret age if it exists
+      shell: |
+        oc get secret {{ (cluster_name + '-bootstrap-kubeconfig') | quote }} -n {{ capi_namespace | quote }} -o jsonpath='{.metadata.creationTimestamp}' 2>/dev/null
+      register: bootstrap_secret_age
+      failed_when: false
+      changed_when: false
+      when: 
+        - cluster_name is defined
+        - bootstrap_kubeconfig_secret_found | default(false)
+
+    - name: Get OCM account ID from already-parsed identity
+      set_fact:
+        ocm_account_id_result:
+          stdout: "{{ ocm_identity.id | default('') }}"
+          rc: "{{ ocm_whoami_result.rc | int }}"
+      when: ocm_whoami_result.rc == 0
+
+    - name: Set empty OCM account ID if whoami failed
+      set_fact:
+        ocm_account_id_result:
+          stdout: ""
+          rc: 1
+      when: ocm_whoami_result.rc != 0
+
+    - name: Query OCM role bindings for account
+      shell: >
+        ocm get /api/accounts_mgmt/v1/role_bindings
+        --parameter {{ ('search=account.id=\'' + (ocm_account_id_result.stdout | trim) + '\'') | quote }}
+        2>/dev/null || echo "{}"
+      register: ocm_role_bindings_result
+      failed_when: false
+      changed_when: false
+      when: ocm_account_id_result.stdout | trim | length > 0
+
+    - name: Parse role bindings
+      set_fact:
+        ocm_role_ids: "{{ ((ocm_role_bindings_result.stdout | default('{}') | from_json).items | default([])) | map(attribute='role') | map(attribute='id') | list }}"
+      when: ocm_role_bindings_result is defined and ocm_role_bindings_result.rc | default(1) == 0
+      failed_when: false
+
+    - name: Set role check defaults if parsing failed
+      set_fact:
+        ocm_role_ids: []
+      when: ocm_role_ids is not defined
+
+    - name: Determine role permissions from parsed roles
+      set_fact:
+        ocm_has_cluster_owner: "{{ ocm_role_ids | select('search', 'ClusterOwner|cluster_owner') | list | length > 0 }}"
+        ocm_has_cluster_service_developer: "{{ ocm_role_ids | select('search', 'ClusterServiceDeveloper|cluster_service_developer') | list | length > 0 }}"
+        ocm_has_break_glass_permission: "{{ ocm_role_ids | select('search', 'ClusterOwner|cluster_owner|ClusterServiceDeveloper|cluster_service_developer') | list | length > 0 }}"
+        ocm_role_check_failed: "{{ ocm_role_ids | length == 0 and (ocm_account_id_result.stdout | trim | length == 0) }}"
+
+    - name: Check CAPA controller logs for break-glass errors
+      shell: |
+        oc logs deploy/capa-controller-manager -n {{ capa_system_namespace | quote }} --tail=100 2>/dev/null | grep -i 'break.glass\|forbidden\|403'
+      register: capa_logs_result
+      failed_when: false
+      changed_when: false
+
+    - name: "DIAGNOSTIC: Cluster information"
+      debug:
+        msg: |
+          ========================================
+          BREAK-GLASS 403 DIAGNOSTIC REPORT
+          ========================================
+          Cluster ID: [redacted]
+          Cluster Name: [redacted]
+          Cluster State: {{ cluster_state | default('unknown') }}
+          External Auth: {{ cluster_external_auth_status | default('unknown') }}
+          Limited Support: {{ 'YES (' + (limited_support_reasons | length | string) + ' reasons)' if cluster_in_limited_support else 'NO' }}
+
+    - name: "DIAGNOSTIC: OCM identity"
+      debug:
+        msg: |
+          OCM Token Valid: {{ 'YES' if ocm_whoami_result.rc == 0 else 'NO' }}
+          OCM Email: [redacted]
+          Organization: [redacted]
+
+    - name: "DIAGNOSTIC: Provisioner secrets"
+      debug:
+        msg: |
+          CAPI Namespace: [redacted]
+          Secrets Found: {{ cluster_secrets_list | length | default(0) }}
+          Kubeconfig: {{ 'EXISTS' if kubeconfig_secret_found | default(false) else 'MISSING' }}
+          Bootstrap Kubeconfig: {{ 'EXISTS' if bootstrap_kubeconfig_secret_found | default(false) else 'MISSING' }}
+
+    - name: "DIAGNOSTIC: CAPA controller logs"
+      debug:
+        msg: "{{ (capa_logs_result.stdout_lines | default([]) | length) }} break-glass related log entries found in CAPA controller logs"
+
+    - name: "DIAGNOSTIC: OCM role permissions"
+      debug:
+        msg: |
+          Has cluster_owner: {{ 'YES' if ocm_has_cluster_owner | default(false) else 'NO' }}
+          Has cluster_service_developer: {{ 'YES' if ocm_has_cluster_service_developer | default(false) else 'NO' }}
+          Has break-glass permission: {{ 'YES' if ocm_has_break_glass_permission | default(false) else 'NO' }}
+          AMS access_review denial: {{ 'YES' if break_glass_403_is_ams_denial | default(false) | bool else 'NO' }}
+          Role check status: {{ 'FAILED' if ocm_role_check_failed | default(false) else 'OK' }}
+
+    - name: "DIAGNOSTIC: Error summary"
+      debug:
+        msg: "Error details captured internally"
+
+    - name: Set root cause and remediation facts
+      set_fact:
+        break_glass_root_cause: "{{
+          '[High confidence] AMS access_review denied ClusterBreakGlassCredential. The OCM credential used by CAPA lacks cluster_owner or cluster_service_developer role. Only cluster_owner and cluster_service_developer roles have break-glass permission; sre_agent and uhc_support are explicitly excluded.'
+          if ((break_glass_403_is_ams_denial | default(false) | bool) or (not (ocm_role_check_failed | default(true) | bool) and not (ocm_has_break_glass_permission | default(false) | bool)))
+          else
+          '[High confidence] Provisioner kubeconfig secrets missing. OCM API returns 403 because the authentication context for the hosted cluster is absent.'
+          if (not (kubeconfig_secret_found | default(false)) or not (bootstrap_kubeconfig_secret_found | default(false)))
+          else
+          '[High confidence] External authentication not enabled on cluster. Break-glass requires external auth.'
+          if ((cluster_external_auth_status | default('unknown')) != 'unknown' and not (cluster_external_auth_status | bool))
+          else
+          '[High confidence] OCM CLI token is invalid or expired.'
+          if (ocm_whoami_result.rc != 0)
+          else
+          '[Low confidence] All common causes checked — 403 may be due to RBAC, subscription, or service-side restrictions.'
+          }}"
+        break_glass_remediation_steps: "{{
+          ['Verify the OCM token/credential used by CAPA on the provisioner has cluster_owner or cluster_service_developer role',
+           'Update the CAPA OCM secret on the provisioner with a credential that has the correct role',
+           'Note: SRE tokens cannot be used for break-glass operations (AMS excludes sre_agent and uhc_support from ClusterBreakGlassCredential)',
+           'Restart CAPA controller after updating the secret',
+           'Retry break-glass credential operations']
+          if ((break_glass_403_is_ams_denial | default(false) | bool) or (not (ocm_role_check_failed | default(true) | bool) and not (ocm_has_break_glass_permission | default(false) | bool)))
+          else
+          ['Verify cluster is healthy and MC is operational',
+           'Recreate missing kubeconfig secrets on the provisioner (kubeconfig and bootstrap-kubeconfig in the CAPI namespace)',
+           'Ensure secrets contain valid cluster authentication data from the MC',
+           'Restart CAPA controller in the CAPA system namespace',
+           'Retry break-glass credential operations after secret restoration']
+          if (not (kubeconfig_secret_found | default(false)) or not (bootstrap_kubeconfig_secret_found | default(false)))
+          else
+          ['Enable external authentication on the cluster via OCM or ROSA CLI',
+           'Retry break-glass credential operations']
+          if ((cluster_external_auth_status | default('unknown')) != 'unknown' and not (cluster_external_auth_status | bool))
+          else
+          ['Re-authenticate OCM CLI: ocm login --token=<token>',
+           'Retry break-glass credential operations']
+          if (ocm_whoami_result.rc != 0)
+          else
+          ['Check OCM subscription and RBAC permissions',
+           'Contact Red Hat support if issue persists']
+          }}"
+
+  when: break_glass_403_detected | default(false) | bool
