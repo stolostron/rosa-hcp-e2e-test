@@ -1,3 +1,4 @@
+{% if deployment_mode != 'standalone' %}
 apiVersion: cluster.open-cluster-management.io/v1
 kind: ManagedCluster
 metadata:
@@ -10,6 +11,7 @@ metadata:
 spec:
   hubAcceptsClient: true
 ---
+{% endif %}
 apiVersion: cluster.x-k8s.io/v1beta1
 kind: Cluster
 metadata:

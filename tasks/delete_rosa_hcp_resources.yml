@@ -214,7 +214,7 @@
   register: delete_mc
   failed_when: false
   ignore_errors: true
-  when: true
+  when: deployment_mode != 'standalone'
 
 - name: Emit agent context for ROSANetwork deletion wait
   shell: |
