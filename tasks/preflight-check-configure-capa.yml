@@ -57,7 +57,7 @@
 # ======================================================
 - name: Check for capi-controller-manager deployment
   shell: |
-    oc --context='{{ ocp_context }}' get deploy -n {{ mce_namespace }} -ojson |\
+    oc --context='{{ ocp_context }}' get deploy -n {{ capi_namespace }} -ojson |\
     jq -c '.items[] | select(.metadata.name | contains("capi-controller-manager")) | {name: .metadata.name, creationTimestamp: .metadata.creationTimestamp}'
   register: capi_controller_manager
   failed_when: false
@@ -65,7 +65,7 @@
 
 - name: Check for capa-controller-manager deployment
   shell: |
-    oc --context='{{ ocp_context }}' get deploy -n {{ mce_namespace }} -ojson |\
+    oc --context='{{ ocp_context }}' get deploy -n {{ capa_namespace }} -ojson |\
     jq -c '.items[] | select(.metadata.name | contains("capa-controller-manager")) | {name: .metadata.name, creationTimestamp: .metadata.creationTimestamp}'
   register: capa_controller_manager
   failed_when: false

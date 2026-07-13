@@ -36,7 +36,7 @@
 
     - name: Set defaults
       set_fact:
-        capi_namespace: "{{ capi_namespace | default('ns-rosa-hcp') }}"
+        rosa_hcp_namespace: "{{ rosa_hcp_namespace | default('ns-rosa-hcp') }}"
         instance_type: "{{ instance_type | default('m5.xlarge') }}"
         replicas: "{{ replicas | default(1) }}"
         availability_zone: "{{ availability_zone | default('') }}"
@@ -60,17 +60,17 @@
 
     - name: Check if ROSAMachinePool already exists
       shell: |
-        oc get rosamachinepool {{ pool_name }} -n {{ capi_namespace }} -o name 2>/dev/null || echo ""
+        oc get rosamachinepool {{ pool_name }} -n {{ rosa_hcp_namespace }} -o name 2>/dev/null || echo ""
       register: existing_pool
 
     - name: Fail if pool already exists
       fail:
-        msg: "ROSAMachinePool '{{ pool_name }}' already exists in namespace {{ capi_namespace }}"
+        msg: "ROSAMachinePool '{{ pool_name }}' already exists in namespace {{ rosa_hcp_namespace }}"
       when: existing_pool.stdout != ""
 
     - name: Get control plane version
       shell: |
-        oc get rosacontrolplane {{ cluster_name }} -n {{ capi_namespace }} \
+        oc get rosacontrolplane {{ cluster_name }} -n {{ rosa_hcp_namespace }} \
           -o jsonpath='{.spec.version}' 2>/dev/null || echo ""
       register: cp_version_result
 
@@ -80,7 +80,7 @@
 
     - name: Validate control plane exists
       fail:
-        msg: "ROSAControlPlane '{{ cluster_name }}' not found in namespace {{ capi_namespace }}"
+        msg: "ROSAControlPlane '{{ cluster_name }}' not found in namespace {{ rosa_hcp_namespace }}"
       when: cp_version == ""
 
     - name: Set pool version
@@ -96,7 +96,7 @@
 
           Cluster: {{ cluster_name }}
           Pool Name: {{ pool_name }}
-          Namespace: {{ capi_namespace }}
+          Namespace: {{ rosa_hcp_namespace }}
           Instance Type: {{ instance_type }}
           Replicas: {{ replicas }}
           Version: {{ pool_version }}
@@ -109,7 +109,7 @@
         kind: MachinePool
         metadata:
           name: {{ pool_name }}
-          namespace: {{ capi_namespace }}
+          namespace: {{ rosa_hcp_namespace }}
           labels:
             cluster.x-k8s.io/cluster-name: {{ cluster_name }}
         spec:
@@ -124,7 +124,7 @@
                 apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
                 kind: ROSAMachinePool
                 name: {{ pool_name }}
-                namespace: {{ capi_namespace }}
+                namespace: {{ rosa_hcp_namespace }}
         YAML
       register: mp_result
       failed_when: mp_result.rc != 0
@@ -136,7 +136,7 @@
         kind: ROSAMachinePool
         metadata:
           name: {{ pool_name }}
-          namespace: {{ capi_namespace }}
+          namespace: {{ rosa_hcp_namespace }}
           labels:
             cluster.x-k8s.io/cluster-name: {{ cluster_name }}
         spec:
@@ -163,9 +163,9 @@
 
     - name: Wait for ROSAMachinePool to become ready
       shell: |
-        READY=$(oc get rosamachinepool {{ pool_name }} -n {{ capi_namespace }} \
+        READY=$(oc get rosamachinepool {{ pool_name }} -n {{ rosa_hcp_namespace }} \
           -o jsonpath='{.status.ready}' 2>/dev/null || echo "false")
-        REPLICAS=$(oc get rosamachinepool {{ pool_name }} -n {{ capi_namespace }} \
+        REPLICAS=$(oc get rosamachinepool {{ pool_name }} -n {{ rosa_hcp_namespace }} \
           -o jsonpath='{.status.replicas}' 2>/dev/null || echo "0")
         ELAPSED=$(( $(date +%s) - {{ start_epoch }} ))
         MINS=$((ELAPSED / 60))
@@ -196,8 +196,8 @@
           Replicas: {{ final_replicas }}
 
           Check status:
-            oc describe rosamachinepool {{ pool_name }} -n {{ capi_namespace }}
-            oc describe machinepool {{ pool_name }} -n {{ capi_namespace }}
+            oc describe rosamachinepool {{ pool_name }} -n {{ rosa_hcp_namespace }}
+            oc describe machinepool {{ pool_name }} -n {{ rosa_hcp_namespace }}
       when: final_ready | lower != "true"
 
     - name: Display success
@@ -215,5 +215,5 @@
           Status: Ready
 
           Verify:
-            oc get rosamachinepool {{ pool_name }} -n {{ capi_namespace }}
-            oc get machinepool {{ pool_name }} -n {{ capi_namespace }}
+            oc get rosamachinepool {{ pool_name }} -n {{ rosa_hcp_namespace }}
+            oc get machinepool {{ pool_name }} -n {{ rosa_hcp_namespace }}

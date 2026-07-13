@@ -11,7 +11,7 @@
       "description": "Upgrades the ROSAControlPlane to the next available version and waits for completion",
       "extra_vars": {
         "cluster_name": "",
-        "capi_namespace": "ns-rosa-hcp"
+        "rosa_hcp_namespace": "ns-rosa-hcp"
       }
     }
   ],
@@ -30,7 +30,7 @@
     "customization": {
       "cluster_name": "Name of the cluster to upgrade (required)",
       "requested_version": "Specific version to upgrade to (optional, defaults to first available)",
-      "capi_namespace": "Namespace containing the ROSAControlPlane resource (default: ns-rosa-hcp)"
+      "rosa_hcp_namespace": "Namespace containing the ROSAControlPlane resource (default: ns-rosa-hcp)"
     },
     "expected_results": [
       "ROSAControlPlane spec.version patched to requested version",

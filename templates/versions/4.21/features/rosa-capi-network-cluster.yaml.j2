@@ -2,7 +2,7 @@ apiVersion: cluster.open-cluster-management.io/v1
 kind: ManagedCluster
 metadata:
   name: {{ cluster_name }}
-  namespace: {{ capi_namespace }}
+  namespace: {{ rosa_hcp_namespace }}
   labels:
     automation.acm.redhat.com/test-case: "ACM-21174"
     automation.acm.redhat.com/network-automation: "true"
@@ -13,7 +13,7 @@ apiVersion: cluster.x-k8s.io/v1beta1
 kind: Cluster
 metadata:
   name: {{ cluster_name }}
-  namespace: {{ capi_namespace }}
+  namespace: {{ rosa_hcp_namespace }}
   labels:
     automation.acm.redhat.com/test-case: "ACM-21174"
     automation.acm.redhat.com/network-automation: "true"
@@ -25,18 +25,18 @@ spec:
     apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
     kind: ROSACluster
     name: {{ cluster_name }}
-    namespace: {{ capi_namespace }}
+    namespace: {{ rosa_hcp_namespace }}
   controlPlaneRef:
     apiVersion: controlplane.cluster.x-k8s.io/v1beta2
     kind: ROSAControlPlane
     name: {{ cluster_name }}
-    namespace: {{ capi_namespace }}
+    namespace: {{ rosa_hcp_namespace }}
 ---
 apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
 kind: ROSACluster
 metadata:
   name: {{ cluster_name }}
-  namespace: {{ capi_namespace }}
+  namespace: {{ rosa_hcp_namespace }}
   labels:
     automation.acm.redhat.com/test-case: "ACM-21174"
     automation.acm.redhat.com/network-automation: "true"
@@ -46,7 +46,7 @@ apiVersion: controlplane.cluster.x-k8s.io/v1beta2
 kind: ROSAControlPlane
 metadata:
   name: {{ cluster_name }}
-  namespace: {{ capi_namespace }}
+  namespace: {{ rosa_hcp_namespace }}
   annotations:
     {% if cluster_description is defined and cluster_description %}
     cluster.x-k8s.io/description: |
@@ -59,13 +59,13 @@ spec:
   # Network reference (automatic VPC and subnet creation)
   rosaNetworkRef:
     name: {{ rosa_network_config.name | default(cluster_name + '-network') }}
-    namespace: {{ capi_namespace }}
+    namespace: {{ rosa_hcp_namespace }}
 
   {% if use_role_config | default(false) %}
   # Optional: ROSARoleConfig reference for combined automation
   rosaRoleConfigRef:
     name: {{ rosa_role_config.name | default(cluster_name + '-roles') }}
-    namespace: {{ capi_namespace }}
+    namespace: {{ rosa_hcp_namespace }}
   {% endif %}
 
   rosaClusterName: {{ cluster_name }}
@@ -99,7 +99,7 @@ apiVersion: cluster.x-k8s.io/v1beta1
 kind: MachinePool
 metadata:
   name: {{ cluster_name }}
-  namespace: {{ capi_namespace }}
+  namespace: {{ rosa_hcp_namespace }}
   labels:
     automation.acm.redhat.com/test-case: "ACM-21174"
     automation.acm.redhat.com/network-automation: "true"
@@ -120,7 +120,7 @@ apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
 kind: ROSAMachinePool
 metadata:
   name: {{ cluster_name }}
-  namespace: {{ capi_namespace }}
+  namespace: {{ rosa_hcp_namespace }}
   labels:
     automation.acm.redhat.com/test-case: "ACM-21174"
     automation.acm.redhat.com/network-automation: "true"

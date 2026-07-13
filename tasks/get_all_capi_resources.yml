@@ -3,61 +3,72 @@
   connection: local
   gather_facts: false
   tasks:
-    - name: Get MCE CAPI/CAPA deployments
-      shell: oc get deployment -n multicluster-engine --no-headers 2>/dev/null | grep -E "(capi|capa)" || echo "No CAPI/CAPA deployments"
-      register: mce_deployments
+    - name: Get CAPI/CAPA deployments
+      shell: |
+        for ns in {{ capi_namespace }} {{ capa_namespace }}; do
+          oc get deployment -n $ns --no-headers 2>/dev/null | grep -E "(capi|capa)"
+        done | sort -u || echo "No CAPI/CAPA deployments"
+      register: capi_deployments
       failed_when: false
 
-    - name: Get MCE CAPI/CAPA secrets
-      shell: oc get secret -n multicluster-engine --no-headers 2>/dev/null | grep -E "(capi|capa)" | head -10 || echo "No CAPI/CAPA secrets"
-      register: mce_secrets
+    - name: Get CAPI/CAPA secrets
+      shell: |
+        for ns in {{ capi_namespace }} {{ capa_namespace }}; do
+          oc get secret -n $ns --no-headers 2>/dev/null | grep -E "(capi|capa)"
+        done | sort -u | head -10 || echo "No CAPI/CAPA secrets"
+      register: capi_secrets
       failed_when: false
 
-    - name: Get MCE CAPI/CAPA services
-      shell: oc get service -n multicluster-engine --no-headers 2>/dev/null | grep -E "(capi|capa)" || echo "No CAPI/CAPA services"
-      register: mce_services
+    - name: Get CAPI/CAPA services
+      shell: |
+        for ns in {{ capi_namespace }} {{ capa_namespace }}; do
+          oc get service -n $ns --no-headers 2>/dev/null | grep -E "(capi|capa)"
+        done | sort -u || echo "No CAPI/CAPA services"
+      register: capi_services
       failed_when: false
 
     - name: Get ROSA HCP resources
-      shell: oc get all -n ns-rosa-hcp --no-headers 2>/dev/null || echo "No resources in ns-rosa-hcp"
+      shell: oc get all -n {{ rosa_hcp_namespace }} --no-headers 2>/dev/null || echo "No resources in {{ rosa_hcp_namespace }}"
       register: rosa_hcp_output
       failed_when: false
 
     - name: Get ROSA cluster resources with YAML
       shell: |
-        for resource in $(oc get rosacluster,rosacontrolplane,rosamachinepool,rosanetwork -n ns-rosa-hcp --no-headers 2>/dev/null | awk '{print $1}' | head -5); do
+        for resource in $(oc get rosacluster,rosacontrolplane,rosamachinepool,rosanetwork -n {{ rosa_hcp_namespace }} --no-headers 2>/dev/null | awk '{print $1}' | head -5); do
           echo "=== RESOURCE: $resource ==="
-          oc get $resource -n ns-rosa-hcp -o yaml 2>/dev/null || echo "Failed to get YAML for $resource"
+          oc get $resource -n {{ rosa_hcp_namespace }} -o yaml 2>/dev/null || echo "Failed to get YAML for $resource"
           echo ""
         done
       register: rosa_resources_yaml
       failed_when: false
 
-    - name: Get MCE deployment YAMLs
+    - name: Get CAPI/CAPA deployment YAMLs
       shell: |
-        for deployment in $(oc get deployment -n multicluster-engine --no-headers 2>/dev/null | grep -E "(capi|capa)" | awk '{print $1}' | head -3); do
-          echo "=== RESOURCE: deployment/$deployment ==="
-          oc get deployment $deployment -n multicluster-engine -o yaml 2>/dev/null || echo "Failed to get YAML for deployment/$deployment"
-          echo ""
+        for ns in {{ capi_namespace }} {{ capa_namespace }}; do
+          for deployment in $(oc get deployment -n $ns --no-headers 2>/dev/null | grep -E "(capi|capa)" | awk '{print $1}' | head -3); do
+            echo "=== RESOURCE: deployment/$deployment (namespace: $ns) ==="
+            oc get deployment $deployment -n $ns -o yaml 2>/dev/null || echo "Failed to get YAML for deployment/$deployment"
+            echo ""
+          done
         done
-      register: mce_deployments_yaml
+      register: capi_deployments_yaml
       failed_when: false
 
     - name: Set combined output fact
       set_fact:
         combined_resources_output: |
-          === MCE Deployments ===
-          {{ mce_deployments.stdout }}
-          === MCE Secrets ===
-          {{ mce_secrets.stdout }}
-          === MCE Services ===
-          {{ mce_services.stdout }}
+          === CAPI/CAPA Deployments ===
+          {{ capi_deployments.stdout }}
+          === CAPI/CAPA Secrets ===
+          {{ capi_secrets.stdout }}
+          === CAPI/CAPA Services ===
+          {{ capi_services.stdout }}
           === ROSA HCP ===
           {{ rosa_hcp_output.stdout }}
           === ROSA Resources YAML ===
           {{ rosa_resources_yaml.stdout }}
-          === MCE Deployments YAML ===
-          {{ mce_deployments_yaml.stdout }}
+          === CAPI/CAPA Deployments YAML ===
+          {{ capi_deployments_yaml.stdout }}
 
     - name: Display combined output
       debug:

@@ -34,7 +34,7 @@
 
     - name: Check if ROSANetwork already exists
       shell: |
-        oc get rosanetwork {{ rosa_network_config_name | default(cluster_name + '-network') }} -n {{ capi_namespace }} -o json 2>/dev/null || echo '{}'
+        oc get rosanetwork {{ rosa_network_config_name | default(cluster_name + '-network') }} -n {{ rosa_hcp_namespace }} -o json 2>/dev/null || echo '{}'
       register: existing_rosa_network
       failed_when: false
       changed_when: false
@@ -86,7 +86,7 @@
 
     - name: Wait for ROSANetwork to be fully ready
       shell: |
-        oc get rosanetwork {{ rosa_network_config_name | default(cluster_name + '-network') }} -n {{ capi_namespace }} -o json 2>/dev/null || echo '{}'
+        oc get rosanetwork {{ rosa_network_config_name | default(cluster_name + '-network') }} -n {{ rosa_hcp_namespace }} -o json 2>/dev/null || echo '{}'
       register: network_ready_status
       until:
         - ((network_ready_status.stdout if network_ready_status.stdout is mapping else (network_ready_status.stdout | from_json)).status.conditions | default([], true) | selectattr('type', 'equalto', 'ROSANetworkReady') | selectattr('status', 'equalto', 'True') | list) | length > 0
@@ -106,7 +106,7 @@
 
     - name: Fetch final ROSANetwork status with complete subnet information
       shell: |
-        oc get rosanetwork {{ rosa_network_config_name | default(cluster_name + '-network') }} -n {{ capi_namespace }} -o json 2>/dev/null || echo '{}'
+        oc get rosanetwork {{ rosa_network_config_name | default(cluster_name + '-network') }} -n {{ rosa_hcp_namespace }} -o json 2>/dev/null || echo '{}'
       register: final_network_status
       changed_when: false
       when:
@@ -153,7 +153,7 @@
 
     - name: Get ROSANetwork status for debugging
       shell: |
-        oc get rosanetwork {{ rosa_network_config_name | default(cluster_name + '-network') }} -n {{ capi_namespace }} -o json 2>/dev/null || echo '{}'
+        oc get rosanetwork {{ rosa_network_config_name | default(cluster_name + '-network') }} -n {{ rosa_hcp_namespace }} -o json 2>/dev/null || echo '{}'
       register: debug_network_status
       ignore_errors: true
       changed_when: false
@@ -165,7 +165,7 @@
 
     - name: Get ROSANetwork events for troubleshooting
       shell: |
-        oc get events -n {{ capi_namespace }} --field-selector involvedObject.name={{ rosa_network_config_name | default(cluster_name + '-network') }} -o json 2>/dev/null || echo '{"items":[]}'
+        oc get events -n {{ rosa_hcp_namespace }} --field-selector involvedObject.name={{ rosa_network_config_name | default(cluster_name + '-network') }} -o json 2>/dev/null || echo '{"items":[]}'
       register: network_events
       ignore_errors: true
       changed_when: false

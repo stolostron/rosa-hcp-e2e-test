@@ -1,5 +1,5 @@
 - name: Wait for ROSA Control Plane status to be ready
-  shell: oc get rosacontrolplane {{ cluster_name }} -n {{ capi_namespace | default('ns-rosa-hcp') }} -o json | jq -r '.status.ready'
+  shell: oc get rosacontrolplane {{ cluster_name }} -n {{ rosa_hcp_namespace | default('ns-rosa-hcp') }} -o json | jq -r '.status.ready'
   register: rcp_status
   until: rcp_status.stdout | bool
   retries: "{{ 75 if retry_count is undefined else retry_count|int }}"
@@ -12,8 +12,8 @@
       ROSA HCP cluster did not become ready within the timeout period.
 
       Check cluster status:
-      oc get rosacontrolplane {{ cluster_name }} -n {{ capi_namespace | default('ns-rosa-hcp') }}
-      oc describe rosacontrolplane {{ cluster_name }} -n {{ capi_namespace | default('ns-rosa-hcp') }}
+      oc get rosacontrolplane {{ cluster_name }} -n {{ rosa_hcp_namespace | default('ns-rosa-hcp') }}
+      oc describe rosacontrolplane {{ cluster_name }} -n {{ rosa_hcp_namespace | default('ns-rosa-hcp') }}
   when: not (rcp_status.stdout | bool)
 
 - name: Print the ROSA control plane is ready
@@ -22,6 +22,6 @@
       ROSA HCP Control Plane is READY!
 
       Cluster: {{ cluster_name }}
-      Namespace: {{ capi_namespace | default('ns-rosa-hcp') }}
+      Namespace: {{ rosa_hcp_namespace | default('ns-rosa-hcp') }}
       Status: Running and available
   when: rcp_status.stdout | bool

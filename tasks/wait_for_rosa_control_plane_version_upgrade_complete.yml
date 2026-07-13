@@ -1,7 +1,7 @@
 
 - name: Wait for ROSA Control Plane version upgrade to be complete.
   shell: >
-    oc get rosacontrolplane -n {{ capi_namespace | default('ns-rosa-hcp') }} -o json |
+    oc get rosacontrolplane -n {{ rosa_hcp_namespace | default('ns-rosa-hcp') }} -o json |
     jq -r '.items[].spec.version'
   register: rcp_version
   until: requested_version in rcp_version.stdout

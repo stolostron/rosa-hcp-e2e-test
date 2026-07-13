@@ -64,7 +64,7 @@
       ⏳ STEP 3: Creating Configuration Objects
 
       This will create:
-      - {{ capi_namespace }} namespace
+      - {{ rosa_hcp_namespace }} namespace
       - ClusterManager registration configuration
       - ClusterRoleBinding for registration-capi
       - AWS credentials secret (capa-manager-bootstrap-credentials)
@@ -74,9 +74,9 @@
 - name: Create output folder
   include_tasks: "{{ automation_path }}/tasks/create_output_folder.yml"
 
-- name: Create {{ capi_namespace }} namespace
+- name: Create {{ rosa_hcp_namespace }} namespace
   shell: |
-    oc create namespace {{ capi_namespace }} --dry-run=client -o yaml | oc apply -f -
+    oc create namespace {{ rosa_hcp_namespace }} --dry-run=client -o yaml | oc apply -f -
 
 - name: Set ClusterManager registration_configuration
   include_tasks: "{{ automation_path }}/tasks/set_registration_configuration.yml"
@@ -87,7 +87,7 @@
 - name: Create capa-manager-bootstrap-credentials with AWS Credentials
   include_tasks: "{{ automation_path }}/tasks/create_capa_manager_bootstrap_credentials.yml"
 
-- name: Create rosa-creds-secret in multicluster-engine ns.
+- name: Create rosa-creds-secret in {{ capa_namespace }} ns.
   include_tasks: "{{ automation_path }}/tasks/create_rosa_creds_secret.yml"
 
 - name: Restart capa-controller-manager deployment.

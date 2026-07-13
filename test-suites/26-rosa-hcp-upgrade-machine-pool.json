@@ -11,7 +11,7 @@
       "description": "Upgrades the ROSAMachinePool to the next available version and waits for completion",
       "extra_vars": {
         "cluster_name": "",
-        "capi_namespace": "ns-rosa-hcp"
+        "rosa_hcp_namespace": "ns-rosa-hcp"
       }
     }
   ],
@@ -32,7 +32,7 @@
       "cluster_name": "Name of the cluster (required)",
       "pool_name": "Name of the ROSAMachinePool resource (optional, auto-discovered if omitted)",
       "requested_version": "Specific version to upgrade to (optional, defaults to first available)",
-      "capi_namespace": "Namespace containing the ROSAMachinePool resource (default: ns-rosa-hcp)"
+      "rosa_hcp_namespace": "Namespace containing the ROSAMachinePool resource (default: ns-rosa-hcp)"
     },
     "expected_results": [
       "ROSAMachinePool spec.version patched to requested version",

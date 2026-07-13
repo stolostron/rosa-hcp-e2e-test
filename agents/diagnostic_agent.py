@@ -371,7 +371,7 @@ class DiagnosticAgent(BaseAgent):
         if client_id and client_secret:
             return client_id, client_secret, api_url
 
-        for ns in ["multicluster-engine", os.environ.get("CAPI_NAMESPACE", "ns-rosa-hcp")]:
+        for ns in [os.environ.get("CAPA_SYSTEM_NAMESPACE", "multicluster-engine"), os.environ.get("CAPI_NAMESPACE", "ns-rosa-hcp")]:
             try:
                 result = subprocess.run(
                     ["oc", "get", "secret", "rosa-creds-secret", "-n", ns,

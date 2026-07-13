@@ -1,12 +1,12 @@
 - name: Update {{ component }} enabled flag setting value to {{ enable }}
   block:
   - name: Get name of MCE
-    shell: oc get mce -n multicluster-engine -ojson | jq -r '.items[].metadata.name'
+    shell: oc get mce -n {{ mce_namespace }} -ojson | jq -r '.items[].metadata.name'
     register: mce_name
 
   - name: Get current components array
     shell: |
-      oc get mce {{ mce_name.stdout }} -n multicluster-engine -ojson | jq -c '.spec.overrides.components // []'
+      oc get mce {{ mce_name.stdout }} -n {{ mce_namespace }} -ojson | jq -c '.spec.overrides.components // []'
     register: current_components
 
   - name: Remove existing entries for {{ component }}
@@ -21,6 +21,6 @@
 
   - name: Apply updated components array to MCE
     shell: |
-      oc patch mce {{ mce_name.stdout }} -n multicluster-engine --type=merge -p '{"spec":{"overrides":{"components":{{ updated_components.stdout }}}}}'
+      oc patch mce {{ mce_name.stdout }} -n {{ mce_namespace }} --type=merge -p '{"spec":{"overrides":{"components":{{ updated_components.stdout }}}}}'
     changed_when: true
     register: patch_status

@@ -74,8 +74,8 @@
 
     - name: Set default capi namespace
       set_fact:
-        capi_namespace: "ns-rosa-hcp"
-      when: capi_namespace is not defined
+        rosa_hcp_namespace: "ns-rosa-hcp"
+      when: rosa_hcp_namespace is not defined
 
     - name: Set default openshift version
       set_fact:
@@ -141,7 +141,7 @@
           • Domain Prefix: {{ domain_prefix }}
           • Version: {{ openshift_version }}
           • Region: {{ aws_region }}
-          • Namespace: {{ capi_namespace }}
+          • Namespace: {{ rosa_hcp_namespace }}
           • Channel: {{ channel_group }}
 
           Automation Settings:
@@ -178,22 +178,22 @@
           Your ROSA HCP cluster is being created:
           • Cluster: {{ cluster_name }}
           • Domain: {{ domain_prefix }}
-          • Namespace: {{ capi_namespace }}
+          • Namespace: {{ rosa_hcp_namespace }}
 
           Monitor Progress:
-          oc get rosacontrolplane {{ cluster_name }} -n {{ capi_namespace }} -w
+          oc get rosacontrolplane {{ cluster_name }} -n {{ rosa_hcp_namespace }} -w
 
           View Details:
-          oc describe rosacontrolplane {{ cluster_name }} -n {{ capi_namespace }}
+          oc describe rosacontrolplane {{ cluster_name }} -n {{ rosa_hcp_namespace }}
 
           {% if create_rosa_roles | bool %}
           View Roles:
-          oc get rosaroleconfig {{ rosa_role_config_name }} -n {{ capi_namespace }}
+          oc get rosaroleconfig {{ rosa_role_config_name }} -n {{ rosa_hcp_namespace }}
           {% endif %}
 
           {% if create_rosa_network | bool %}
           View Network:
-          oc get rosanetwork {{ rosa_network_name }} -n {{ capi_namespace }}
+          oc get rosanetwork {{ rosa_network_name }} -n {{ rosa_hcp_namespace }}
           {% endif %}
 
           🎉 Happy cluster provisioning!

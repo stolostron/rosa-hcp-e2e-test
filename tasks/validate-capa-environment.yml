@@ -24,7 +24,7 @@
 # ======================================================
 - name: Check for capi-controller-manager deployment
   shell: |
-    oc --context='{{ ocp_context }}' get deploy -n multicluster-engine -ojson |\
+    oc --context='{{ ocp_context }}' get deploy -n {{ capi_namespace }} -ojson |\
     jq -c '.items[] | select(.metadata.name | contains("capi-controller-manager")) | {name: .metadata.name, creationTimestamp: .metadata.creationTimestamp}'
   register: capi_controller_manager
   failed_when: false
@@ -41,7 +41,7 @@
 
 - name: Check for capa-controller-manager deployment
   shell: |
-    oc --context='{{ ocp_context }}' get deploy -n multicluster-engine -ojson |\
+    oc --context='{{ ocp_context }}' get deploy -n {{ capa_namespace }} -ojson |\
     jq -c '.items[] | select(.metadata.name | contains("capa-controller-manager")) | {name: .metadata.name, creationTimestamp: .metadata.creationTimestamp}'
   register: capa_controller_manager
   failed_when: false
@@ -65,7 +65,7 @@
 
 - name: Get ClusterManager registration configuration
   shell: |
-    oc --context='{{ ocp_context }}' get clusterManager -n multicluster-engine -ojson |\
+    oc --context='{{ ocp_context }}' get clusterManager -n {{ capa_namespace }} -ojson |\
     jq -c '.items[] | select(.spec.registrationConfiguration) | {name: "ClusterManager", creationTimestamp: .metadata.creationTimestamp}'
   register: registration_configuration_applied
   failed_when: false
@@ -100,7 +100,7 @@
 
 - name: Get AWS credentials secret (capa-manager-bootstrap-credentials)
   shell: |
-    oc --context='{{ ocp_context }}' get secret -n multicluster-engine capa-manager-bootstrap-credentials -ojson | jq -c '{name: .metadata.name, creationTimestamp: .metadata.creationTimestamp}'
+    oc --context='{{ ocp_context }}' get secret -n {{ capa_namespace }} capa-manager-bootstrap-credentials -ojson | jq -c '{name: .metadata.name, creationTimestamp: .metadata.creationTimestamp}'
   register: capa_manager_bootstrap_credentials_exists
   failed_when: false
   changed_when: false
@@ -117,7 +117,7 @@
 
 - name: Get ROSA credentials secret
   shell: |
-    oc --context='{{ ocp_context }}' get secret -n multicluster-engine rosa-creds-secret -ojson | jq -c '{name: .metadata.name, creationTimestamp: .metadata.creationTimestamp}'
+    oc --context='{{ ocp_context }}' get secret -n {{ capa_namespace }} rosa-creds-secret -ojson | jq -c '{name: .metadata.name, creationTimestamp: .metadata.creationTimestamp}'
   register: rosa_creds_secret_exists
   failed_when: false
   changed_when: false

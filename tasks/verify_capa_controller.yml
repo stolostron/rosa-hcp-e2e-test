@@ -5,7 +5,7 @@
 - name: Set CAPA controller verification variables
   set_fact:
     capa_controller_name: "capa-controller-manager"
-    capa_controller_namespace: "{{ capa_system_namespace }}"
+    capa_controller_namespace: "{{ capa_namespace }}"
     verification_timeout: "{{ capa_verification_timeout | default(300) }}"
 
 - name: Display verification configuration
@@ -241,7 +241,7 @@
         api_version: infrastructure.cluster.x-k8s.io/v1beta1
         kind: ROSARoleConfig
         name: "test-connectivity-{{ ansible_date_time.epoch }}"
-        namespace: "{{ capi_namespace }}"
+        namespace: "{{ rosa_hcp_namespace }}"
         definition:
           spec:
             awsAccountId: "123456789012"

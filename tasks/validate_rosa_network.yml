@@ -7,7 +7,7 @@
         api_version: infrastructure.cluster.x-k8s.io/v1beta2
         kind: ROSANetwork
         name: "{{ rosa_network_config_name | default(cluster_name + '-network') }}"
-        namespace: "{{ capi_namespace }}"
+        namespace: "{{ rosa_hcp_namespace }}"
       register: network_info
 
     - name: Validate ROSANetwork exists
@@ -151,7 +151,7 @@
         api_version: infrastructure.cluster.x-k8s.io/v1beta2
         kind: ROSANetwork
         name: "{{ rosa_network_config_name | default(cluster_name + '-network') }}"
-        namespace: "{{ capi_namespace }}"
+        namespace: "{{ rosa_hcp_namespace }}"
       register: debug_network_validation
       ignore_errors: true
 

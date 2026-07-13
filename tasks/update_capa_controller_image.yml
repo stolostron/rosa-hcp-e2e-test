@@ -5,7 +5,7 @@
 - name: Set CAPA controller update variables
   set_fact:
     capa_controller_name: "capa-controller-manager"
-    capa_controller_namespace: "{{ capa_system_namespace }}"
+    capa_controller_namespace: "{{ capa_namespace }}"
     capa_new_image: "{{ capa_controller_image | default('') }}"
     backup_enabled: "{{ capa_backup_before_update | default(true) }}"
 

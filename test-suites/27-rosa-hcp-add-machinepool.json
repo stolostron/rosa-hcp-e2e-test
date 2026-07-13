@@ -12,7 +12,7 @@
       "extra_vars": {
         "cluster_name": "",
         "pool_name": "",
-        "capi_namespace": "ns-rosa-hcp",
+        "rosa_hcp_namespace": "ns-rosa-hcp",
         "instance_type": "m5.xlarge",
         "replicas": 1
       }

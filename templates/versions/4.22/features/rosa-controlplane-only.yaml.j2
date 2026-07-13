@@ -2,7 +2,7 @@ apiVersion: cluster.open-cluster-management.io/v1
 kind: ManagedCluster
 metadata:
   name: {{ cluster_name }}
-  namespace: {{ capi_namespace }}
+  namespace: {{ rosa_hcp_namespace }}
   labels:
     automation.acm.redhat.com/test-case: "ACM-21174-ControlPlane"
     automation.acm.redhat.com/network-automation: "true"
@@ -14,7 +14,7 @@ apiVersion: cluster.x-k8s.io/v1beta1
 kind: Cluster
 metadata:
   name: {{ cluster_name }}
-  namespace: {{ capi_namespace }}
+  namespace: {{ rosa_hcp_namespace }}
   labels:
     automation.acm.redhat.com/test-case: "ACM-21174-ControlPlane"
     automation.acm.redhat.com/network-automation: "true"
@@ -27,18 +27,18 @@ spec:
     apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
     kind: ROSACluster
     name: {{ cluster_name }}
-    namespace: {{ capi_namespace }}
+    namespace: {{ rosa_hcp_namespace }}
   controlPlaneRef:
     apiVersion: controlplane.cluster.x-k8s.io/v1beta2
     kind: ROSAControlPlane
     name: {{ cluster_name }}
-    namespace: {{ capi_namespace }}
+    namespace: {{ rosa_hcp_namespace }}
 ---
 apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
 kind: ROSACluster
 metadata:
   name: {{ cluster_name }}
-  namespace: {{ capi_namespace }}
+  namespace: {{ rosa_hcp_namespace }}
   labels:
     automation.acm.redhat.com/test-case: "ACM-21174-ControlPlane"
     automation.acm.redhat.com/network-automation: "true"
@@ -51,7 +51,7 @@ apiVersion: controlplane.cluster.x-k8s.io/v1beta2
 kind: ROSAControlPlane
 metadata:
   name: {{ cluster_name }}
-  namespace: {{ capi_namespace }}
+  namespace: {{ rosa_hcp_namespace }}
   {% if cluster_description is defined and cluster_description -%}
   annotations:
     cluster.x-k8s.io/description: |
@@ -222,7 +222,7 @@ apiVersion: cluster.x-k8s.io/v1beta1
 kind: MachinePool
 metadata:
   name: {{ cluster_name }}
-  namespace: {{ capi_namespace }}
+  namespace: {{ rosa_hcp_namespace }}
   labels:
     automation.acm.redhat.com/test-case: "ACM-21174-ControlPlane"
     automation.acm.redhat.com/network-automation: "true"
@@ -239,13 +239,13 @@ spec:
         name: {{ cluster_name }}
         apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
         kind: ROSAMachinePool
-        namespace: {{ capi_namespace }}
+        namespace: {{ rosa_hcp_namespace }}
 ---
 apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
 kind: ROSAMachinePool
 metadata:
   name: {{ cluster_name }}
-  namespace: {{ capi_namespace }}
+  namespace: {{ rosa_hcp_namespace }}
   labels:
     automation.acm.redhat.com/test-case: "ACM-21174-ControlPlane"
     automation.acm.redhat.com/network-automation: "true"

@@ -180,7 +180,7 @@
             api_version: apps/v1
             kind: Deployment
             name: "capa-controller-manager"
-            namespace: "{{ capa_system_namespace }}"
+            namespace: "{{ capa_namespace }}"
             merge_type: strategic-merge
             definition:
               spec:
@@ -195,7 +195,7 @@
             api_version: apps/v1
             kind: Deployment
             name: "capa-controller-manager"
-            namespace: "{{ capa_system_namespace }}"
+            namespace: "{{ capa_namespace }}"
             wait: true
             wait_condition:
               type: Progressing
@@ -257,7 +257,7 @@ rescue:
         {{ rosa_role_config_rules | to_nice_yaml | indent(10) }}
 
         4. Restart CAPA controller:
-           kubectl rollout restart deployment/capa-controller-manager -n {{ capa_system_namespace }}
+           kubectl rollout restart deployment/capa-controller-manager -n {{ capa_namespace }}
 
         5. Restore from backup if needed:
            kubectl apply -f {{ output_dir }}/capa-clusterrole-backup-{{ ansible_date_time.epoch }}.yaml

@@ -56,8 +56,10 @@ acm_release_version: ""
 acm_sub_name: "advanced-cluster-management"
 acm_namespace: "open-cluster-management"
 
-capi_namespace: "ns-rosa-hcp"
-capa_system_namespace: "multicluster-engine"
+rosa_hcp_namespace: "ns-rosa-hcp"
+deployment_mode: "{{ lookup('env', 'DEPLOYMENT_MODE') | default('mce', true) }}"
+capi_namespace: "{{ 'capi-system' if deployment_mode == 'standalone' else 'multicluster-engine' }}"
+capa_namespace: "{{ 'capa-system' if deployment_mode == 'standalone' else 'multicluster-engine' }}"
 rosa_creds_secret: "rosa-creds-secret"
 
 

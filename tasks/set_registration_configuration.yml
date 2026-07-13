@@ -13,7 +13,7 @@
           - feature: ManagedClusterAutoApproval
             mode: Enable
           autoApproveUsers:
-          - system:serviceaccount:multicluster-engine:agent-registration-bootstrap
+          - system:serviceaccount:{{ mce_namespace }}:agent-registration-bootstrap
     dest: "{{ output_dir }}/clustermanager-registration-configuration.yaml"
 
 - name: Apply clustermanager-registration-configuration.yaml
