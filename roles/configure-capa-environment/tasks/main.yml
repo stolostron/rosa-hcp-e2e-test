@@ -27,6 +27,7 @@
 
 - name: Execute CAPI/CAPA enablement
   include_tasks: "{{ automation_path }}/tasks/enable_capi_capa.yml"
+  when: deployment_mode != 'standalone'
 
 - name: CAPI/CAPA enablement complete
   debug:
@@ -80,9 +81,11 @@
 
 - name: Set ClusterManager registration_configuration
   include_tasks: "{{ automation_path }}/tasks/set_registration_configuration.yml"
+  when: deployment_mode != 'standalone'
 
 - name: Set ClusterRoleBinding registration-capi
   include_tasks: "{{ automation_path }}/tasks/set_cluster_role_binding.yml"
+  when: deployment_mode != 'standalone'
 
 - name: Create capa-manager-bootstrap-credentials with AWS Credentials
   include_tasks: "{{ automation_path }}/tasks/create_capa_manager_bootstrap_credentials.yml"
