@@ -24,6 +24,7 @@ ALL_PLAYBOOKS = [
     "delete_rosa_hcp_cluster.yml",
     "create_rosa_hcp_automated.yaml",
     "configure_mce_environment.yml",
+    "install_capi_standalone.yml",
     "verify_capi_environment.yaml",
     "enable_capi_disable_hypershift.yml",
     "disable_capi_enable_hypershift.yml",
@@ -31,9 +32,10 @@ ALL_PLAYBOOKS = [
     "delete_rosa_machine_pool.yml",
 ]
 
-# These two playbooks do NOT set connection: local
+# These playbooks do NOT set connection: local
 PLAYBOOKS_WITHOUT_CONNECTION_LOCAL = {
     "configure_mce_environment.yml",
+    "install_capi_standalone.yml",
     "verify_capi_environment.yaml",
 }
 

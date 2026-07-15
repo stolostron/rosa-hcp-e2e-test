@@ -11,6 +11,7 @@ ansible_async_dir: '/tmp/.ansible_async'
 capi_installation_method: "clusterctl"
 helm_repo_url: "https://stolostron.github.io/cluster-api-installer"
 helm_chart_version: "latest"  # or specific version like "1.0.0"
+cluster_api_installer_ref: "main"
 
 #==== Multi-Provider Support ====
 cloud_provider: "aws"                            # Default provider: aws, azure
