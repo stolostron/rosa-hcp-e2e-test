@@ -2,7 +2,7 @@ apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
 kind: ROSAMachinePool
 metadata:
   name: "{{ pool_name | default('worker-pool') }}"
-  namespace: "{{ capi_namespace }}"
+  namespace: "{{ rosa_hcp_namespace }}"
   labels:
     cluster.x-k8s.io/cluster-name: "{{ cluster_name }}"
 spec:

@@ -6,7 +6,7 @@ apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
 kind: ROSARoleConfig
 metadata:
   name: {{ rosa_role_config_name | default(cluster_name + "-roles") }}
-  namespace: {{ capi_namespace | default("ns-rosa-hcp") }}
+  namespace: {{ rosa_hcp_namespace | default("ns-rosa-hcp") }}
   labels:
     cluster.x-k8s.io/cluster-name: {{ cluster_name }}
     automation.acm.redhat.com/created-by: "ansible-automation"

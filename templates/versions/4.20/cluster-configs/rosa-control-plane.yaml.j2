@@ -2,7 +2,7 @@ apiVersion: controlplane.cluster.x-k8s.io/v1beta2
 kind: ROSAControlPlane
 metadata:
   name: "{{ cluster_name }}"
-  namespace: "{{ capi_namespace }}"
+  namespace: "{{ rosa_hcp_namespace }}"
 spec:
   # ROSA cluster name (required)
   rosaClusterName: "{{ cluster_name }}"

@@ -39,8 +39,8 @@
 
     - name: Set default namespace
       set_fact:
-        capi_namespace: "ns-rosa-hcp"
-      when: capi_namespace is not defined
+        rosa_hcp_namespace: "ns-rosa-hcp"
+      when: rosa_hcp_namespace is not defined
 
     - name: Prepare ansible runner host
       include_tasks: ../tasks/prepare_ansible_runner.yml
@@ -56,7 +56,7 @@
 
     - name: Get ROSAControlPlane resource
       shell: |
-        oc get rosacontrolplane {{ cluster_name }} -n {{ capi_namespace }} -o json
+        oc get rosacontrolplane {{ cluster_name }} -n {{ rosa_hcp_namespace }} -o json
       register: rcp_resource
       failed_when: rcp_resource.rc != 0
 
@@ -86,7 +86,7 @@
           ╚═══════════════════════════════════════════════════════════════╝
 
           Cluster: {{ cluster_name }}
-          Namespace: {{ capi_namespace }}
+          Namespace: {{ rosa_hcp_namespace }}
           Current Version: {{ current_version }}
           Available Upgrades: {{ available_upgrades | join(', ') if available_upgrades | length > 0 else 'None' }}
 
@@ -97,7 +97,7 @@
           Current version: {{ current_version }}
           The cluster is already at the latest version or upgrade paths
           have not been populated yet. Check:
-            oc get rosacontrolplane {{ cluster_name }} -n {{ capi_namespace }} -o jsonpath='{.status.availableUpgrades}'
+            oc get rosacontrolplane {{ cluster_name }} -n {{ rosa_hcp_namespace }} -o jsonpath='{.status.availableUpgrades}'
       when: available_upgrades | length == 0
 
     - name: Set requested version (auto-detect first available)
@@ -122,7 +122,7 @@
 
     - name: Patch ROSAControlPlane with new version
       shell: |
-        oc patch rosacontrolplane {{ cluster_name }} -n {{ capi_namespace }} \
+        oc patch rosacontrolplane {{ cluster_name }} -n {{ rosa_hcp_namespace }} \
           --type=merge \
           -p '{"spec": {"version": "{{ requested_version }}"}}'
       register: patch_result
@@ -138,7 +138,7 @@
 
     - name: Wait for upgrade to begin
       shell: |
-        oc get rosacontrolplane {{ cluster_name }} -n {{ capi_namespace }} \
+        oc get rosacontrolplane {{ cluster_name }} -n {{ rosa_hcp_namespace }} \
           -o jsonpath='{.status.ready}'
       register: upgrade_status
       until: upgrade_status.stdout == "false" or upgrade_status.stdout == "true"
@@ -149,11 +149,11 @@
 
     - name: Wait for ROSAControlPlane upgrade to complete
       shell: |
-        STATUS_VERSION=$(oc get rosacontrolplane {{ cluster_name }} -n {{ capi_namespace }} \
+        STATUS_VERSION=$(oc get rosacontrolplane {{ cluster_name }} -n {{ rosa_hcp_namespace }} \
           -o jsonpath='{.status.version}' 2>/dev/null || echo "unknown")
-        READY=$(oc get rosacontrolplane {{ cluster_name }} -n {{ capi_namespace }} \
+        READY=$(oc get rosacontrolplane {{ cluster_name }} -n {{ rosa_hcp_namespace }} \
           -o jsonpath='{.status.ready}' 2>/dev/null || echo "false")
-        UPGRADE_STATE=$(oc get rosacontrolplane {{ cluster_name }} -n {{ capi_namespace }} \
+        UPGRADE_STATE=$(oc get rosacontrolplane {{ cluster_name }} -n {{ rosa_hcp_namespace }} \
           -o jsonpath='{.status.conditions[?(@.type=="ROSAControlPlaneUpgrading")].reason}' 2>/dev/null || echo "unknown")
         ELAPSED=$(( $(date +%s) - {{ patch_epoch }} ))
         MINS=$((ELAPSED / 60))
@@ -184,7 +184,7 @@
           Expected version: {{ requested_version }}
 
           Check upgrade status:
-            oc describe rosacontrolplane {{ cluster_name }} -n {{ capi_namespace }}
+            oc describe rosacontrolplane {{ cluster_name }} -n {{ rosa_hcp_namespace }}
       when: final_version != requested_version or final_ready | lower != "true"
 
     - name: Calculate total upgrade time
@@ -205,4 +205,4 @@
           Total Upgrade Time: {{ (total_seconds | int // 60) }}m {{ (total_seconds | int % 60) }}s
 
           Verify:
-            oc get rosacontrolplane {{ cluster_name }} -n {{ capi_namespace }}
+            oc get rosacontrolplane {{ cluster_name }} -n {{ rosa_hcp_namespace }}

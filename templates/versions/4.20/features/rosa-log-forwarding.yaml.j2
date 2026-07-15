@@ -2,7 +2,7 @@ apiVersion: cluster.open-cluster-management.io/v1
 kind: ManagedCluster
 metadata:
   name: {{ cluster_name }}
-  namespace: {{ capi_namespace }}
+  namespace: {{ rosa_hcp_namespace }}
   labels:
     automation.acm.redhat.com/test-case: "ROSA-LogForwarding"
     automation.acm.redhat.com/pr-5786: "true"
@@ -13,7 +13,7 @@ apiVersion: cluster.x-k8s.io/v1beta1
 kind: Cluster
 metadata:
   name: {{ cluster_name }}
-  namespace: {{ capi_namespace }}
+  namespace: {{ rosa_hcp_namespace }}
   labels:
     automation.acm.redhat.com/test-case: "ROSA-LogForwarding"
     automation.acm.redhat.com/pr-5786: "true"
@@ -25,18 +25,18 @@ spec:
     apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
     kind: ROSACluster
     name: {{ cluster_name }}
-    namespace: {{ capi_namespace }}
+    namespace: {{ rosa_hcp_namespace }}
   controlPlaneRef:
     apiVersion: controlplane.cluster.x-k8s.io/v1beta2
     kind: ROSAControlPlane
     name: {{ cluster_name }}
-    namespace: {{ capi_namespace }}
+    namespace: {{ rosa_hcp_namespace }}
 ---
 apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
 kind: ROSACluster
 metadata:
   name: {{ cluster_name }}
-  namespace: {{ capi_namespace }}
+  namespace: {{ rosa_hcp_namespace }}
   labels:
     automation.acm.redhat.com/test-case: "ROSA-LogForwarding"
     automation.acm.redhat.com/pr-5786: "true"
@@ -47,7 +47,7 @@ apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
 kind: ROSANetwork
 metadata:
   name: {{ cluster_name }}-network
-  namespace: {{ capi_namespace }}
+  namespace: {{ rosa_hcp_namespace }}
   labels:
     cluster.x-k8s.io/cluster-name: {{ cluster_name }}
     automation.acm.redhat.com/test-case: "ROSA-LogForwarding"
@@ -75,7 +75,7 @@ apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
 kind: ROSARoleConfig
 metadata:
   name: {{ cluster_name }}-roles
-  namespace: {{ capi_namespace }}
+  namespace: {{ rosa_hcp_namespace }}
   labels:
     cluster.x-k8s.io/cluster-name: {{ cluster_name }}
     automation.acm.redhat.com/test-case: "ROSA-LogForwarding"
@@ -97,7 +97,7 @@ apiVersion: controlplane.cluster.x-k8s.io/v1beta2
 kind: ROSAControlPlane
 metadata:
   name: {{ cluster_name }}
-  namespace: {{ capi_namespace }}
+  namespace: {{ rosa_hcp_namespace }}
   labels:
     automation.acm.redhat.com/test-case: "ROSA-LogForwarding"
     automation.acm.redhat.com/pr-5786: "true"
@@ -109,13 +109,13 @@ spec:
   # Network automation reference
   rosaNetworkRef:
     name: {{ cluster_name }}-network
-    namespace: {{ capi_namespace }}
+    namespace: {{ rosa_hcp_namespace }}
 
   # Role automation reference (if enabled)
   {% if rosa_role_config is defined and rosa_role_config.enabled | default(false) %}
   rosaRoleConfigRef:
     name: {{ cluster_name }}-roles
-    namespace: {{ capi_namespace }}
+    namespace: {{ rosa_hcp_namespace }}
   {% endif %}
 
   rosaClusterName: {{ cluster_name }}
@@ -185,7 +185,7 @@ apiVersion: cluster.x-k8s.io/v1beta1
 kind: MachinePool
 metadata:
   name: {{ cluster_name }}
-  namespace: {{ capi_namespace }}
+  namespace: {{ rosa_hcp_namespace }}
   labels:
     automation.acm.redhat.com/test-case: "ROSA-LogForwarding"
     automation.acm.redhat.com/pr-5786: "true"
@@ -206,7 +206,7 @@ apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
 kind: ROSAMachinePool
 metadata:
   name: {{ cluster_name }}
-  namespace: {{ capi_namespace }}
+  namespace: {{ rosa_hcp_namespace }}
   labels:
     automation.acm.redhat.com/test-case: "ROSA-LogForwarding"
     automation.acm.redhat.com/pr-5786: "true"

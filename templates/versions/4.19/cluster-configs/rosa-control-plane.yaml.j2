@@ -2,7 +2,7 @@ apiVersion: controlplane.cluster.x-k8s.io/v1beta2
 kind: ROSAControlPlane
 metadata:
   name: "{{ cluster_name }}"
-  namespace: "{{ capi_namespace }}"
+  namespace: "{{ rosa_hcp_namespace }}"
 spec:
   # OpenShift 4.19 - Enhanced Configuration
   version: "{{ openshift_version | default('4.19.0') }}"
@@ -56,7 +56,7 @@ spec:
   # OCM credentials reference
   credentialsSecretRef:
     name: "{{ rosa_creds_secret }}"
-    namespace: "{{ capa_system_namespace }}"
+    namespace: "{{ capa_namespace }}"
   
   # Enhanced addon configuration for 4.19
   addons:

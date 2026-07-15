@@ -18,31 +18,31 @@
 
 - name: Check if Cluster exists
   shell: |
-    oc get cluster {{ cluster_name }} -n {{ capi_namespace }} -o name 2>/dev/null || echo "not-found"
+    oc get cluster {{ cluster_name }} -n {{ rosa_hcp_namespace }} -o name 2>/dev/null || echo "not-found"
   register: cluster_exists
   changed_when: false
 
 - name: Check if ROSAControlPlane exists
   shell: |
-    oc get rosacontrolplane {{ cluster_name }} -n {{ capi_namespace }} -o name 2>/dev/null || echo "not-found"
+    oc get rosacontrolplane {{ cluster_name }} -n {{ rosa_hcp_namespace }} -o name 2>/dev/null || echo "not-found"
   register: rcp_exists
   changed_when: false
 
 - name: Check if ROSAMachinePool exists
   shell: |
-    oc get rosamachinepool {{ machine_pool_name }} -n {{ capi_namespace }} -o name 2>/dev/null || echo "not-found"
+    oc get rosamachinepool {{ machine_pool_name }} -n {{ rosa_hcp_namespace }} -o name 2>/dev/null || echo "not-found"
   register: rmp_exists
   changed_when: false
 
 - name: Check if ROSANetwork exists
   shell: |
-    oc get rosanetwork {{ rosa_network_name }} -n {{ capi_namespace }} -o name 2>/dev/null || echo "not-found"
+    oc get rosanetwork {{ rosa_network_name }} -n {{ rosa_hcp_namespace }} -o name 2>/dev/null || echo "not-found"
   register: rn_exists
   changed_when: false
 
 - name: Check if ROSARoleConfig exists
   shell: |
-    oc get rosaroleconfig {{ rosa_role_config_name }} -n {{ capi_namespace }} -o name 2>/dev/null || echo "not-found"
+    oc get rosaroleconfig {{ rosa_role_config_name }} -n {{ rosa_hcp_namespace }} -o name 2>/dev/null || echo "not-found"
   register: rrc_exists
   changed_when: false
 
@@ -79,7 +79,7 @@
 
 - name: Delete all ROSA resources with single oc delete command
   shell: |
-    oc delete -n {{ capi_namespace }} {{ resources_to_delete | join(' ') }} --wait=false
+    oc delete -n {{ rosa_hcp_namespace }} {{ resources_to_delete | join(' ') }} --wait=false
   register: delete_all
   when: resources_to_delete | length > 0
 
@@ -97,7 +97,7 @@
 
 - name: Emit agent context for ROSAControlPlane deletion wait
   shell: |
-    echo "#AGENT_CONTEXT: resource_name={{ cluster_name }} namespace={{ capi_namespace }} resource_type=rosacontrolplane" | tee -a "{{ agent_monitor_log }}"
+    echo "#AGENT_CONTEXT: resource_name={{ cluster_name }} namespace={{ rosa_hcp_namespace }} resource_type=rosacontrolplane" | tee -a "{{ agent_monitor_log }}"
   changed_when: false
   when:
     - wait_for_deletion | bool
@@ -108,7 +108,7 @@
     LOGFILE="{{ agent_monitor_log }}"
     RETRIES={{ (rosacontrolplane_timeout | default(deletion_timeout) | int / 10) | int }}
     for i in $(seq 1 $RETRIES); do
-      OUTPUT=$(oc get rosacontrolplane {{ cluster_name }} -n {{ capi_namespace }} 2>&1)
+      OUTPUT=$(oc get rosacontrolplane {{ cluster_name }} -n {{ rosa_hcp_namespace }} 2>&1)
       RC=$?
       if [ $RC -ne 0 ]; then
         if echo "$OUTPUT" | grep -qi "not found\|NotFound\|no resources found"; then
@@ -132,7 +132,7 @@
   shell: |
     LOGFILE="{{ agent_monitor_log }}"
     for i in $(seq 1 18); do
-      OUTPUT=$(oc get rosacontrolplane {{ cluster_name }} -n {{ capi_namespace }} 2>&1)
+      OUTPUT=$(oc get rosacontrolplane {{ cluster_name }} -n {{ rosa_hcp_namespace }} 2>&1)
       RC=$?
       if [ $RC -ne 0 ]; then
         if echo "$OUTPUT" | grep -qi "not found\|NotFound\|no resources found"; then
@@ -161,7 +161,7 @@
       ✅ ROSAControlPlane successfully deleted: {{ cluster_name }}
       {% else %}
       ⚠️  ROSAControlPlane still exists (may still be deleting): {{ cluster_name }}
-      Check status: oc get rosacontrolplane {{ cluster_name }} -n {{ capi_namespace }}
+      Check status: oc get rosacontrolplane {{ cluster_name }} -n {{ rosa_hcp_namespace }}
       {% endif %}
   when:
     - wait_for_deletion | bool
@@ -181,7 +181,7 @@
     msg: |
       ⚠️  ROSAControlPlane {{ cluster_name }} still exists after timeout.
       Continuing with remaining resource cleanup...
-      Check: oc get rosacontrolplane {{ cluster_name }} -n {{ capi_namespace }}
+      Check: oc get rosacontrolplane {{ cluster_name }} -n {{ rosa_hcp_namespace }}
   when: rcp_deletion_failed | default(false) | bool
 
 - name: Clean up additional security groups (before VPC deletion)
@@ -192,7 +192,7 @@
 
 - name: Delete ROSANetwork (after ROSAControlPlane deletion completes)
   shell: |
-    oc delete rosanetwork {{ rosa_network_name }} -n {{ capi_namespace }} --wait=false
+    oc delete rosanetwork {{ rosa_network_name }} -n {{ rosa_hcp_namespace }} --wait=false
   register: delete_rn
   failed_when: false
   when:
@@ -201,7 +201,7 @@
 
 - name: Delete ROSARoleConfig (after ROSAControlPlane deletion completes)
   shell: |
-    oc delete rosaroleconfig {{ rosa_role_config_name }} -n {{ capi_namespace }} --wait=false
+    oc delete rosaroleconfig {{ rosa_role_config_name }} -n {{ rosa_hcp_namespace }} --wait=false
   register: delete_rrc
   failed_when: false
   when:
@@ -218,7 +218,7 @@
 
 - name: Emit agent context for ROSANetwork deletion wait
   shell: |
-    echo "#AGENT_CONTEXT: resource_name={{ rosa_network_name }} namespace={{ capi_namespace }} resource_type=rosanetwork" | tee -a "{{ agent_monitor_log }}"
+    echo "#AGENT_CONTEXT: resource_name={{ rosa_network_name }} namespace={{ rosa_hcp_namespace }} resource_type=rosanetwork" | tee -a "{{ agent_monitor_log }}"
   changed_when: false
   when:
     - wait_for_deletion | bool
@@ -230,7 +230,7 @@
     LOGFILE="{{ agent_monitor_log }}"
     RETRIES={{ (rosanetwork_timeout | default(deletion_timeout) | int / 10) | int }}
     for i in $(seq 1 $RETRIES); do
-      OUTPUT=$(oc get rosanetwork {{ rosa_network_name }} -n {{ capi_namespace }} 2>&1)
+      OUTPUT=$(oc get rosanetwork {{ rosa_network_name }} -n {{ rosa_hcp_namespace }} 2>&1)
       RC=$?
       if [ $RC -ne 0 ]; then
         if echo "$OUTPUT" | grep -qi "not found\|NotFound\|no resources found"; then
@@ -255,7 +255,7 @@
   shell: |
     LOGFILE="{{ agent_monitor_log }}"
     for i in $(seq 1 36); do
-      OUTPUT=$(oc get rosanetwork {{ rosa_network_name }} -n {{ capi_namespace }} 2>&1)
+      OUTPUT=$(oc get rosanetwork {{ rosa_network_name }} -n {{ rosa_hcp_namespace }} 2>&1)
       RC=$?
       if [ $RC -ne 0 ]; then
         if echo "$OUTPUT" | grep -qi "not found\|NotFound\|no resources found"; then
@@ -285,7 +285,7 @@
       ✅ ROSANetwork successfully deleted: {{ rosa_network_name }}
       {% else %}
       ⚠️  ROSANetwork still exists (CloudFormation stack may still be deleting)
-      Check status: oc get rosanetwork {{ rosa_network_name }} -n {{ capi_namespace }}
+      Check status: oc get rosanetwork {{ rosa_network_name }} -n {{ rosa_hcp_namespace }}
       {% endif %}
   when:
     - wait_for_deletion | bool
@@ -323,7 +323,7 @@
 
 - name: Emit agent context for CloudFormation verification
   shell: |
-    echo "#AGENT_CONTEXT: resource_name={{ rosa_network_name }} namespace={{ capi_namespace }} resource_type=rosanetwork" | tee -a "{{ agent_monitor_log }}"
+    echo "#AGENT_CONTEXT: resource_name={{ rosa_network_name }} namespace={{ rosa_hcp_namespace }} resource_type=rosanetwork" | tee -a "{{ agent_monitor_log }}"
   changed_when: false
   when:
     - wait_for_deletion | bool
@@ -339,7 +339,7 @@
     STACK_NAME="{{ cluster_name }}-rosa-network-stack"
     REGION="{{ aws_region | default('us-west-2') }}"
     NETWORK_NAME="{{ rosa_network_name }}"
-    NAMESPACE="{{ capi_namespace }}"
+    NAMESPACE="{{ rosa_hcp_namespace }}"
     RETRIES=36
     echo "Verifying CloudFormation stack $STACK_NAME cleanup..." | tee -a "$LOGFILE"
     for i in $(seq 1 $RETRIES); do
@@ -407,7 +407,7 @@
 
 - name: Emit agent context for ROSARoleConfig deletion wait
   shell: |
-    echo "#AGENT_CONTEXT: resource_name={{ rosa_role_config_name }} namespace={{ capi_namespace }} resource_type=rosaroleconfig" | tee -a "{{ agent_monitor_log }}"
+    echo "#AGENT_CONTEXT: resource_name={{ rosa_role_config_name }} namespace={{ rosa_hcp_namespace }} resource_type=rosaroleconfig" | tee -a "{{ agent_monitor_log }}"
   changed_when: false
   when:
     - wait_for_deletion | bool
@@ -419,7 +419,7 @@
     LOGFILE="{{ agent_monitor_log }}"
     RETRIES={{ (rosaroleconfig_timeout | default(deletion_timeout) | int / 10) | int }}
     for i in $(seq 1 $RETRIES); do
-      OUTPUT=$(oc get rosaroleconfig {{ rosa_role_config_name }} -n {{ capi_namespace }} 2>&1)
+      OUTPUT=$(oc get rosaroleconfig {{ rosa_role_config_name }} -n {{ rosa_hcp_namespace }} 2>&1)
       RC=$?
       if [ $RC -ne 0 ]; then
         if echo "$OUTPUT" | grep -qi "not found\|NotFound\|no resources found"; then
@@ -444,7 +444,7 @@
   shell: |
     LOGFILE="{{ agent_monitor_log }}"
     for i in $(seq 1 18); do
-      OUTPUT=$(oc get rosaroleconfig {{ rosa_role_config_name }} -n {{ capi_namespace }} 2>&1)
+      OUTPUT=$(oc get rosaroleconfig {{ rosa_role_config_name }} -n {{ rosa_hcp_namespace }} 2>&1)
       RC=$?
       if [ $RC -ne 0 ]; then
         if echo "$OUTPUT" | grep -qi "not found\|NotFound\|no resources found"; then
@@ -474,7 +474,7 @@
       ✅ ROSARoleConfig successfully deleted: {{ rosa_role_config_name }}
       {% else %}
       ⚠️  ROSARoleConfig still exists (IAM roles may still be deleting)
-      Check status: oc get rosaroleconfig {{ rosa_role_config_name }} -n {{ capi_namespace }}
+      Check status: oc get rosaroleconfig {{ rosa_role_config_name }} -n {{ rosa_hcp_namespace }}
       {% endif %}
   when:
     - wait_for_deletion | bool

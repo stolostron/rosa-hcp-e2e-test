@@ -7,7 +7,7 @@
 
 - name: Wait for CAPI controller deployment to be created
   shell: |
-    oc --context='{{ ocp_context }}' get deploy -n {{ mce_namespace }} -ojson |\
+    oc --context='{{ ocp_context }}' get deploy -n {{ capi_namespace }} -ojson |\
     jq -r '.items[] | select(.metadata.name | contains("capi-controller-manager")) | .metadata.name'
   register: capi_deploy_check
   until: capi_deploy_check.stdout | length > 0
@@ -21,7 +21,7 @@
 
 - name: Wait for CAPA controller deployment to be created
   shell: |
-    oc --context='{{ ocp_context }}' get deploy -n {{ mce_namespace }} -ojson |\
+    oc --context='{{ ocp_context }}' get deploy -n {{ capa_namespace }} -ojson |\
     jq -r '.items[] | select(.metadata.name | contains("capa-controller-manager")) | .metadata.name'
   register: capa_deploy_check
   until: capa_deploy_check.stdout | length > 0
@@ -35,7 +35,7 @@
 
 - name: Wait for CAPI controller to be ready
   shell: |
-    oc --context='{{ ocp_context }}' get deploy {{ capi_deploy_check.stdout }} -n {{ mce_namespace }} -ojson |\
+    oc --context='{{ ocp_context }}' get deploy {{ capi_deploy_check.stdout }} -n {{ capi_namespace }} -ojson |\
     jq -r 'if (.status.availableReplicas // 0) > 0 and (.status.availableReplicas == .status.replicas) then "ready" else "not ready" end'
   register: capi_ready_check
   until: capi_ready_check.stdout == "ready"
@@ -49,7 +49,7 @@
 
 - name: Wait for CAPA controller to be ready
   shell: |
-    oc --context='{{ ocp_context }}' get deploy {{ capa_deploy_check.stdout }} -n {{ mce_namespace }} -ojson |\
+    oc --context='{{ ocp_context }}' get deploy {{ capa_deploy_check.stdout }} -n {{ capa_namespace }} -ojson |\
     jq -r 'if (.status.availableReplicas // 0) > 0 and (.status.availableReplicas == .status.replicas) then "ready" else "not ready" end'
   register: capa_ready_check
   until: capa_ready_check.stdout == "ready"

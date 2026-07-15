@@ -13,14 +13,14 @@
   debug:
     msg: |
       Waiting for ROSARoleConfig: {{ rosa_role_config_name }}
-      - Namespace: {{ capi_namespace }}
+      - Namespace: {{ rosa_hcp_namespace }}
       - Maximum wait time: {{ max_wait_time }} seconds
       - Poll interval: {{ poll_interval }} seconds
       - Start time: {{ ansible_date_time.iso8601 }}
 
 - name: Wait for ROSARoleConfig to exist
   shell: |
-    oc get rosaroleconfig {{ rosa_role_config_name }} -n {{ capi_namespace }} -o json 2>/dev/null || echo '{"items":[]}'
+    oc get rosaroleconfig {{ rosa_role_config_name }} -n {{ rosa_hcp_namespace }} -o json 2>/dev/null || echo '{"items":[]}'
   register: rosa_role_config_check
   until: (rosa_role_config_check.stdout if rosa_role_config_check.stdout is mapping else (rosa_role_config_check.stdout | from_json)).metadata.name | default('') != ''
   retries: 20
@@ -31,7 +31,7 @@
   block:
     - name: Wait for ROSARoleConfig to be ready
       shell: |
-        oc get rosaroleconfig {{ rosa_role_config_name }} -n {{ capi_namespace }} -o json 2>/dev/null || echo '{}'
+        oc get rosaroleconfig {{ rosa_role_config_name }} -n {{ rosa_hcp_namespace }} -o json 2>/dev/null || echo '{}'
       register: rosa_role_config_status
       until:
         - ((rosa_role_config_status.stdout if rosa_role_config_status.stdout is mapping else (rosa_role_config_status.stdout | from_json)).status.conditions | default([]) | selectattr('type', 'equalto', 'Ready') | selectattr('status', 'equalto', 'True') | list | length) > 0
@@ -55,7 +55,7 @@
 
     - name: Get current ROSARoleConfig status for debugging
       shell: |
-        oc get rosaroleconfig {{ rosa_role_config_name }} -n {{ capi_namespace }} -o json 2>/dev/null || echo '{"items":[]}'
+        oc get rosaroleconfig {{ rosa_role_config_name }} -n {{ rosa_hcp_namespace }} -o json 2>/dev/null || echo '{"items":[]}'
       register: failed_rosa_role_config_status_raw
       failed_when: false
       changed_when: false
@@ -104,7 +104,7 @@
 
     - name: Get related events for debugging
       shell: |
-        oc get events -n {{ capi_namespace }} --field-selector involvedObject.name={{ rosa_role_config_name }},involvedObject.kind=ROSARoleConfig -o json 2>/dev/null || echo '{"items":[]}'
+        oc get events -n {{ rosa_hcp_namespace }} --field-selector involvedObject.name={{ rosa_role_config_name }},involvedObject.kind=ROSARoleConfig -o json 2>/dev/null || echo '{"items":[]}'
       register: rosa_role_config_events_raw
       failed_when: false
       changed_when: false
@@ -127,7 +127,7 @@
 
     - name: Check CAPA controller status
       shell: |
-        oc get deployment capa-controller-manager -n {{ capa_system_namespace }} -o json 2>/dev/null || echo '{"items":[]}'
+        oc get deployment capa-controller-manager -n {{ capa_namespace }} -o json 2>/dev/null || echo '{"items":[]}'
       register: capa_controller_status_raw
       failed_when: false
       changed_when: false
@@ -158,7 +158,7 @@
             * {{ condition.type }}: {{ condition.status }} ({{ condition.reason | default('N/A') }})
           {% endfor %}
           {% else %}
-          - CAPA controller deployment not found in namespace {{ capa_system_namespace }}
+          - CAPA controller deployment not found in namespace {{ capa_namespace }}
           {% endif %}
 
     - name: Set failure facts
@@ -174,17 +174,17 @@
           ROSARoleConfig Wait Failed - Troubleshooting Steps:
 
           1. Check CAPA Controller:
-             kubectl get deployment capa-controller-manager -n {{ capa_system_namespace }}
-             kubectl logs deployment/capa-controller-manager -n {{ capa_system_namespace }}
+             kubectl get deployment capa-controller-manager -n {{ capa_namespace }}
+             kubectl logs deployment/capa-controller-manager -n {{ capa_namespace }}
 
           2. Check AWS Credentials:
-             kubectl get secret {{ rosa_creds_secret }} -n {{ capa_system_namespace }}
+             kubectl get secret {{ rosa_creds_secret }} -n {{ capa_namespace }}
 
           3. Check ROSARoleConfig Resource:
-             kubectl describe rosaroleconfig {{ rosa_role_config_name }} -n {{ capi_namespace }}
+             kubectl describe rosaroleconfig {{ rosa_role_config_name }} -n {{ rosa_hcp_namespace }}
 
           4. Check Events:
-             kubectl get events -n {{ capi_namespace }} --field-selector involvedObject.name={{ rosa_role_config_name }}
+             kubectl get events -n {{ rosa_hcp_namespace }} --field-selector involvedObject.name={{ rosa_role_config_name }}
 
           5. Verify AWS Permissions:
              - IAM role creation permissions

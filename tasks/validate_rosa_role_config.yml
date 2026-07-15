@@ -13,14 +13,14 @@
     api_version: infrastructure.cluster.x-k8s.io/v1beta2
     kind: ROSARoleConfig
     name: "{{ rosa_role_config_name }}"
-    namespace: "{{ capi_namespace }}"
+    namespace: "{{ rosa_hcp_namespace }}"
   register: rosa_role_config_validation
 
 - name: Validate ROSARoleConfig exists
   block:
     - name: Check if ROSARoleConfig exists
       fail:
-        msg: "ROSARoleConfig {{ rosa_role_config_name }} not found in namespace {{ capi_namespace }}"
+        msg: "ROSARoleConfig {{ rosa_role_config_name }} not found in namespace {{ rosa_hcp_namespace }}"
       when: rosa_role_config_validation.resources | length == 0
 
     - name: Set ROSARoleConfig resource variable

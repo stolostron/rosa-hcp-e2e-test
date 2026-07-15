@@ -29,7 +29,7 @@
     polarion_test_description: "Enable and disable test for capi and capa"
     timestamp: "{{ now() }}"
     execution_time: "{{ difference }}"
-    mce_namespace: "multicluster-engine"
+    mce_namespace: "{{ mce_namespace }}"
   with_items:
     - results.xml
 

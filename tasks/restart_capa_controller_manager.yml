@@ -1,12 +1,12 @@
 - name: Check if capa-controller-manager deployment exists
   shell: |
-    oc get deployment capa-controller-manager -n multicluster-engine --ignore-not-found -o name
+    oc get deployment capa-controller-manager -n {{ capa_namespace }} --ignore-not-found -o name
   register: capa_deployment_check
   changed_when: false
 
 - name: Get capa-controller-manager pod name before restart
   shell: |
-    oc get pod -n multicluster-engine -ojson |\
+    oc get pod -n {{ capa_namespace }} -ojson |\
       jq -c '.items[] | select(.metadata.name | contains("capa-controller-manager")) | .metadata.name'
   register: previous_pod_name
   when: capa_deployment_check.stdout != ""
@@ -14,12 +14,12 @@
 
 - name: Restart the capa-controller-manager deployment
   shell: |
-    oc rollout restart deployment capa-controller-manager -n multicluster-engine
+    oc rollout restart deployment capa-controller-manager -n {{ capa_namespace }}
   when: capa_deployment_check.stdout != ""
 
 - name: Wait for new capa-controller-manager pod
   shell: |
-    oc get pod -n multicluster-engine -ojson |\
+    oc get pod -n {{ capa_namespace }} -ojson |\
       jq -c '.items[] | select(.metadata.name | contains("capa-controller-manager")) | .metadata.name'
   register: current_pod_name
   retries: 12

@@ -18,7 +18,7 @@
         "availability_zone_count": 2,
         "aws_region": "us-west-2",
         "channel_group": "stable",
-        "capi_namespace": "ns-rosa-hcp"
+        "rosa_hcp_namespace": "ns-rosa-hcp"
       }
     }
   ],

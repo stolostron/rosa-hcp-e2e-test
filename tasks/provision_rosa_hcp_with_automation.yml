@@ -69,10 +69,10 @@
     openshift_version: "4.20.10"
   when: openshift_version is not defined
 
-- name: Set default value for capi_namespace
+- name: Set default value for rosa_hcp_namespace
   set_fact:
-    capi_namespace: "ns-rosa-hcp"
-  when: capi_namespace is not defined
+    rosa_hcp_namespace: "ns-rosa-hcp"
+  when: rosa_hcp_namespace is not defined
 
 - name: Display provisioning plan
   debug:
@@ -82,7 +82,7 @@
       ═══════════════════════════════════════════════════════════════
 
       Cluster Name: {{ cluster_name }}
-      Namespace: {{ capi_namespace }}
+      Namespace: {{ rosa_hcp_namespace }}
       AWS Region: {{ aws_region }}
       OpenShift Version: {{ openshift_version }}
 
@@ -362,7 +362,7 @@
           ✅ STEP 3 COMPLETE: RosaControlPlane created successfully
 
           Cluster: {{ cluster_name }}
-          Namespace: {{ capi_namespace }}
+          Namespace: {{ rosa_hcp_namespace }}
           {% if create_rosa_roles | bool %}
           RosaRoleConfig: {{ rosa_role_config_name }} ✓
           {% endif %}
@@ -387,7 +387,7 @@
           Expected time: 10-20 minutes
           Maximum wait: 37.5 minutes
 
-          Monitoring: oc get rosacontrolplane {{ cluster_name }} -n {{ capi_namespace }} -w
+          Monitoring: oc get rosacontrolplane {{ cluster_name }} -n {{ rosa_hcp_namespace }} -w
 
     - name: Wait for ROSAControlPlane to be ready
       include_tasks: wait_for_rosa_control_plane_ready.yml
@@ -410,7 +410,7 @@
       ✅ ✅ ✅ ROSA HCP CLUSTER PROVISIONING COMPLETE! ✅ ✅ ✅
 
       Cluster Name: {{ cluster_name }}
-      Namespace: {{ capi_namespace }}
+      Namespace: {{ rosa_hcp_namespace }}
 
       Resources Created:
       {% if create_rosa_roles | bool %}
@@ -431,8 +431,8 @@
       Cluster Status: FULLY PROVISIONED AND RUNNING
 
       Next Steps:
-      1. Get cluster console URL: oc get rosacontrolplane {{ cluster_name }} -n {{ capi_namespace }} -o jsonpath='{.status.consoleURL}'
-      2. Get kubeconfig: oc get secret {{ cluster_name }}-kubeconfig -n {{ capi_namespace }}
+      1. Get cluster console URL: oc get rosacontrolplane {{ cluster_name }} -n {{ rosa_hcp_namespace }} -o jsonpath='{.status.consoleURL}'
+      2. Get kubeconfig: oc get secret {{ cluster_name }}-kubeconfig -n {{ rosa_hcp_namespace }}
       3. View cluster in ROSA console
       4. Begin testing CAPI workflows
 

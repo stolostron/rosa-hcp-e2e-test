@@ -8,7 +8,7 @@ apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
 kind: ROSARoleConfig
 metadata:
   name: {{ cluster_name }}-roles
-  namespace: {{ capi_namespace | default("ns-rosa-hcp") }}
+  namespace: {{ rosa_hcp_namespace | default("ns-rosa-hcp") }}
   labels:
     cluster.x-k8s.io/cluster-name: {{ cluster_name }}
     automation.acm.redhat.com/test-case: "ACM-21162"
@@ -136,7 +136,7 @@ apiVersion: cluster.x-k8s.io/v1beta1
 kind: Cluster
 metadata:
   name: {{ cluster_name }}
-  namespace: {{ capi_namespace | default("ns-rosa-hcp") }}
+  namespace: {{ rosa_hcp_namespace | default("ns-rosa-hcp") }}
   labels:
     cluster.x-k8s.io/cluster-name: {{ cluster_name }}
     automation.acm.redhat.com/test-case: "ACM-21162"
@@ -165,7 +165,7 @@ apiVersion: controlplane.cluster.x-k8s.io/v1beta1
 kind: ROSAControlPlane
 metadata:
   name: {{ cluster_name }}-control-plane
-  namespace: {{ capi_namespace | default("ns-rosa-hcp") }}
+  namespace: {{ rosa_hcp_namespace | default("ns-rosa-hcp") }}
   annotations:
     {% if cluster_description is defined and cluster_description %}
     cluster.x-k8s.io/description: |
@@ -277,7 +277,7 @@ apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
 kind: ROSAMachinePool
 metadata:
   name: {{ cluster_name }}-workers
-  namespace: {{ capi_namespace | default("ns-rosa-hcp") }}
+  namespace: {{ rosa_hcp_namespace | default("ns-rosa-hcp") }}
   labels:
     cluster.x-k8s.io/cluster-name: {{ cluster_name }}
     automation.acm.redhat.com/test-case: "ACM-21162"
@@ -353,7 +353,7 @@ apiVersion: cluster.x-k8s.io/v1beta1
 kind: MachinePool
 metadata:
   name: {{ cluster_name }}-workers
-  namespace: {{ capi_namespace | default("ns-rosa-hcp") }}
+  namespace: {{ rosa_hcp_namespace | default("ns-rosa-hcp") }}
   labels:
     cluster.x-k8s.io/cluster-name: {{ cluster_name }}
     automation.acm.redhat.com/test-case: "ACM-21162"

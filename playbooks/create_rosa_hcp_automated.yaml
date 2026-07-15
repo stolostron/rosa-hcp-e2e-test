@@ -68,7 +68,7 @@
           • Name: {{ cluster_name | default('not-specified') }}
           • Version: {{ openshift_version | default('4.20') }}
           • Region: {{ aws_region | default('us-west-2') }}
-          • Namespace: {{ capi_namespace | default('ns-rosa-hcp') }}
+          • Namespace: {{ rosa_hcp_namespace | default('ns-rosa-hcp') }}
 
           Automation Settings:
           • Create RosaRoleConfig: {{ '✓ Yes' if (create_rosa_roles | default(false)) else '✗ No' }}
@@ -104,25 +104,25 @@
 
           Your ROSA HCP cluster is being created:
           • Cluster: {{ cluster_name }}
-          • Namespace: {{ capi_namespace }}
+          • Namespace: {{ rosa_hcp_namespace }}
 
           Monitor Progress:
-          oc get rosacontrolplane {{ cluster_name }} -n {{ capi_namespace }} -w
+          oc get rosacontrolplane {{ cluster_name }} -n {{ rosa_hcp_namespace }} -w
 
           View Details:
-          oc describe rosacontrolplane {{ cluster_name }} -n {{ capi_namespace }}
+          oc describe rosacontrolplane {{ cluster_name }} -n {{ rosa_hcp_namespace }}
 
           Check Events:
-          oc get events -n {{ capi_namespace }} --sort-by='.lastTimestamp'
+          oc get events -n {{ rosa_hcp_namespace }} --sort-by='.lastTimestamp'
 
           {% if create_rosa_roles %}
           View Roles:
-          oc get rosaroleconfig -n {{ capi_namespace }}
+          oc get rosaroleconfig -n {{ rosa_hcp_namespace }}
           {% endif %}
 
           {% if create_rosa_network %}
           View Network:
-          oc get rosanetwork -n {{ capi_namespace }}
+          oc get rosanetwork -n {{ rosa_hcp_namespace }}
           {% endif %}
 
           🎉 Happy cluster provisioning!

@@ -1,5 +1,5 @@
 - name: Get MCE name
-  shell: oc get mce -n multicluster-engine -ojson | jq -r '.items[].metadata.name'
+  shell: oc get mce -n {{ mce_namespace }} -ojson | jq -r '.items[].metadata.name'
   register: mce_name
 
 - name: Disable hypershift component

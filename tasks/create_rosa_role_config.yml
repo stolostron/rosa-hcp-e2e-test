@@ -23,7 +23,7 @@
     - cluster_name
     - aws_account_id
     - aws_region
-    - capi_namespace
+    - rosa_hcp_namespace
 
 - name: Resolve ROSARoleConfig template
   include_tasks: template_resolver.yml
@@ -51,11 +51,11 @@
       - Output File: {{ output_dir }}/{{ rosa_role_config_name }}.yaml
       - AWS Account ID: {{ aws_account_id }}
       - AWS Region: {{ aws_region }}
-      - Namespace: {{ capi_namespace }}
+      - Namespace: {{ rosa_hcp_namespace }}
 
 - name: Check if ROSARoleConfig already exists
   shell: |
-    oc get rosaroleconfig {{ rosa_role_config_name }} -n {{ capi_namespace }} -o json 2>/dev/null || echo '{}'
+    oc get rosaroleconfig {{ rosa_role_config_name }} -n {{ rosa_hcp_namespace }} -o json 2>/dev/null || echo '{}'
   register: existing_rosa_role_config_raw
   failed_when: false
   changed_when: false
@@ -90,7 +90,7 @@
 - name: Display ROSARoleConfig creation needed
   debug:
     msg: |
-      Creating new ROSARoleConfig {{ rosa_role_config_name }} in namespace {{ capi_namespace }}
+      Creating new ROSARoleConfig {{ rosa_role_config_name }} in namespace {{ rosa_hcp_namespace }}
   when:
     - not (rosa_role_config_exists | default(false) | bool and rosa_role_config_is_ready | default(false) | bool)
 
@@ -126,13 +126,13 @@
   shell: |
     oc wait --for=condition=Ready \
       rosaroleconfig/{{ rosa_role_config_name }} \
-      -n {{ capi_namespace }} \
+      -n {{ rosa_hcp_namespace }} \
       --timeout=900s
   when:
     - not (rosa_role_config_exists | default(false) | bool and rosa_role_config_is_ready | default(false) | bool)
 
 - name: Get final ROSARoleConfig status
-  shell: oc get rosaroleconfig {{ rosa_role_config_name }} -n {{ capi_namespace }} -o json
+  shell: oc get rosaroleconfig {{ rosa_role_config_name }} -n {{ rosa_hcp_namespace }} -o json
   register: rosa_role_config_ready_result_raw
   when:
     - not (rosa_role_config_exists | default(false) | bool and rosa_role_config_is_ready | default(false) | bool)

@@ -187,7 +187,7 @@
 - name: "{{ env.cluster_name }} - Extract CAPI controller version"
   when: login_result.rc == 0
   ansible.builtin.shell: |
-    oc get deployment capi-controller-manager -n multicluster-engine \
+    oc get deployment capi-controller-manager -n {{ capi_namespace }} \
       -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || echo "not_found"
   register: capi_image
   failed_when: false
@@ -204,7 +204,7 @@
 - name: "{{ env.cluster_name }} - Extract CAPA controller version"
   when: login_result.rc == 0
   ansible.builtin.shell: |
-    oc get deployment capa-controller-manager -n multicluster-engine \
+    oc get deployment capa-controller-manager -n {{ capa_namespace }} \
       -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || echo "not_found"
   register: capa_image
   failed_when: false
@@ -229,7 +229,7 @@
   block:
     - name: Get CAPI controller pod name
       ansible.builtin.shell: |
-        oc get pod -n multicluster-engine -l control-plane=controller-manager,cluster.x-k8s.io/provider=cluster-api -o name | head -1 | cut -d/ -f2
+        oc get pod -n {{ capi_namespace }} -l control-plane=controller-manager,cluster.x-k8s.io/provider=cluster-api -o name | head -1 | cut -d/ -f2
       register: capi_pod_name
       failed_when: false
       changed_when: false
@@ -240,7 +240,7 @@
         - capi_pod_name.rc == 0
         - capi_pod_name.stdout != ""
       ansible.builtin.shell: |
-        oc exec -n multicluster-engine {{ capi_pod_name.stdout }} -- cat /root/buildinfo/labels.json 2>/dev/null | grep -oP '"version":\s*"v?\K[0-9]+\.[0-9]+\.[0-9]+'
+        oc exec -n {{ capi_namespace }} {{ capi_pod_name.stdout }} -- cat /root/buildinfo/labels.json 2>/dev/null | grep -oP '"version":\s*"v?\K[0-9]+\.[0-9]+\.[0-9]+'
       register: capi_buildinfo_version
       failed_when: false
       changed_when: false

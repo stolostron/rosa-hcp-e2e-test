@@ -46,7 +46,10 @@ def test_required_common_keys():
         "output_dir",
         "openshift_version",
         "supported_versions",
+        "rosa_hcp_namespace",
+        "deployment_mode",
         "capi_namespace",
+        "capa_namespace",
         "rosa_creds_secret",
     ]
     for key in required:

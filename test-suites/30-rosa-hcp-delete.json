@@ -10,7 +10,7 @@
       "file": "playbooks/delete_rosa_hcp_cluster.yml",
       "description": "Deletes a ROSA HCP cluster including optional CAPA ROSANetwork and ROSARoleConfig automation resources",
       "extra_vars": {
-        "capi_namespace": "ns-rosa-hcp",
+        "rosa_hcp_namespace": "ns-rosa-hcp",
         "delete_network": true,
         "delete_roles": true,
         "wait_for_deletion": true,
@@ -54,7 +54,7 @@
     "customization": {
       "name_prefix": "Simple prefix to identify cluster (e.g., 'qe6'). Automatically derives cluster_name as '{prefix}-rosa-hcp'. RECOMMENDED for matching provisioning workflow.",
       "cluster_name": "Name of the cluster to delete (auto-derived from name_prefix if provided, or specify explicitly)",
-      "capi_namespace": "Namespace where cluster resources exist (default: ns-rosa-hcp)",
+      "rosa_hcp_namespace": "Namespace where cluster resources exist (default: ns-rosa-hcp)",
       "delete_network": "Delete ROSANetwork resources (VPC, subnets) - true or false (default: true)",
       "delete_roles": "Delete ROSARoleConfig resources (IAM roles, OIDC) - true or false (default: true)",
       "wait_for_deletion": "Wait for resources to be fully deleted - true or false (default: true)",

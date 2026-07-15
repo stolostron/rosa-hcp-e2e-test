@@ -545,7 +545,7 @@ def _render_template(template_name, version, extra_vars=None):
     template = env.get_template(template_name)
     vars = {
         "cluster_name": "test-cluster",
-        "capi_namespace": "test-ns",
+        "rosa_hcp_namespace": "test-ns",
         "aws_region": "us-west-2",
         "rcp_version": f"{version}.0",
         "openshift_version": f"{version}.0",
