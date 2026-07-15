@@ -1,0 +1,75 @@
+---
+- name: Install CAPI/CAPA Standalone via Helm
+  hosts: localhost
+  any_errors_fatal: true
+  vars_files:
+    - ../vars/vars.yml
+    - ../vars/user_vars.yml
+  tasks:
+    - set_fact:
+        ocp_user: "{{ lookup('env', 'OCP_HUB_CLUSTER_USER') | default(OCP_HUB_CLUSTER_USER, true) }}"
+        ocp_password: "{{ lookup('env', 'OCP_HUB_CLUSTER_PASSWORD') | default(OCP_HUB_CLUSTER_PASSWORD, true) }}"
+        api_url: "{{ lookup('env', 'OCP_HUB_API_URL') | default(OCP_HUB_API_URL, true) }}"
+        aws_access_key_id: "{{ lookup('env', 'AWS_ACCESS_KEY_ID') | default(AWS_ACCESS_KEY_ID, true) }}"
+        aws_secret_access_key: "{{ lookup('env', 'AWS_SECRET_ACCESS_KEY') | default(AWS_SECRET_ACCESS_KEY, true) }}"
+        aws_region: "{{ lookup('env', 'AWS_REGION') | default('us-east-1', true) }}"
+
+    - name: Prepare ansible runner host
+      include_tasks: ../tasks/prepare_ansible_runner.yml
+      when: not skip_ansible_runner | bool
+
+    - name: Login to OpenShift Hub Cluster
+      include_tasks: ../tasks/login_ocp.yml
+
+    - name: Clone cluster-api-installer
+      ansible.builtin.git:
+        repo: "https://github.com/stolostron/cluster-api-installer.git"
+        dest: "{{ output_dir }}/cluster-api-installer"
+        version: "{{ cluster_api_installer_ref | default('main') }}"
+        force: true
+
+    - name: Create capi-system namespace
+      shell: |
+        oc create namespace capi-system --dry-run=client -o yaml | oc apply -f -
+
+    - name: Create capa-system namespace
+      shell: |
+        oc create namespace capa-system --dry-run=client -o yaml | oc apply -f -
+
+    - name: Generate AWS B64 encoded credentials
+      shell: |
+        printf '[default]\naws_access_key_id = "%s"\naws_secret_access_key = "%s"\nregion = "%s"\n' \
+          "{{ aws_access_key_id }}" "{{ aws_secret_access_key }}" "{{ aws_region }}" | base64 -w 0
+      register: aws_b64_credentials
+      no_log: true
+
+    - name: Install CAPI core controllers via Helm
+      shell: |
+        helm template {{ output_dir }}/cluster-api-installer/charts/cluster-api \
+          --include-crds \
+          --namespace capi-system \
+          --set ocp.enabled=true \
+        | oc apply -n capi-system -f - --server-side --force-conflicts
+
+    - name: Install CAPA controllers via Helm
+      shell: |
+        helm template {{ output_dir }}/cluster-api-installer/charts/cluster-api-provider-aws \
+          --include-crds \
+          --namespace capa-system \
+          --set ocp.enabled=true \
+          --set aws.encodedCredentials="{{ aws_b64_credentials.stdout }}" \
+        | oc apply -n capa-system -f - --server-side --force-conflicts
+      no_log: true
+
+    - name: Wait for CAPI/CAPA controllers to be ready
+      include_tasks: ../tasks/wait-for-capi-capa-ready.yml
+
+    - name: Create {{ rosa_hcp_namespace }} namespace
+      shell: |
+        oc create namespace {{ rosa_hcp_namespace }} --dry-run=client -o yaml | oc apply -f -
+
+    - name: Create rosa-creds-secret
+      include_tasks: ../tasks/create_rosa_creds_secret.yml
+
+    - name: Set the AWSClusterControllerIdentity
+      include_tasks: ../tasks/set_aws_identity.yml

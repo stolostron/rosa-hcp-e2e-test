@@ -21,6 +21,7 @@ TEST_SUITES_DIR = BASE_DIR / "test-suites"
 SUITE_FILES = [
     "05-verify-mce-environment.json",
     "10-configure-mce-environment.json",
+    "10-install-capi-standalone.json",
     "20-rosa-hcp-provision.json",
     "27-rosa-hcp-add-machinepool.json",
     "28-rosa-hcp-delete-machinepool.json",

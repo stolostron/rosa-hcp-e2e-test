@@ -1,0 +1,17 @@
+{
+  "name": "Install CAPI Standalone",
+  "description": "Install CAPI/CAPA controllers via Helm charts for standalone mode",
+  "execution": "sequential",
+  "stopOnFailure": true,
+  "notifyOnComplete": true,
+  "playbooks": [
+    {
+      "name": "Install CAPI/CAPA Standalone",
+      "file": "playbooks/install_capi_standalone.yml",
+      "description": "Clone cluster-api-installer and deploy CAPI/CAPA via helm template",
+      "timeout": 900,
+      "required": true
+    }
+  ],
+  "tags": ["setup", "standalone", "capi", "capa", "helm"]
+}
