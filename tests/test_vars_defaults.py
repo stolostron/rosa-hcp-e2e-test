@@ -69,6 +69,18 @@ def test_required_cloud_provider_keys():
     assert "supported_providers" in data, "vars.yml missing supported_providers"
 
 
+def test_required_capi_installation_keys():
+    data = _load_vars()
+    capi_keys = [
+        "capi_installation_method",
+        "helm_repo_url",
+        "helm_chart_version",
+        "cluster_api_installer_ref",
+    ]
+    for key in capi_keys:
+        assert key in data, f"vars.yml missing CAPI installation key: {key}"
+
+
 # ================================================================
 # Version Management
 # ================================================================
