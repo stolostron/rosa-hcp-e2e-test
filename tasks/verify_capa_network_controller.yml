@@ -75,7 +75,7 @@
             success_msg: "Required ROSA feature flags are enabled"
 
     - name: Check CAPA controller logs for ROSANetwork support
-      command: kubectl logs -n capa-system deployment/capa-controller-manager --tail=50
+      command: oc logs -n capa-system deployment/capa-controller-manager --tail=50
       register: controller_logs
 
     - name: Display recent controller logs
@@ -223,22 +223,22 @@
     - name: Get detailed CAPA controller information for debugging
       block:
         - name: Get CAPA deployment details
-          command: kubectl describe deployment capa-controller-manager -n capa-system
+          command: oc describe deployment capa-controller-manager -n capa-system
           register: deployment_details
           ignore_errors: true
 
         - name: Get CAPA pod details
-          command: kubectl describe pods -l control-plane=capa-controller-manager -n capa-system
+          command: oc describe pods -l control-plane=capa-controller-manager -n capa-system
           register: pod_details
           ignore_errors: true
 
         - name: Get CAPA controller logs
-          command: kubectl logs -n capa-system deployment/capa-controller-manager --tail=100
+          command: oc logs -n capa-system deployment/capa-controller-manager --tail=100
           register: full_logs
           ignore_errors: true
 
         - name: Get CRD status
-          command: kubectl get crd rosanetworks.infrastructure.cluster.x-k8s.io rosacontrolplanes.controlplane.cluster.x-k8s.io
+          command: oc get crd rosanetworks.infrastructure.cluster.x-k8s.io rosacontrolplanes.controlplane.cluster.x-k8s.io
           register: crd_status
           ignore_errors: true
 
@@ -260,17 +260,17 @@
         msg:
           - "CAPA Network Controller Troubleshooting:"
           - "1. Check deployment status:"
-          - "   kubectl get deployment capa-controller-manager -n capa-system"
+          - "   oc get deployment capa-controller-manager -n capa-system"
           - "2. Check pod status and events:"
-          - "   kubectl get events -n capa-system --sort-by='.lastTimestamp'"
+          - "   oc get events -n capa-system --sort-by='.lastTimestamp'"
           - "3. Verify image availability:"
           - "   docker pull {{ capa_controller_network.image }}:{{ capa_controller_network.tag }}"
           - "4. Check CRD installation:"
-          - "   kubectl get crd | grep rosa"
+          - "   oc get crd | grep rosa"
           - "5. Verify ClusterRole permissions:"
-          - "   kubectl describe clusterrole capa-manager-role"
+          - "   oc describe clusterrole capa-manager-role"
           - "6. Check controller logs for specific errors:"
-          - "   kubectl logs deployment/capa-controller-manager -n capa-system"
+          - "   oc logs deployment/capa-controller-manager -n capa-system"
 
     - name: Fail the verification
       fail:

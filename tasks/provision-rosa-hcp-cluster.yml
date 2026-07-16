@@ -21,11 +21,11 @@
         {{ automation_path }}/capi-rosahcp-test.yml
       {%- endif -%}
 
-- name: Set kubectl context (if provided)
+- name: Set oc context (if provided)
   block:
     - name: Use provided KUBE_CONTEXT
       shell: |
-        kubectl config use-context {{ KUBE_CONTEXT }}
+        oc config use-context {{ KUBE_CONTEXT }}
       register: context_result
       changed_when: false
       when: KUBE_CONTEXT is defined
@@ -39,7 +39,7 @@
 
 - name: Display current context message
   debug:
-    msg: "Using current kubectl context (OCP/MCE cluster)"
+    msg: "Using current oc context (OCP/MCE cluster)"
   when: KUBE_CONTEXT is not defined
 
 - name: Provision ROSA HCP resources

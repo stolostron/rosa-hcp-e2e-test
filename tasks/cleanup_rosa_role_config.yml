@@ -181,7 +181,7 @@
                   ROSARoleConfig deletion is stuck. Manual intervention may be required:
 
                   1. Check CAPA controller logs:
-                     kubectl logs deployment/capa-controller-manager -n {{ capa_namespace }}
+                     oc logs deployment/capa-controller-manager -n {{ capa_namespace }}
 
                   2. Check for AWS cleanup issues:
                      - Verify AWS credentials are valid
@@ -189,7 +189,7 @@
                      - Verify AWS permissions for resource deletion
 
                   3. If AWS resources are manually cleaned up, force remove finalizers:
-                     kubectl patch rosaroleconfig {{ rosa_role_config_name }} -n {{ rosa_hcp_namespace }} --type='merge' -p='{"metadata":{"finalizers":[]}}'
+                     oc patch rosaroleconfig {{ rosa_role_config_name }} -n {{ rosa_hcp_namespace }} --type='merge' -p='{"metadata":{"finalizers":[]}}'
 
                   4. AWS Resources that may need manual cleanup:
                      {% if installer_role_arn %}

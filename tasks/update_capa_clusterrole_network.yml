@@ -250,15 +250,15 @@
         msg:
           - "CAPA ClusterRole permissions update failed. Troubleshooting steps:"
           - "1. Check ClusterRole status:"
-          - "   kubectl get clusterrole capa-manager-role"
+          - "   oc get clusterrole capa-manager-role"
           - "2. Verify ROSANetwork CRD exists:"
-          - "   kubectl get crd rosanetworks.infrastructure.cluster.x-k8s.io"
+          - "   oc get crd rosanetworks.infrastructure.cluster.x-k8s.io"
           - "3. Check RBAC permissions:"
-          - "   kubectl auth can-i create rosanetworks --as=system:serviceaccount:capa-system:capa-controller-manager"
+          - "   oc auth can-i create rosanetworks --as=system:serviceaccount:capa-system:capa-controller-manager"
           - "4. Review ClusterRole rules:"
-          - "   kubectl describe clusterrole capa-manager-role"
+          - "   oc describe clusterrole capa-manager-role"
           - "5. Check controller logs:"
-          - "   kubectl logs deployment/capa-controller-manager -n capa-system"
+          - "   oc logs deployment/capa-controller-manager -n capa-system"
 
     - name: Fail the task
       fail:

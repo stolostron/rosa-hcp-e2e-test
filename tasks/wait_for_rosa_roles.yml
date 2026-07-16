@@ -174,17 +174,17 @@
           ROSARoleConfig Wait Failed - Troubleshooting Steps:
 
           1. Check CAPA Controller:
-             kubectl get deployment capa-controller-manager -n {{ capa_namespace }}
-             kubectl logs deployment/capa-controller-manager -n {{ capa_namespace }}
+             oc get deployment capa-controller-manager -n {{ capa_namespace }}
+             oc logs deployment/capa-controller-manager -n {{ capa_namespace }}
 
           2. Check AWS Credentials:
-             kubectl get secret {{ rosa_creds_secret }} -n {{ capa_namespace }}
+             oc get secret {{ rosa_creds_secret }} -n {{ capa_namespace }}
 
           3. Check ROSARoleConfig Resource:
-             kubectl describe rosaroleconfig {{ rosa_role_config_name }} -n {{ rosa_hcp_namespace }}
+             oc describe rosaroleconfig {{ rosa_role_config_name }} -n {{ rosa_hcp_namespace }}
 
           4. Check Events:
-             kubectl get events -n {{ rosa_hcp_namespace }} --field-selector involvedObject.name={{ rosa_role_config_name }}
+             oc get events -n {{ rosa_hcp_namespace }} --field-selector involvedObject.name={{ rosa_role_config_name }}
 
           5. Verify AWS Permissions:
              - IAM role creation permissions
