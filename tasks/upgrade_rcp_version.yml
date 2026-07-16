@@ -7,9 +7,9 @@
   debug:
     msg: "The rcp name is: {{ rcp_name }}. The current_version is {{ current_version }}. The requested_version is {{ requested_version }}. "
 
-- name: Call kubectl to patch RCP
+- name: Call oc to patch RCP
   shell: |
-    kubectl patch rosacontrolplane --type=merge "{{ rcp_name }}" -n "ns-rosa-hcp" -p '{"spec": {"version": "{{ requested_version }}", "versionGate": "Acknowledge"}}'
+    oc patch rosacontrolplane --type=merge "{{ rcp_name }}" -n "ns-rosa-hcp" -p '{"spec": {"version": "{{ requested_version }}", "versionGate": "Acknowledge"}}'
   register: result
 
 - name: Print result

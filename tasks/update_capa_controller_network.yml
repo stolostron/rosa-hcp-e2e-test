@@ -100,7 +100,7 @@
         success_msg: "CAPA controller successfully updated to Milan's network image"
 
     - name: Check controller logs for ROSANetwork support
-      command: kubectl logs -n capa-system deployment/capa-controller-manager --tail=20
+      command: oc logs -n capa-system deployment/capa-controller-manager --tail=20
       register: controller_logs
 
     - name: Display recent controller logs
@@ -125,7 +125,7 @@
         msg: "Failed to update CAPA controller image: {{ ansible_failed_result.msg | default('Unknown error') }}"
 
     - name: Get CAPA controller logs for debugging
-      command: kubectl logs -n capa-system deployment/capa-controller-manager --tail=50
+      command: oc logs -n capa-system deployment/capa-controller-manager --tail=50
       register: controller_error_logs
       ignore_errors: true
 
@@ -157,15 +157,15 @@
         msg:
           - "CAPA controller image update failed. Troubleshooting steps:"
           - "1. Check deployment status:"
-          - "   kubectl get deployment capa-controller-manager -n capa-system"
+          - "   oc get deployment capa-controller-manager -n capa-system"
           - "2. Check pod status:"
-          - "   kubectl get pods -n capa-system"
+          - "   oc get pods -n capa-system"
           - "3. Check controller logs:"
-          - "   kubectl logs deployment/capa-controller-manager -n capa-system"
+          - "   oc logs deployment/capa-controller-manager -n capa-system"
           - "4. Verify image accessibility:"
           - "   docker pull {{ capa_controller_network.image }}:{{ capa_controller_network.tag }}"
           - "5. Check if ROSANetwork CRDs are installed:"
-          - "   kubectl get crd rosanetworks.infrastructure.cluster.x-k8s.io"
+          - "   oc get crd rosanetworks.infrastructure.cluster.x-k8s.io"
 
     - name: Fail the task
       fail:

@@ -256,10 +256,10 @@ rescue:
         CAPA Controller Update Failed - Rollback Options:
 
         1. Manual rollback to previous image:
-           kubectl set image deployment/{{ capa_controller_name }} manager={{ current_image }} -n {{ capa_controller_namespace }}
+           oc set image deployment/{{ capa_controller_name }} manager={{ current_image }} -n {{ capa_controller_namespace }}
 
         2. Restore from backup (if created):
-           kubectl apply -f {{ output_dir }}/capa-controller-backup-{{ ansible_date_time.epoch }}.yaml
+           oc apply -f {{ output_dir }}/capa-controller-backup-{{ ansible_date_time.epoch }}.yaml
 
         3. Check image availability:
            - Verify the image {{ capa_new_image }} exists and is accessible

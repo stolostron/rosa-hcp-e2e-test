@@ -299,22 +299,22 @@ rescue:
         CAPA Controller Verification Failed - Troubleshooting:
 
         1. Check deployment status:
-           kubectl get deployment {{ capa_controller_name }} -n {{ capa_controller_namespace }}
+           oc get deployment {{ capa_controller_name }} -n {{ capa_controller_namespace }}
 
         2. Check pod status:
-           kubectl get pods -n {{ capa_controller_namespace }} -l control-plane=controller-manager
+           oc get pods -n {{ capa_controller_namespace }} -l control-plane=controller-manager
 
         3. Check controller logs:
-           kubectl logs deployment/{{ capa_controller_name }} -n {{ capa_controller_namespace }}
+           oc logs deployment/{{ capa_controller_name }} -n {{ capa_controller_namespace }}
 
         4. Check ClusterRole permissions:
-           kubectl get clusterrole capa-manager-role -o yaml
+           oc get clusterrole capa-manager-role -o yaml
 
         5. Check CRDs:
-           kubectl get crd rosaroleconfigs.infrastructure.cluster.x-k8s.io
+           oc get crd rosaroleconfigs.infrastructure.cluster.x-k8s.io
 
         6. Verify CAPA installation:
-           kubectl get all -n {{ capa_controller_namespace }}
+           oc get all -n {{ capa_controller_namespace }}
 
   - name: Fail the verification
     fail:

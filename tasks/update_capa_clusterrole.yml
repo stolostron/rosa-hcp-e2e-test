@@ -248,19 +248,19 @@ rescue:
         CAPA ClusterRole Update Failed - Manual Steps:
 
         1. Backup current ClusterRole:
-           kubectl get clusterrole {{ capa_clusterrole_name }} -o yaml > capa-clusterrole-backup.yaml
+           oc get clusterrole {{ capa_clusterrole_name }} -o yaml > capa-clusterrole-backup.yaml
 
         2. Edit ClusterRole to add ROSARoleConfig permissions:
-           kubectl edit clusterrole {{ capa_clusterrole_name }}
+           oc edit clusterrole {{ capa_clusterrole_name }}
 
         3. Add these rules to the ClusterRole:
         {{ rosa_role_config_rules | to_nice_yaml | indent(10) }}
 
         4. Restart CAPA controller:
-           kubectl rollout restart deployment/capa-controller-manager -n {{ capa_namespace }}
+           oc rollout restart deployment/capa-controller-manager -n {{ capa_namespace }}
 
         5. Restore from backup if needed:
-           kubectl apply -f {{ output_dir }}/capa-clusterrole-backup-{{ ansible_date_time.epoch }}.yaml
+           oc apply -f {{ output_dir }}/capa-clusterrole-backup-{{ ansible_date_time.epoch }}.yaml
 
   - name: Fail the task
     fail:
