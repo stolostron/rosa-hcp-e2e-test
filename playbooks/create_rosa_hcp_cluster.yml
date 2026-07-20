@@ -102,8 +102,7 @@
 
     - name: Set default region
       set_fact:
-        aws_region: "{{ AWS_REGION | default('us-west-2') }}"
-      when: aws_region is not defined
+        aws_region: "{{ aws_region | default(AWS_REGION | default('us-west-2'), true) }}"
 
     - name: Set default channel and network settings
       set_fact:
