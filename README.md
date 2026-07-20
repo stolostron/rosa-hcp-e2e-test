@@ -78,8 +78,9 @@ MCE_NAMESPACE: "multicluster-engine"
 
 3. Authenticate to your OpenShift cluster:
 ```bash
-oc login ${OCP_HUB_API_URL} -u ${OCP_HUB_CLUSTER_USER} -p ${OCP_HUB_CLUSTER_PASSWORD}
+oc login <your-api-url> -u <your-user> -p <your-password>
 ```
+The playbooks load credentials from `vars/user_vars.yml` automatically via `vars_files`.
 
 ### Running Tests
 
@@ -154,6 +155,7 @@ Output:
 | `05-verify-mce-environment` | Validate MCE/CAPI/CAPA environment configuration before provisioning |
 | `10-configure-mce-environment` | Set up MCE environment for CAPI/CAPA cluster provisioning |
 | `20-rosa-hcp-provision` | Provision a ROSA HCP cluster with automated network and role configuration (supports `--feature` flags) |
+| `21-verify-feature-flags` | Verify provisioned cluster feature flags match requested configuration |
 | `25-rosa-hcp-upgrade-control-plane` | Upgrade ROSA HCP control plane to next available OpenShift version |
 | `26-rosa-hcp-upgrade-machine-pool` | Upgrade ROSA HCP machine pool to next available OpenShift version |
 | `27-rosa-hcp-add-machinepool` | Add a new MachinePool + ROSAMachinePool pair to an existing cluster |
