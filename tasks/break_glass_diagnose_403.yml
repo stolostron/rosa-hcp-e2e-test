@@ -175,13 +175,19 @@
       set_fact:
         break_glass_root_cause: "{{
           '[High confidence] AMS access_review denied ClusterBreakGlassCredential. The OCM credential used by CAPA lacks cluster_owner or cluster_service_developer role. Only cluster_owner and cluster_service_developer roles have break-glass permission; sre_agent and uhc_support are explicitly excluded.'
-          if ((break_glass_403_is_ams_denial | default(false) | bool) or (not (ocm_role_check_failed | default(true) | bool) and not (ocm_has_break_glass_permission | default(false) | bool)))
+          if ((break_glass_403_is_ams_denial | default(false) | bool) or (not (ocm_role_check_failed | default(true) | bool) and (ocm_role_ids | default([]) | length > 0) and not (ocm_has_break_glass_permission | default(false) | bool)))
+          else
+          '[Low confidence] AMS role lookup failed or returned no data — cannot determine break-glass permission. Manual verification required.'
+          if (not (ocm_role_check_failed | default(true) | bool) and (ocm_role_ids | default([]) | length == 0))
           else
           '[High confidence] Provisioner kubeconfig secrets missing. OCM API returns 403 because the authentication context for the hosted cluster is absent.'
           if (not (kubeconfig_secret_found | default(false)) or not (bootstrap_kubeconfig_secret_found | default(false)))
           else
           '[High confidence] External authentication not enabled on cluster. Break-glass requires external auth.'
-          if ((cluster_external_auth_status | default('unknown')) != 'unknown' and not (cluster_external_auth_status | bool))
+          if ((cluster_external_auth_status | default('unknown')) is string and (cluster_external_auth_status | default('unknown')) != 'unknown' and not (cluster_external_auth_status | bool))
+          else
+          '[Low confidence] External auth status unknown — could not determine if external authentication is enabled.'
+          if ((cluster_external_auth_status | default('unknown')) == 'unknown')
           else
           '[High confidence] OCM CLI token is invalid or expired.'
           if (ocm_whoami_result.rc != 0)
@@ -194,7 +200,12 @@
            'Note: SRE tokens cannot be used for break-glass operations (AMS excludes sre_agent and uhc_support from ClusterBreakGlassCredential)',
            'Restart CAPA controller after updating the secret',
            'Retry break-glass credential operations']
-          if ((break_glass_403_is_ams_denial | default(false) | bool) or (not (ocm_role_check_failed | default(true) | bool) and not (ocm_has_break_glass_permission | default(false) | bool)))
+          if ((break_glass_403_is_ams_denial | default(false) | bool) or (not (ocm_role_check_failed | default(true) | bool) and (ocm_role_ids | default([]) | length > 0) and not (ocm_has_break_glass_permission | default(false) | bool)))
+          else
+          ['Run ocm whoami to verify your OCM identity',
+           'Run ocm get /api/accounts_mgmt/v1/current_account to check role bindings',
+           'Retry break-glass credential operations after verifying permissions']
+          if (not (ocm_role_check_failed | default(true) | bool) and (ocm_role_ids | default([]) | length == 0))
           else
           ['Verify cluster is healthy and MC is operational',
            'Recreate missing kubeconfig secrets on the provisioner (kubeconfig and bootstrap-kubeconfig in the CAPI namespace)',
@@ -205,7 +216,11 @@
           else
           ['Enable external authentication on the cluster via OCM or ROSA CLI',
            'Retry break-glass credential operations']
-          if ((cluster_external_auth_status | default('unknown')) != 'unknown' and not (cluster_external_auth_status | bool))
+          if ((cluster_external_auth_status | default('unknown')) is string and (cluster_external_auth_status | default('unknown')) != 'unknown' and not (cluster_external_auth_status | bool))
+          else
+          ['Verify external authentication is enabled: ocm describe cluster <id> | grep external_auth',
+           'If not enabled, enable it and retry']
+          if ((cluster_external_auth_status | default('unknown')) == 'unknown')
           else
           ['Re-authenticate OCM CLI: ocm login --token=<token>',
            'Retry break-glass credential operations']
