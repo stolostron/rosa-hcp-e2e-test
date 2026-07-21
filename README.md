@@ -466,16 +466,6 @@ test-results/
 - **Issues**: https://github.com/stolostron/rosa-hcp-e2e-test/issues
 - **Pull Requests**: https://github.com/stolostron/rosa-hcp-e2e-test/pulls
 
-## Open Pull Requests
-
-| PR | Title | Status |
-|----|-------|--------|
-| [#80](https://github.com/stolostron/rosa-hcp-e2e-test/pull/80) | fix: 4 latent provisioning bugs in default variable handling | In Review |
-| [#79](https://github.com/stolostron/rosa-hcp-e2e-test/pull/79) | fix: harden credential handling across pipeline and Ansible tasks | In Review |
-| [#74](https://github.com/stolostron/rosa-hcp-e2e-test/pull/74) | feat: rewrite feature verification with AWS CLI and OCM API | In Progress |
-| [#72](https://github.com/stolostron/rosa-hcp-e2e-test/pull/72) | feat: add private subnet and BYON support for `--feature private` and `--feature byon-vpc` | In Progress |
-| [#70](https://github.com/stolostron/rosa-hcp-e2e-test/pull/70) | feat: add break-glass credential 403 diagnostic test for external-auth clusters | In Progress |
-
 ## License
 
 Apache License 2.0 — see [LICENSE](LICENSE).
