@@ -16,12 +16,12 @@
       warnings: []
       status: "healthy"
 
-- name: "{{ env.cluster_name }} - Login to cluster"
+- name: "Login to cluster"
   ansible.builtin.shell: |
     oc login {{ current_check.api_url }}:6443 \
       -u {{ env.data.cluster.get('user', 'kubeadmin') }} \
       -p {{ env.data.cluster.password }} \
-      --insecure-skip-tls-verify=true
+      {% if ocp_ca_bundle is defined and ocp_ca_bundle %}--certificate-authority={{ ocp_ca_bundle }}{% else %}--insecure-skip-tls-verify=true{% endif %}
   register: login_result
   failed_when: false
   changed_when: false
