@@ -277,7 +277,7 @@
     # ================================================================
 
     # --- no_cni ---
-    - name: "CHECK: No CNI Plugin (via OCM API)"
+    - name: "CHECK: No CNI Plugin (via OCM API + cluster pod check)"
       block:
         - name: Assert networkType via OCM
           assert:
@@ -295,13 +295,100 @@
             fail_msg: "FAIL: networkType is not 'Other'"
             success_msg: "PASS: networkType = Other (CRD fallback)"
           when: not ocm_available
+
+        - name: Get cluster kubeconfig secret
+          shell: >
+            oc get secret "{{ cluster_name }}-kubeconfig" -n "{{ rosa_hcp_namespace }}"
+            -o jsonpath='{.data.kubeconfig}' 2>/dev/null | base64 -d
+          register: cluster_kubeconfig_raw
+          failed_when: false
+          changed_when: false
+          no_log: true
+
+        - name: Check for OVN-Kubernetes pods on provisioned cluster
+          shell: >
+            oc --kubeconfig=/dev/stdin get pods -n openshift-ovn-kubernetes
+            --no-headers 2>/dev/null <<< "{{ cluster_kubeconfig_raw.stdout }}" | wc -l
+          register: ovn_pod_count
+          failed_when: false
+          changed_when: false
+          no_log: true
+          when: cluster_kubeconfig_raw.rc == 0 and cluster_kubeconfig_raw.stdout | length > 0
+
+        - name: Assert OVN-Kubernetes is not running
+          assert:
+            that:
+              - ovn_pod_count.stdout | default('0') | trim | int == 0
+            fail_msg: "FAIL: OVN-Kubernetes pods found — default CNI is still running"
+            success_msg: "PASS: No OVN-Kubernetes pods — default CNI is not installed"
+          when: ovn_pod_count is defined and ovn_pod_count.rc is defined and ovn_pod_count.rc == 0
+
+        - name: Validate cni_provider format
+          assert:
+            that:
+              - cni_provider is match('^[a-z0-9]([-a-z0-9]*[a-z0-9])?$')
+            fail_msg: "FAIL: cni_provider contains invalid characters"
+          when: cni_provider is defined and cni_provider | length > 0
+
+        - name: Write temporary kubeconfig for CNI check
+          copy:
+            content: "{{ cluster_kubeconfig_raw.stdout }}"
+            dest: "/tmp/.cni-check-kubeconfig-{{ cluster_name }}"
+            mode: "0600"
+          no_log: true
+          when:
+            - cluster_kubeconfig_raw.rc == 0 and cluster_kubeconfig_raw.stdout | length > 0
+            - cni_provider is defined and cni_provider | length > 0
+
+        - name: Check for custom CNI pods (if cni_provider specified)
+          command:
+            argv:
+              - oc
+              - --kubeconfig=/tmp/.cni-check-kubeconfig-{{ cluster_name }}
+              - get
+              - pods
+              - -n
+              - "{{ cni_provider }}"
+              - --no-headers
+          register: custom_cni_pod_count_raw
+          failed_when: false
+          changed_when: false
+          no_log: true
+          when:
+            - cluster_kubeconfig_raw.rc == 0 and cluster_kubeconfig_raw.stdout | length > 0
+            - cni_provider is defined and cni_provider | length > 0
+
+        - name: Count custom CNI pods
+          set_fact:
+            custom_cni_pod_count: "{{ custom_cni_pod_count_raw.stdout_lines | default([]) | length }}"
+          when:
+            - custom_cni_pod_count_raw is defined
+            - cni_provider is defined and cni_provider | length > 0
+
+        - name: Clean up temporary kubeconfig
+          file:
+            path: "/tmp/.cni-check-kubeconfig-{{ cluster_name }}"
+            state: absent
+          no_log: true
+          when: cni_provider is defined and cni_provider | length > 0
+
+        - name: Assert custom CNI pods are running
+          assert:
+            that:
+              - custom_cni_pod_count | default(0) | int > 0
+            fail_msg: "FAIL: No {{ cni_provider }} pods found — custom CNI not installed"
+            success_msg: "PASS: {{ cni_provider }} pods running ({{ custom_cni_pod_count }} pods)"
+          when:
+            - custom_cni_pod_count is defined
+            - cni_provider is defined and cni_provider | length > 0
+
         - set_fact:
             features_passed: "{{ features_passed | int + 1 }}"
       rescue:
         - include_tasks: "{{ playbook_dir }}/../tasks/verify_feature_rescue.yml"
           vars:
             feature_id: no_cni
-            fail_detail: "networkType is not 'Other'"
+            fail_detail: "networkType is not 'Other' or default CNI is still running"
 
     # --- private_network ---
     - name: "CHECK: Private Cluster (via AWS CLI)"
