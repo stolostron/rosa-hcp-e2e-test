@@ -54,6 +54,40 @@
     create_rosa_network: false
   when: create_rosa_network is not defined
 
+- name: Override create_rosa_network when BYON is enabled
+  set_fact:
+    create_rosa_network: false
+  when: byon_vpc is defined and byon_vpc | bool
+
+- name: Validate BYON subnet IDs provided
+  fail:
+    msg: >
+      BYON (Bring Your Own Network) requires subnet IDs.
+      Pass them with: -e 'byon_subnet_ids=["subnet-0abc1234","subnet-0def5678"]'
+      and availability zones: -e 'byon_availability_zones=["us-west-2a","us-west-2b"]'
+  when:
+    - byon_vpc is defined and byon_vpc | bool
+    - byon_subnet_ids is not defined or byon_subnet_ids | length == 0
+
+- name: Validate BYON subnet ID format
+  assert:
+    that:
+      - byon_subnet_ids | map('regex_search', '^subnet-([a-f0-9]{8}|[a-f0-9]{17})$') | select | list | length == byon_subnet_ids | length
+    fail_msg: "FAIL: Invalid byon_subnet_ids format. Expected format: subnet-<8 or 17 hex chars>"
+  when:
+    - byon_vpc is defined and byon_vpc | bool
+    - byon_subnet_ids is defined and byon_subnet_ids | length > 0
+
+- name: Validate BYON availability zones provided
+  fail:
+    msg: >
+      BYON (Bring Your Own Network) requires availability zones.
+      Pass them with: -e 'byon_availability_zones=["us-west-2a","us-west-2b"]'
+  when:
+    - byon_vpc is defined and byon_vpc | bool
+    - byon_subnet_ids is defined and byon_subnet_ids | length > 0
+    - byon_availability_zones is not defined or byon_availability_zones | length == 0
+
 - name: Ensure boolean types for flags
   set_fact:
     create_rosa_roles: "{{ create_rosa_roles | bool }}"
@@ -266,6 +300,30 @@
       include_tasks: create_security_group.yml
 
 # ================================================================
+# STEP 2.6: Extract private subnets (if --feature private)
+# ================================================================
+- name: Extract private subnets for private cluster
+  when:
+    - private is defined and private | bool
+    - cluster_private_subnets is not defined or (cluster_private_subnets | length == 0)
+  block:
+    - name: Display private subnet extraction message
+      debug:
+        msg: |
+
+          ⏳ STEP 2.6: Extracting Private Subnets
+          ───────────────────────────────────────────────────────────
+          Private cluster requested. Extracting private subnet IDs
+          {% if private_subnet_ids is defined and (private_subnet_ids | length > 0) %}
+          from user-provided subnet list.
+          {% else %}
+          from ROSANetwork status.
+          {% endif %}
+
+    - name: Extract private subnets
+      include_tasks: extract_private_subnets.yml
+
+# ================================================================
 # STEP 3: Create RosaControlPlane
 # ================================================================
 - name: Create RosaControlPlane with references to automated resources
@@ -343,6 +401,8 @@
         template_vars:
           cluster_name: "{{ cluster_name }}"
           rcp_version: "{{ openshift_version }}"
+          private: "{{ private | default(false) }}"
+          cluster_private_subnets: "{{ cluster_private_subnets | default([]) }}"
           rosa_role_config_ref: "{{ rosa_role_config_name if (create_rosa_roles | bool) else omit }}"
           rosa_network_ref: "{{ rosa_network_name if (create_rosa_network | bool) else omit }}"
           create_rosa_roles: "{{ create_rosa_roles | bool }}"
