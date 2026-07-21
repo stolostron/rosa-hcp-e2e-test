@@ -272,6 +272,14 @@ class TestFeatureGroups:
         assert "parallel_upgrade" in features
         assert "disk_size" in features
 
+    def test_resolve_networking_group(self, fm):
+        features = fm.resolve_group("day1-networking")
+        assert len(features) == 4
+        assert "no_cni" in features
+        assert "private_network" in features
+        assert "external_oidc" in features
+        assert "audit_logging" in features
+
     def test_resolve_unknown_group(self, fm):
         result = fm.resolve_group("nonexistent")
         assert result is None
@@ -542,6 +550,7 @@ def _render_template(template_name, version, extra_vars=None):
     base = Path(__file__).parent.parent / "templates" / "versions" / version / "features"
     env = Environment(loader=FileSystemLoader(str(base)), undefined=Undefined)
     env.filters["regex_replace"] = lambda v, p, r="": re.sub(p, r, str(v))
+    env.filters["bool"] = lambda v: str(v).lower() in ("true", "yes", "on", "1")
     template = env.get_template(template_name)
     vars = {
         "cluster_name": "test-cluster",
@@ -601,3 +610,314 @@ class TestFeatureRegistrySecurityGroups:
     def test_security_groups_var_mapping(self, fm):
         result = fm.resolve_to_extra_vars(["security_groups"])
         assert "feature_security_groups_enabled" in result
+
+
+class TestNoCNI:
+    @pytest.mark.parametrize("version,template_name", [
+        ("4.22", "rosa-controlplane-only.yaml.j2"),
+        ("4.22", "rosa-combined-automation.yaml.j2"),
+        ("4.21", "rosa-controlplane-only.yaml.j2"),
+    ])
+    def test_no_cni_renders_network_type_other(self, version, template_name):
+        docs = _render_template(template_name, version, {"no_cni": True})
+        rcp = next((d for d in docs if d.get("kind") == "ROSAControlPlane"), None)
+        assert rcp is not None, f"{template_name}: no ROSAControlPlane document"
+        assert rcp["spec"]["network"]["networkType"] == "Other"
+
+    @pytest.mark.parametrize("version,template_name", [
+        ("4.22", "rosa-controlplane-only.yaml.j2"),
+        ("4.22", "rosa-combined-automation.yaml.j2"),
+        ("4.21", "rosa-controlplane-only.yaml.j2"),
+    ])
+    def test_no_cni_false_omits_network_type(self, version, template_name):
+        docs = _render_template(template_name, version, {"no_cni": False})
+        rcp = next((d for d in docs if d.get("kind") == "ROSAControlPlane"), None)
+        assert rcp is not None
+        assert "networkType" not in rcp["spec"].get("network", {}), \
+            f"{template_name}: networkType should not be rendered when no_cni is false"
+
+    @pytest.mark.parametrize("version,template_name", [
+        ("4.22", "rosa-controlplane-only.yaml.j2"),
+        ("4.22", "rosa-combined-automation.yaml.j2"),
+        ("4.21", "rosa-controlplane-only.yaml.j2"),
+    ])
+    def test_default_omits_network_type(self, version, template_name):
+        docs = _render_template(template_name, version)
+        rcp = next((d for d in docs if d.get("kind") == "ROSAControlPlane"), None)
+        assert rcp is not None
+        assert "networkType" not in rcp["spec"].get("network", {}), \
+            f"{template_name}: networkType should not be rendered by default"
+
+    def test_no_cni_feature_metadata(self, fm):
+        feat = fm.get_feature("no_cni")
+        assert feat is not None
+        assert feat["resource"] == "ROSAControlPlane"
+        assert feat["k8s_field"] == ".spec.network.networkType"
+        assert feat.get("min_version") == "4.19"
+
+    def test_no_cni_var_mapping(self, fm):
+        result = fm.resolve_to_extra_vars(["no_cni"])
+        assert "no_cni" in result
+
+    def test_no_cni_alias(self, fm):
+        assert fm.resolve_alias("no-cni") == "no_cni"
+
+    def test_no_cni_rejected_on_418(self, fm):
+        errors = fm.validate_features(["no_cni"], "4.18")
+        assert len(errors) > 0
+
+    def test_no_cni_valid_on_419(self, fm):
+        errors = fm.validate_features(["no_cni"], "4.19")
+        assert errors == []
+
+
+class TestExternalOIDC:
+    @pytest.mark.parametrize("version,template_name", [
+        ("4.22", "rosa-controlplane-only.yaml.j2"),
+        ("4.22", "rosa-combined-automation.yaml.j2"),
+        ("4.21", "rosa-controlplane-only.yaml.j2"),
+    ])
+    def test_external_oidc_renders_enabled(self, version, template_name):
+        docs = _render_template(template_name, version, {"external_oidc": True})
+        rcp = next((d for d in docs if d.get("kind") == "ROSAControlPlane"), None)
+        assert rcp is not None, f"{template_name}: no ROSAControlPlane document"
+        assert rcp["spec"]["enableExternalAuthProviders"] is True
+
+    @pytest.mark.parametrize("version,template_name", [
+        ("4.22", "rosa-controlplane-only.yaml.j2"),
+        ("4.22", "rosa-combined-automation.yaml.j2"),
+        ("4.21", "rosa-controlplane-only.yaml.j2"),
+    ])
+    def test_external_oidc_with_issuer_renders_providers(self, version, template_name):
+        docs = _render_template(template_name, version, {
+            "external_oidc": True,
+            "oidc_issuer_url": "https://login.example.com",
+            "oidc_client_id": "test-client",
+        })
+        rcp = next((d for d in docs if d.get("kind") == "ROSAControlPlane"), None)
+        assert rcp is not None
+        assert rcp["spec"]["enableExternalAuthProviders"] is True
+        providers = rcp["spec"].get("externalAuthProviders", [])
+        assert len(providers) > 0, f"{template_name}: externalAuthProviders not rendered"
+        assert providers[0]["issuer"]["issuerURL"] == "https://login.example.com"
+        assert "test-client" in providers[0]["issuer"]["audiences"]
+
+    @pytest.mark.parametrize("version,template_name", [
+        ("4.22", "rosa-controlplane-only.yaml.j2"),
+        ("4.22", "rosa-combined-automation.yaml.j2"),
+        ("4.21", "rosa-controlplane-only.yaml.j2"),
+    ])
+    def test_external_oidc_false_omits_providers(self, version, template_name):
+        docs = _render_template(template_name, version, {"external_oidc": False})
+        rcp = next((d for d in docs if d.get("kind") == "ROSAControlPlane"), None)
+        assert rcp is not None
+        assert "enableExternalAuthProviders" not in rcp.get("spec", {}), \
+            f"{template_name}: enableExternalAuthProviders should not be rendered when false"
+
+    @pytest.mark.parametrize("version,template_name", [
+        ("4.22", "rosa-controlplane-only.yaml.j2"),
+        ("4.22", "rosa-combined-automation.yaml.j2"),
+        ("4.21", "rosa-controlplane-only.yaml.j2"),
+    ])
+    def test_default_omits_external_oidc(self, version, template_name):
+        docs = _render_template(template_name, version)
+        rcp = next((d for d in docs if d.get("kind") == "ROSAControlPlane"), None)
+        assert rcp is not None
+        assert "enableExternalAuthProviders" not in rcp.get("spec", {}), \
+            f"{template_name}: enableExternalAuthProviders should not be rendered by default"
+
+    @pytest.mark.parametrize("version,template_name", [
+        ("4.22", "rosa-controlplane-only.yaml.j2"),
+        ("4.22", "rosa-combined-automation.yaml.j2"),
+        ("4.21", "rosa-controlplane-only.yaml.j2"),
+    ])
+    def test_external_oidc_claim_mappings(self, version, template_name):
+        docs = _render_template(template_name, version, {
+            "external_oidc": True,
+            "oidc_issuer_url": "https://login.example.com",
+            "oidc_username_claim": "preferred_username",
+        })
+        rcp = next((d for d in docs if d.get("kind") == "ROSAControlPlane"), None)
+        assert rcp is not None
+        providers = rcp["spec"].get("externalAuthProviders", [])
+        assert len(providers) > 0
+        claim_mappings = providers[0].get("claimMappings", {})
+        assert claim_mappings["username"]["claim"] == "preferred_username"
+
+    def test_external_oidc_feature_metadata(self, fm):
+        feat = fm.get_feature("external_oidc")
+        assert feat is not None
+        assert feat["resource"] == "ROSAControlPlane"
+        assert feat["k8s_field"] == ".spec.enableExternalAuthProviders"
+        assert feat.get("min_version") == "4.19"
+
+    def test_external_oidc_var_mapping(self, fm):
+        result = fm.resolve_to_extra_vars(["external_oidc"])
+        assert "external_oidc" in result
+
+    def test_external_oidc_alias(self, fm):
+        assert fm.resolve_alias("external-oidc") == "external_oidc"
+
+    @pytest.mark.parametrize("version,template_name", [
+        ("4.22", "rosa-controlplane-only.yaml.j2"),
+        ("4.22", "rosa-combined-automation.yaml.j2"),
+        ("4.21", "rosa-controlplane-only.yaml.j2"),
+    ])
+    def test_external_oidc_flag_only_no_providers(self, version, template_name):
+        docs = _render_template(template_name, version, {"external_oidc": True})
+        rcp = next((d for d in docs if d.get("kind") == "ROSAControlPlane"), None)
+        assert rcp is not None
+        assert rcp["spec"]["enableExternalAuthProviders"] is True
+        assert "externalAuthProviders" not in rcp.get("spec", {}), \
+            f"{template_name}: externalAuthProviders should not render without oidc_issuer_url"
+
+    @pytest.mark.parametrize("version,template_name", [
+        ("4.22", "rosa-controlplane-only.yaml.j2"),
+        ("4.22", "rosa-combined-automation.yaml.j2"),
+        ("4.21", "rosa-controlplane-only.yaml.j2"),
+    ])
+    def test_external_oidc_oidc_clients_block(self, version, template_name):
+        docs = _render_template(template_name, version, {
+            "external_oidc": True,
+            "oidc_issuer_url": "https://login.example.com",
+            "oidc_client_id": "my-client-id",
+            "oidc_client_secret_name": "my-client-secret",
+        })
+        rcp = next((d for d in docs if d.get("kind") == "ROSAControlPlane"), None)
+        assert rcp is not None
+        providers = rcp["spec"]["externalAuthProviders"]
+        assert len(providers) > 0
+        oidc_clients = providers[0].get("oidcClients", [])
+        assert len(oidc_clients) > 0, f"{template_name}: oidcClients not rendered"
+        assert oidc_clients[0]["componentName"] == "console"
+        assert oidc_clients[0]["componentNamespace"] == "openshift-console"
+        assert oidc_clients[0]["clientID"] == "my-client-id"
+        assert oidc_clients[0]["clientSecret"]["name"] == "my-client-secret"
+
+    @pytest.mark.parametrize("version,template_name", [
+        ("4.22", "rosa-controlplane-only.yaml.j2"),
+        ("4.22", "rosa-combined-automation.yaml.j2"),
+        ("4.21", "rosa-controlplane-only.yaml.j2"),
+    ])
+    def test_external_oidc_oidc_clients_without_secret(self, version, template_name):
+        docs = _render_template(template_name, version, {
+            "external_oidc": True,
+            "oidc_issuer_url": "https://login.example.com",
+            "oidc_client_id": "my-client-id",
+        })
+        rcp = next((d for d in docs if d.get("kind") == "ROSAControlPlane"), None)
+        assert rcp is not None
+        providers = rcp["spec"]["externalAuthProviders"]
+        oidc_clients = providers[0].get("oidcClients", [])
+        assert len(oidc_clients) > 0
+        assert oidc_clients[0]["clientID"] == "my-client-id"
+        assert "clientSecret" not in oidc_clients[0], \
+            f"{template_name}: clientSecret should not render without oidc_client_secret_name"
+
+    @pytest.mark.parametrize("version,template_name", [
+        ("4.22", "rosa-controlplane-only.yaml.j2"),
+        ("4.22", "rosa-combined-automation.yaml.j2"),
+        ("4.21", "rosa-controlplane-only.yaml.j2"),
+    ])
+    def test_external_oidc_groups_claim(self, version, template_name):
+        docs = _render_template(template_name, version, {
+            "external_oidc": True,
+            "oidc_issuer_url": "https://login.example.com",
+            "oidc_groups_claim": "groups",
+            "oidc_groups_prefix": "oidc-prefix",
+        })
+        rcp = next((d for d in docs if d.get("kind") == "ROSAControlPlane"), None)
+        assert rcp is not None
+        providers = rcp["spec"]["externalAuthProviders"]
+        groups = providers[0]["claimMappings"].get("groups", {})
+        assert groups["claim"] == "groups"
+        assert groups["prefix"] == "oidc-prefix"
+
+    @pytest.mark.parametrize("version,template_name", [
+        ("4.22", "rosa-controlplane-only.yaml.j2"),
+        ("4.22", "rosa-combined-automation.yaml.j2"),
+        ("4.21", "rosa-controlplane-only.yaml.j2"),
+    ])
+    def test_external_oidc_groups_claim_without_prefix(self, version, template_name):
+        docs = _render_template(template_name, version, {
+            "external_oidc": True,
+            "oidc_issuer_url": "https://login.example.com",
+            "oidc_groups_claim": "groups",
+        })
+        rcp = next((d for d in docs if d.get("kind") == "ROSAControlPlane"), None)
+        assert rcp is not None
+        providers = rcp["spec"]["externalAuthProviders"]
+        groups = providers[0]["claimMappings"].get("groups", {})
+        assert groups["claim"] == "groups"
+        assert "prefix" not in groups
+
+    @pytest.mark.parametrize("version,template_name", [
+        ("4.22", "rosa-controlplane-only.yaml.j2"),
+        ("4.22", "rosa-combined-automation.yaml.j2"),
+        ("4.21", "rosa-controlplane-only.yaml.j2"),
+    ])
+    def test_external_oidc_no_groups_by_default(self, version, template_name):
+        docs = _render_template(template_name, version, {
+            "external_oidc": True,
+            "oidc_issuer_url": "https://login.example.com",
+        })
+        rcp = next((d for d in docs if d.get("kind") == "ROSAControlPlane"), None)
+        assert rcp is not None
+        providers = rcp["spec"]["externalAuthProviders"]
+        assert "groups" not in providers[0]["claimMappings"], \
+            f"{template_name}: groups should not render by default"
+
+    @pytest.mark.parametrize("version,template_name", [
+        ("4.22", "rosa-controlplane-only.yaml.j2"),
+        ("4.22", "rosa-combined-automation.yaml.j2"),
+        ("4.21", "rosa-controlplane-only.yaml.j2"),
+    ])
+    def test_external_oidc_custom_audiences(self, version, template_name):
+        docs = _render_template(template_name, version, {
+            "external_oidc": True,
+            "oidc_issuer_url": "https://login.example.com",
+            "oidc_audiences": ["aud-1", "aud-2", "aud-3"],
+        })
+        rcp = next((d for d in docs if d.get("kind") == "ROSAControlPlane"), None)
+        assert rcp is not None
+        audiences = rcp["spec"]["externalAuthProviders"][0]["issuer"]["audiences"]
+        assert audiences == ["aud-1", "aud-2", "aud-3"]
+
+    @pytest.mark.parametrize("version,template_name", [
+        ("4.22", "rosa-controlplane-only.yaml.j2"),
+        ("4.22", "rosa-combined-automation.yaml.j2"),
+        ("4.21", "rosa-controlplane-only.yaml.j2"),
+    ])
+    def test_external_oidc_custom_provider_name(self, version, template_name):
+        docs = _render_template(template_name, version, {
+            "external_oidc": True,
+            "oidc_issuer_url": "https://login.example.com",
+            "oidc_provider_name": "my-custom-provider",
+        })
+        rcp = next((d for d in docs if d.get("kind") == "ROSAControlPlane"), None)
+        assert rcp is not None
+        assert rcp["spec"]["externalAuthProviders"][0]["name"] == "my-custom-provider"
+
+    @pytest.mark.parametrize("version,template_name", [
+        ("4.22", "rosa-controlplane-only.yaml.j2"),
+        ("4.22", "rosa-combined-automation.yaml.j2"),
+        ("4.21", "rosa-controlplane-only.yaml.j2"),
+    ])
+    def test_external_oidc_custom_prefix_policy(self, version, template_name):
+        docs = _render_template(template_name, version, {
+            "external_oidc": True,
+            "oidc_issuer_url": "https://login.example.com",
+            "oidc_username_prefix_policy": "Prefix",
+        })
+        rcp = next((d for d in docs if d.get("kind") == "ROSAControlPlane"), None)
+        assert rcp is not None
+        prefix_policy = rcp["spec"]["externalAuthProviders"][0]["claimMappings"]["username"]["prefixPolicy"]
+        assert prefix_policy == "Prefix"
+
+    def test_external_oidc_rejected_on_418(self, fm):
+        errors = fm.validate_features(["external_oidc"], "4.18")
+        assert len(errors) > 0
+
+    def test_external_oidc_valid_on_419(self, fm):
+        errors = fm.validate_features(["external_oidc"], "4.19")
+        assert errors == []

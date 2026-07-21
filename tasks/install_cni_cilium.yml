@@ -1,0 +1,154 @@
+---
+# EXPERIMENTAL: Install Cilium CNI on a ROSA HCP cluster provisioned with networkType: Other
+#
+# Prerequisites:
+#   - Cluster provisioned with --feature no-cni (networkType: Other)
+#   - Cluster kubeconfig available via secret {{ cluster_name }}-kubeconfig
+#   - Helm 3 installed on the control node
+#
+# Variables:
+#   - cluster_name: Name of the provisioned cluster (required)
+#   - rosa_hcp_namespace: Namespace where kubeconfig secret lives (default: ns-rosa-hcp)
+#   - cni_provider: Must be 'cilium' to run this task (required)
+#   - cilium_version: Cilium Helm chart version (required, no default)
+#   - cilium_namespace: Namespace to install Cilium into (default: cilium)
+#
+# Usage:
+#   This task is NOT auto-run during provisioning. Include it directly:
+#     ansible-playbook -i localhost, -c local your-playbook.yml \
+#       -e cluster_name=<name> -e cni_provider=cilium -e cilium_version=1.16.5
+#
+# Status: EXPERIMENTAL — not validated against live ROSA HCP clusters.
+#         Cilium compatibility with ROSA HCP may vary by version.
+
+- name: Validate inputs
+  assert:
+    that:
+      - cni_provider is defined and cni_provider == 'cilium'
+      - cilium_version is defined and cilium_version | length > 0
+      - cluster_name is match('^[a-z0-9]([-a-z0-9]*[a-z0-9])?$')
+      - cilium_namespace | default('cilium') is match('^[a-z0-9]([-a-z0-9]*[a-z0-9])?$')
+    fail_msg: "FAIL: cni_provider must be 'cilium', cilium_version is required, and cluster_name/cilium_namespace must be valid DNS labels"
+
+- name: Set Cilium install defaults
+  set_fact:
+    cilium_namespace: "{{ cilium_namespace | default('cilium') }}"
+
+- name: Get cluster kubeconfig
+  command:
+    argv:
+      - oc
+      - get
+      - secret
+      - "{{ cluster_name }}-kubeconfig"
+      - -n
+      - "{{ rosa_hcp_namespace }}"
+      - -o
+      - jsonpath={.data.kubeconfig}
+  register: cilium_kubeconfig_b64
+  failed_when: cilium_kubeconfig_b64.rc != 0 or cilium_kubeconfig_b64.stdout | length == 0
+  changed_when: false
+  no_log: true
+
+- name: Decode kubeconfig
+  set_fact:
+    cilium_kubeconfig: "{{ cilium_kubeconfig_b64.stdout | b64decode }}"
+  no_log: true
+
+- name: Install Cilium
+  block:
+    - name: Write temporary kubeconfig
+      copy:
+        content: "{{ cilium_kubeconfig }}"
+        dest: "/tmp/.cilium-kubeconfig-{{ cluster_name }}"
+        mode: "0600"
+      no_log: true
+
+    - name: Add Cilium Helm repository
+      command:
+        argv:
+          - helm
+          - repo
+          - add
+          - cilium
+          - https://helm.cilium.io/
+      register: helm_repo_add
+      failed_when: false
+      changed_when: "'has been added' in helm_repo_add.stdout"
+
+    - name: Update Helm repositories
+      command:
+        argv:
+          - helm
+          - repo
+          - update
+      changed_when: false
+
+    - name: Install Cilium via Helm
+      command:
+        argv:
+          - helm
+          - upgrade
+          - --install
+          - cilium
+          - cilium/cilium
+          - --version
+          - "{{ cilium_version }}"
+          - --namespace
+          - "{{ cilium_namespace }}"
+          - --create-namespace
+          - --kubeconfig
+          - "/tmp/.cilium-kubeconfig-{{ cluster_name }}"
+          - --atomic
+          - --timeout
+          - 10m
+          - --set
+          - ipam.mode=cluster-pool
+          - --set
+          - cni.exclusive=false
+          - --set
+          - cni.chainingMode=generic-veth
+          - --set
+          - operator.replicas=1
+          - --set
+          - kubeProxyReplacement=true
+          - --set
+          - bpf.masquerade=true
+          - --set
+          - routingMode=tunnel
+          - --set
+          - tunnelProtocol=vxlan
+      register: cilium_install
+      changed_when: cilium_install.rc == 0
+
+    - name: Wait for Cilium pods to be ready
+      command:
+        argv:
+          - oc
+          - wait
+          - --for=condition=Ready
+          - pods
+          - -l
+          - app.kubernetes.io/name=cilium-agent
+          - -n
+          - "{{ cilium_namespace }}"
+          - --timeout=300s
+      environment:
+        KUBECONFIG: "/tmp/.cilium-kubeconfig-{{ cluster_name }}"
+      register: cilium_ready
+      failed_when: false
+      changed_when: false
+
+    - name: Display Cilium install result
+      debug:
+        msg: >-
+          {{ 'Cilium installed and pods ready in namespace ' + cilium_namespace
+             if cilium_ready.rc == 0
+             else 'Cilium installed but pods not yet ready — check manually' }}
+
+  always:
+    - name: Clean up temporary kubeconfig
+      file:
+        path: "/tmp/.cilium-kubeconfig-{{ cluster_name }}"
+        state: absent
+      no_log: true
