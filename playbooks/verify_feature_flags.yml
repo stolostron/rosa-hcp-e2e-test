@@ -305,23 +305,44 @@
           changed_when: false
           no_log: true
 
+        - name: Write temporary kubeconfig for OVN check
+          copy:
+            content: "{{ cluster_kubeconfig_raw.stdout }}"
+            dest: "/tmp/.ovn-check-kubeconfig-{{ cluster_name }}"
+            mode: "0600"
+          no_log: true
+          when: cluster_kubeconfig_raw.rc == 0 and cluster_kubeconfig_raw.stdout | length > 0
+
         - name: Check for OVN-Kubernetes pods on provisioned cluster
-          shell: >
-            oc --kubeconfig=/dev/stdin get pods -n openshift-ovn-kubernetes
-            --no-headers 2>/dev/null <<< "{{ cluster_kubeconfig_raw.stdout }}" | wc -l
-          register: ovn_pod_count
+          command:
+            argv:
+              - oc
+              - --kubeconfig=/tmp/.ovn-check-kubeconfig-{{ cluster_name }}
+              - get
+              - pods
+              - -n
+              - openshift-ovn-kubernetes
+              - --no-headers
+          register: ovn_pod_count_raw
           failed_when: false
           changed_when: false
+          no_log: true
+          when: cluster_kubeconfig_raw.rc == 0 and cluster_kubeconfig_raw.stdout | length > 0
+
+        - name: Clean up OVN check kubeconfig
+          file:
+            path: "/tmp/.ovn-check-kubeconfig-{{ cluster_name }}"
+            state: absent
           no_log: true
           when: cluster_kubeconfig_raw.rc == 0 and cluster_kubeconfig_raw.stdout | length > 0
 
         - name: Assert OVN-Kubernetes is not running
           assert:
             that:
-              - ovn_pod_count.stdout | default('0') | trim | int == 0
+              - ovn_pod_count_raw.stdout_lines | default([]) | length == 0
             fail_msg: "FAIL: OVN-Kubernetes pods found — default CNI is still running"
             success_msg: "PASS: No OVN-Kubernetes pods — default CNI is not installed"
-          when: ovn_pod_count is defined and ovn_pod_count.rc is defined and ovn_pod_count.rc == 0
+          when: ovn_pod_count_raw is defined and ovn_pod_count_raw.rc is defined and ovn_pod_count_raw.rc == 0
 
         - name: Validate cni_provider format
           assert:

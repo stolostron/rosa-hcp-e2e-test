@@ -70,19 +70,31 @@ Asserts:
 ## Post-Provision CNI Installation (Experimental)
 
 After provisioning with `--feature no-cni`, the cluster has no networking.
-An experimental Cilium install task is available:
+An experimental Cilium install task is available at `tasks/install_cni_cilium.yml`.
+Include it in your playbook:
 
-```bash
-ansible-playbook -i localhost, -c local playbooks/install_cni.yml \
-  -e cluster_name=<name> -e cni_provider=cilium
+```yaml
+- name: Install Cilium CNI
+  include_tasks: tasks/install_cni_cilium.yml
+  when: cni_provider is defined and cni_provider == 'cilium'
 ```
 
-This uses `tasks/install_cni_cilium.yml` which installs Cilium via Helm with
-OpenShift-compatible settings. **Status: experimental** — not validated against
-live ROSA HCP clusters. Cilium compatibility may vary by version.
+Run with:
 
-Supported variables:
-- `cilium_version`: Helm chart version (default: `1.16.5`)
+```bash
+ansible-playbook your-playbook.yml \
+  -e cluster_name=<name> -e cni_provider=cilium -e cilium_version=1.16.5
+```
+
+This installs Cilium via Helm with OpenShift-compatible settings using
+`helm upgrade --install --atomic`. **Status: experimental** — not validated
+against live ROSA HCP clusters. Cilium compatibility may vary by version.
+
+Required variables:
+- `cni_provider`: Must be `cilium`
+- `cilium_version`: Helm chart version (required, no default)
+
+Optional variables:
 - `cilium_namespace`: Install namespace (default: `cilium`)
 
 ## Test Coverage
