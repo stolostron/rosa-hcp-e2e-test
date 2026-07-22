@@ -216,6 +216,7 @@ suites:
         default: false
         k8s_field: ".spec.enableExternalAuthProviders"
         resource: ROSAControlPlane
+        min_version: "4.19"
 
       - id: security_groups
         name: Additional Security Groups

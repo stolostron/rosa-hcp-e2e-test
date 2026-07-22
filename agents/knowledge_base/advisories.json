@@ -1,0 +1,88 @@
+[
+  {
+    "id": "CVE-2026-99999",
+    "title": "FIPS crypto module bypass in Go runtime",
+    "description": "",
+    "severity": "critical",
+    "url": "https://access.redhat.com/security/cve/CVE-2026-99999",
+    "features": [
+      "fips"
+    ],
+    "added": "2026-06-24T12:50:32.143768",
+    "resolved": true,
+    "resolved_date": "2026-06-24T12:52:56.714441"
+  },
+  {
+    "id": "CVE-2026-0002",
+    "title": "Some issue",
+    "description": "",
+    "severity": "medium",
+    "url": "",
+    "features": [
+      "etcd_kms",
+      "fips"
+    ],
+    "added": "2026-06-24T15:44:18.800775",
+    "resolved": false
+  },
+  {
+    "id": "CVE-2026-0003",
+    "title": "KMS key rotation issue",
+    "description": "",
+    "severity": "medium",
+    "url": "https://access.redhat.com/security/cve/CVE-2026-0003",
+    "features": [
+      "etcd_kms"
+    ],
+    "added": "2026-06-24T15:44:18.803239",
+    "resolved": false
+  },
+  {
+    "id": "CVE-1",
+    "title": "FIPS issue",
+    "description": "",
+    "severity": "critical",
+    "url": "",
+    "features": [
+      "fips"
+    ],
+    "added": "2026-06-24T15:44:27.973515",
+    "resolved": false
+  },
+  {
+    "id": "CVE-2",
+    "title": "CNI plugin issue",
+    "description": "",
+    "severity": "low",
+    "url": "",
+    "features": [
+      "no_cni"
+    ],
+    "added": "2026-06-24T15:44:27.974630",
+    "resolved": false
+  },
+  {
+    "id": "CVE-2026-0001",
+    "title": "FIPS issue",
+    "description": "",
+    "severity": "medium",
+    "url": "",
+    "features": [
+      "fips"
+    ],
+    "added": "2026-06-24T15:44:31.257702",
+    "resolved": false
+  },
+  {
+    "id": "CVE-EXISTING",
+    "title": "Previous FIPS issue",
+    "description": "",
+    "severity": "medium",
+    "url": "",
+    "features": [
+      "fips"
+    ],
+    "added": "2026-06-24T15:44:33.920145",
+    "resolved": false
+  }
+]

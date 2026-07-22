@@ -1,0 +1,480 @@
+{
+  "features": {
+    "fips": {
+      "upstream_stale": true,
+      "upstream_stale_since": "2026-06-24T15:50:54.148679",
+      "upstream_stale_repo": "stolostron/cluster-api-provider-aws",
+      "upstream_stale_files": [
+        "stolostron/Dockerfile.stolostron"
+      ],
+      "stale": true,
+      "stale_reason": [
+        "feature_manager.py",
+        "tasks/delete_rosa_hcp_resources.yml",
+        "tasks/provision_rosa_hcp_with_automation.yml",
+        "templates/schemas/feature-registry.yml",
+        "templates/versions/4.21/features/rosa-combined-automation.yaml.j2",
+        "templates/versions/4.21/features/rosa-controlplane-only.yaml.j2",
+        "templates/versions/4.21/features/rosa-network-config.yaml.j2",
+        "templates/versions/4.22/features/rosa-combined-automation.yaml.j2",
+        "templates/versions/4.22/features/rosa-controlplane-only.yaml.j2",
+        "templates/versions/4.22/features/rosa-network-config.yaml.j2"
+      ],
+      "stale_since": "2026-06-24T17:05:11.934121"
+    },
+    "security_groups": {
+      "last_updated": "2026-06-24T15:40:41.676711",
+      "last_test_result": "UNKNOWN",
+      "doc_path": "docs/features/security-groups.md",
+      "test_history": [
+        {
+          "timestamp": "2026-06-24T15:40:41.676850",
+          "date": "2026-06-24",
+          "result": "UNKNOWN",
+          "trigger": "manual test",
+          "test_data": {
+            "date": "2026-06-24",
+            "provision_result": "PASS",
+            "region": "us-west-2",
+            "vpc": "vpc-<id>"
+          }
+        }
+      ],
+      "change_history": [
+        {
+          "timestamp": "2026-06-24T15:50:54.139435",
+          "source": "local",
+          "event": "Code change",
+          "details": "`tasks/create_security_group.yml`",
+          "link": "#def456"
+        },
+        {
+          "timestamp": "2026-06-24T15:44:36.895854",
+          "source": "local",
+          "event": "Code change",
+          "details": "`tasks/create_security_group.yml`",
+          "link": "#def456"
+        }
+      ],
+      "stale": true,
+      "stale_reason": [
+        "feature_manager.py",
+        "tasks/create_security_group.yml",
+        "tasks/delete_rosa_hcp_resources.yml",
+        "tasks/delete_security_group.yml",
+        "tasks/provision_rosa_hcp_with_automation.yml",
+        "templates/schemas/feature-registry.yml",
+        "templates/versions/4.21/features/rosa-combined-automation.yaml.j2",
+        "templates/versions/4.21/features/rosa-controlplane-only.yaml.j2",
+        "templates/versions/4.21/features/rosa-network-config.yaml.j2",
+        "templates/versions/4.22/features/rosa-combined-automation.yaml.j2",
+        "templates/versions/4.22/features/rosa-controlplane-only.yaml.j2",
+        "templates/versions/4.22/features/rosa-network-config.yaml.j2"
+      ],
+      "stale_since": "2026-06-24T17:05:11.934268"
+    },
+    "no_cni": {
+      "upstream_stale": true,
+      "upstream_stale_since": "2026-06-24T12:22:18.193565",
+      "upstream_stale_repo": "stolostron/cluster-api-provider-aws",
+      "upstream_stale_files": [
+        "pkg/cloud/services/network/natgateways.go"
+      ],
+      "stale": true,
+      "stale_reason": [
+        "feature_manager.py",
+        "tasks/delete_rosa_hcp_resources.yml",
+        "tasks/provision_rosa_hcp_with_automation.yml",
+        "templates/schemas/feature-registry.yml",
+        "templates/versions/4.21/features/rosa-combined-automation.yaml.j2",
+        "templates/versions/4.21/features/rosa-controlplane-only.yaml.j2",
+        "templates/versions/4.21/features/rosa-network-config.yaml.j2",
+        "templates/versions/4.22/features/rosa-combined-automation.yaml.j2",
+        "templates/versions/4.22/features/rosa-controlplane-only.yaml.j2",
+        "templates/versions/4.22/features/rosa-network-config.yaml.j2"
+      ],
+      "stale_since": "2026-06-24T17:05:11.934088"
+    },
+    "private_network": {
+      "upstream_stale": true,
+      "upstream_stale_since": "2026-06-24T12:22:18.193571",
+      "upstream_stale_repo": "stolostron/cluster-api-provider-aws",
+      "upstream_stale_files": [
+        "pkg/cloud/services/network/natgateways.go"
+      ],
+      "stale": true,
+      "stale_reason": [
+        "feature_manager.py",
+        "tasks/delete_rosa_hcp_resources.yml",
+        "tasks/provision_rosa_hcp_with_automation.yml",
+        "templates/schemas/feature-registry.yml",
+        "templates/versions/4.21/features/rosa-combined-automation.yaml.j2",
+        "templates/versions/4.21/features/rosa-controlplane-only.yaml.j2",
+        "templates/versions/4.21/features/rosa-network-config.yaml.j2",
+        "templates/versions/4.22/features/rosa-combined-automation.yaml.j2",
+        "templates/versions/4.22/features/rosa-controlplane-only.yaml.j2",
+        "templates/versions/4.22/features/rosa-network-config.yaml.j2"
+      ],
+      "stale_since": "2026-06-24T17:05:11.933829"
+    },
+    "parallel_upgrade": {
+      "upstream_stale": true,
+      "upstream_stale_since": "2026-06-24T12:22:18.193577",
+      "upstream_stale_repo": "stolostron/cluster-api-provider-aws",
+      "upstream_stale_files": [
+        "exp/controllers/rosaroleconfig_controller.go",
+        "exp/controllers/rosaroleconfig_controller_test.go"
+      ],
+      "stale": true,
+      "stale_reason": [
+        "feature_manager.py",
+        "tasks/delete_rosa_hcp_resources.yml",
+        "tasks/provision_rosa_hcp_with_automation.yml",
+        "templates/schemas/feature-registry.yml",
+        "templates/versions/4.21/features/rosa-combined-automation.yaml.j2",
+        "templates/versions/4.21/features/rosa-controlplane-only.yaml.j2",
+        "templates/versions/4.21/features/rosa-network-config.yaml.j2",
+        "templates/versions/4.22/features/rosa-combined-automation.yaml.j2",
+        "templates/versions/4.22/features/rosa-controlplane-only.yaml.j2",
+        "templates/versions/4.22/features/rosa-network-config.yaml.j2"
+      ],
+      "stale_since": "2026-06-24T17:05:11.934464"
+    },
+    "disk_size": {
+      "upstream_stale": true,
+      "upstream_stale_since": "2026-06-24T12:22:18.193583",
+      "upstream_stale_repo": "stolostron/cluster-api-provider-aws",
+      "upstream_stale_files": [
+        "exp/controllers/rosaroleconfig_controller.go",
+        "exp/controllers/rosaroleconfig_controller_test.go"
+      ],
+      "stale": true,
+      "stale_reason": [
+        "feature_manager.py",
+        "tasks/delete_rosa_hcp_resources.yml",
+        "tasks/provision_rosa_hcp_with_automation.yml",
+        "templates/schemas/feature-registry.yml",
+        "templates/versions/4.21/features/rosa-combined-automation.yaml.j2",
+        "templates/versions/4.21/features/rosa-controlplane-only.yaml.j2",
+        "templates/versions/4.21/features/rosa-network-config.yaml.j2",
+        "templates/versions/4.22/features/rosa-combined-automation.yaml.j2",
+        "templates/versions/4.22/features/rosa-controlplane-only.yaml.j2",
+        "templates/versions/4.22/features/rosa-network-config.yaml.j2"
+      ],
+      "stale_since": "2026-06-24T17:05:11.934345"
+    },
+    "availability_zones": {
+      "upstream_stale": true,
+      "upstream_stale_since": "2026-06-24T12:22:18.193588",
+      "upstream_stale_repo": "stolostron/cluster-api-provider-aws",
+      "upstream_stale_files": [
+        "pkg/cloud/services/network/natgateways.go"
+      ],
+      "stale": true,
+      "stale_reason": [
+        "feature_manager.py",
+        "tasks/delete_rosa_hcp_resources.yml",
+        "tasks/provision_rosa_hcp_with_automation.yml",
+        "templates/schemas/feature-registry.yml",
+        "templates/versions/4.21/features/rosa-combined-automation.yaml.j2",
+        "templates/versions/4.21/features/rosa-controlplane-only.yaml.j2",
+        "templates/versions/4.21/features/rosa-network-config.yaml.j2",
+        "templates/versions/4.22/features/rosa-combined-automation.yaml.j2",
+        "templates/versions/4.22/features/rosa-controlplane-only.yaml.j2",
+        "templates/versions/4.22/features/rosa-network-config.yaml.j2"
+      ],
+      "stale_since": "2026-06-24T17:05:11.934154"
+    },
+    "audit_logging": {
+      "stale": true,
+      "stale_reason": [
+        "feature_manager.py",
+        "tasks/delete_rosa_hcp_resources.yml",
+        "tasks/provision_rosa_hcp_with_automation.yml",
+        "templates/schemas/feature-registry.yml",
+        "templates/versions/4.21/features/rosa-combined-automation.yaml.j2",
+        "templates/versions/4.21/features/rosa-controlplane-only.yaml.j2",
+        "templates/versions/4.21/features/rosa-network-config.yaml.j2",
+        "templates/versions/4.22/features/rosa-combined-automation.yaml.j2",
+        "templates/versions/4.22/features/rosa-controlplane-only.yaml.j2",
+        "templates/versions/4.22/features/rosa-network-config.yaml.j2"
+      ],
+      "stale_since": "2026-06-24T17:05:11.933742"
+    },
+    "external_oidc": {
+      "stale": true,
+      "stale_reason": [
+        "feature_manager.py",
+        "tasks/delete_rosa_hcp_resources.yml",
+        "tasks/provision_rosa_hcp_with_automation.yml",
+        "templates/schemas/feature-registry.yml",
+        "templates/versions/4.21/features/rosa-combined-automation.yaml.j2",
+        "templates/versions/4.21/features/rosa-controlplane-only.yaml.j2",
+        "templates/versions/4.21/features/rosa-network-config.yaml.j2",
+        "templates/versions/4.22/features/rosa-combined-automation.yaml.j2",
+        "templates/versions/4.22/features/rosa-controlplane-only.yaml.j2",
+        "templates/versions/4.22/features/rosa-network-config.yaml.j2"
+      ],
+      "stale_since": "2026-06-24T17:05:11.933876"
+    },
+    "etcd_kms": {
+      "stale": true,
+      "stale_reason": [
+        "feature_manager.py",
+        "tasks/delete_rosa_hcp_resources.yml",
+        "tasks/provision_rosa_hcp_with_automation.yml",
+        "templates/schemas/feature-registry.yml",
+        "templates/versions/4.21/features/rosa-combined-automation.yaml.j2",
+        "templates/versions/4.21/features/rosa-controlplane-only.yaml.j2",
+        "templates/versions/4.21/features/rosa-network-config.yaml.j2",
+        "templates/versions/4.22/features/rosa-combined-automation.yaml.j2",
+        "templates/versions/4.22/features/rosa-controlplane-only.yaml.j2",
+        "templates/versions/4.22/features/rosa-network-config.yaml.j2"
+      ],
+      "stale_since": "2026-06-24T17:05:11.933916"
+    },
+    "additional_tags": {
+      "stale": true,
+      "stale_reason": [
+        "feature_manager.py",
+        "tasks/delete_rosa_hcp_resources.yml",
+        "tasks/provision_rosa_hcp_with_automation.yml",
+        "templates/schemas/feature-registry.yml",
+        "templates/versions/4.21/features/rosa-combined-automation.yaml.j2",
+        "templates/versions/4.21/features/rosa-controlplane-only.yaml.j2",
+        "templates/versions/4.21/features/rosa-network-config.yaml.j2",
+        "templates/versions/4.22/features/rosa-combined-automation.yaml.j2",
+        "templates/versions/4.22/features/rosa-controlplane-only.yaml.j2",
+        "templates/versions/4.22/features/rosa-network-config.yaml.j2"
+      ],
+      "stale_since": "2026-06-24T17:05:11.933953"
+    },
+    "image_registry": {
+      "stale": true,
+      "stale_reason": [
+        "feature_manager.py",
+        "tasks/delete_rosa_hcp_resources.yml",
+        "tasks/provision_rosa_hcp_with_automation.yml",
+        "templates/schemas/feature-registry.yml",
+        "templates/versions/4.21/features/rosa-combined-automation.yaml.j2",
+        "templates/versions/4.21/features/rosa-controlplane-only.yaml.j2",
+        "templates/versions/4.21/features/rosa-network-config.yaml.j2",
+        "templates/versions/4.22/features/rosa-combined-automation.yaml.j2",
+        "templates/versions/4.22/features/rosa-controlplane-only.yaml.j2",
+        "templates/versions/4.22/features/rosa-network-config.yaml.j2"
+      ],
+      "stale_since": "2026-06-24T17:05:11.933987"
+    },
+    "default_autoscaling": {
+      "stale": true,
+      "stale_reason": [
+        "feature_manager.py",
+        "tasks/delete_rosa_hcp_resources.yml",
+        "tasks/provision_rosa_hcp_with_automation.yml",
+        "templates/schemas/feature-registry.yml",
+        "templates/versions/4.21/features/rosa-combined-automation.yaml.j2",
+        "templates/versions/4.21/features/rosa-controlplane-only.yaml.j2",
+        "templates/versions/4.21/features/rosa-network-config.yaml.j2",
+        "templates/versions/4.22/features/rosa-combined-automation.yaml.j2",
+        "templates/versions/4.22/features/rosa-controlplane-only.yaml.j2",
+        "templates/versions/4.22/features/rosa-network-config.yaml.j2"
+      ],
+      "stale_since": "2026-06-24T17:05:11.934020"
+    },
+    "user_agent": {
+      "stale": true,
+      "stale_reason": [
+        "feature_manager.py",
+        "tasks/delete_rosa_hcp_resources.yml",
+        "tasks/provision_rosa_hcp_with_automation.yml",
+        "templates/schemas/feature-registry.yml",
+        "templates/versions/4.21/features/rosa-combined-automation.yaml.j2",
+        "templates/versions/4.21/features/rosa-controlplane-only.yaml.j2",
+        "templates/versions/4.21/features/rosa-network-config.yaml.j2",
+        "templates/versions/4.22/features/rosa-combined-automation.yaml.j2",
+        "templates/versions/4.22/features/rosa-controlplane-only.yaml.j2",
+        "templates/versions/4.22/features/rosa-network-config.yaml.j2"
+      ],
+      "stale_since": "2026-06-24T17:05:11.934055"
+    },
+    "cluster_autoscaler_expander": {
+      "stale": true,
+      "stale_reason": [
+        "feature_manager.py",
+        "tasks/delete_rosa_hcp_resources.yml",
+        "tasks/provision_rosa_hcp_with_automation.yml",
+        "templates/schemas/feature-registry.yml",
+        "templates/versions/4.21/features/rosa-combined-automation.yaml.j2",
+        "templates/versions/4.21/features/rosa-controlplane-only.yaml.j2",
+        "templates/versions/4.21/features/rosa-network-config.yaml.j2",
+        "templates/versions/4.22/features/rosa-combined-automation.yaml.j2",
+        "templates/versions/4.22/features/rosa-controlplane-only.yaml.j2",
+        "templates/versions/4.22/features/rosa-network-config.yaml.j2"
+      ],
+      "stale_since": "2026-06-24T17:05:11.934187"
+    },
+    "channel_group": {
+      "stale": true,
+      "stale_reason": [
+        "feature_manager.py",
+        "tasks/delete_rosa_hcp_resources.yml",
+        "tasks/provision_rosa_hcp_with_automation.yml",
+        "templates/schemas/feature-registry.yml",
+        "templates/versions/4.21/features/rosa-combined-automation.yaml.j2",
+        "templates/versions/4.21/features/rosa-controlplane-only.yaml.j2",
+        "templates/versions/4.21/features/rosa-network-config.yaml.j2",
+        "templates/versions/4.22/features/rosa-combined-automation.yaml.j2",
+        "templates/versions/4.22/features/rosa-controlplane-only.yaml.j2",
+        "templates/versions/4.22/features/rosa-network-config.yaml.j2"
+      ],
+      "stale_since": "2026-06-24T17:05:11.934222"
+    },
+    "domain_prefix": {
+      "stale": true,
+      "stale_reason": [
+        "feature_manager.py",
+        "tasks/delete_rosa_hcp_resources.yml",
+        "tasks/provision_rosa_hcp_with_automation.yml",
+        "templates/schemas/feature-registry.yml",
+        "templates/versions/4.21/features/rosa-combined-automation.yaml.j2",
+        "templates/versions/4.21/features/rosa-controlplane-only.yaml.j2",
+        "templates/versions/4.21/features/rosa-network-config.yaml.j2",
+        "templates/versions/4.22/features/rosa-combined-automation.yaml.j2",
+        "templates/versions/4.22/features/rosa-controlplane-only.yaml.j2",
+        "templates/versions/4.22/features/rosa-network-config.yaml.j2"
+      ],
+      "stale_since": "2026-06-24T17:05:11.934503"
+    }
+  },
+  "update_history": [
+    {
+      "timestamp": "2026-06-24T15:40:41.676858",
+      "feature_id": "security_groups",
+      "action": "live_test_update",
+      "result": "UNKNOWN",
+      "trigger": "manual test"
+    }
+  ],
+  "upstream_checks": [
+    {
+      "timestamp": "2026-06-24T12:01:33.705051",
+      "pr_url": "https://github.com/stolostron/cluster-api-provider-aws/pull/102",
+      "features_affected": [
+        "fips"
+      ]
+    },
+    {
+      "timestamp": "2026-06-24T12:22:18.193446",
+      "repo": "stolostron/cluster-api-provider-aws",
+      "branch": "backplane-2.11",
+      "old_sha": null,
+      "new_sha": "cfd32d02242dd057cfc7add58514fb483840b29a",
+      "files_changed": 22,
+      "features_affected": [
+        "availability_zones",
+        "disk_size",
+        "fips",
+        "no_cni",
+        "parallel_upgrade",
+        "private_network",
+        "security_groups"
+      ]
+    },
+    {
+      "timestamp": "2026-06-24T15:44:36.898527",
+      "repo": "stolostron/cluster-api-provider-aws",
+      "branch": "backplane-2.11",
+      "old_sha": null,
+      "new_sha": "def456",
+      "files_changed": 0,
+      "features_affected": [
+        "fips"
+      ]
+    },
+    {
+      "timestamp": "2026-06-24T15:50:54.148652",
+      "repo": "stolostron/cluster-api-provider-aws",
+      "branch": "backplane-2.11",
+      "old_sha": null,
+      "new_sha": "def456",
+      "files_changed": 0,
+      "features_affected": [
+        "fips"
+      ]
+    }
+  ],
+  "upstream_last_sha": {
+    "stolostron/cluster-api-provider-aws": "cfd32d02242dd057cfc7add58514fb483840b29a"
+  },
+  "advisory_last_scan": "2026-06-24T15:40:58.255877",
+  "auto_test_history": [
+    {
+      "timestamp": "2026-06-24T15:40:58.294939",
+      "features": [],
+      "command": "",
+      "success": false,
+      "duration": 0,
+      "exit_code": -1
+    },
+    {
+      "timestamp": "2026-06-24T15:40:58.302859",
+      "features": [
+        "security_groups"
+      ],
+      "command": "./run-test-suite.py 20-rosa-hcp-provision --feature security-groups --update-docs",
+      "success": true,
+      "duration": 0.000581,
+      "exit_code": 0
+    },
+    {
+      "timestamp": "2026-06-24T15:40:58.307646",
+      "features": [
+        "security_groups"
+      ],
+      "command": "./run-test-suite.py 20-rosa-hcp-provision --feature security-groups --update-docs",
+      "success": false,
+      "duration": 0.000773,
+      "exit_code": 1
+    },
+    {
+      "timestamp": "2026-06-24T15:40:58.313175",
+      "features": [
+        "security_groups"
+      ],
+      "command": "",
+      "success": false,
+      "duration": 5.1e-05,
+      "exit_code": -1
+    },
+    {
+      "timestamp": "2026-06-24T15:40:58.320520",
+      "features": [
+        "security_groups"
+      ],
+      "command": "./run-test-suite.py 20-rosa-hcp-provision --feature security-groups --update-docs",
+      "success": true,
+      "duration": 0.00064,
+      "exit_code": 0
+    },
+    {
+      "timestamp": "2026-06-24T15:40:58.354923",
+      "features": [
+        "security_groups"
+      ],
+      "command": "./run-test-suite.py 20-rosa-hcp-provision --feature security-groups --update-docs",
+      "success": true,
+      "duration": 0.000416,
+      "exit_code": 0
+    },
+    {
+      "timestamp": "2026-06-24T15:40:58.388847",
+      "features": [
+        "security_groups"
+      ],
+      "command": "./run-test-suite.py 20-rosa-hcp-provision --feature security-groups --update-docs",
+      "success": true,
+      "duration": 0.000375,
+      "exit_code": 0
+    }
+  ]
+}

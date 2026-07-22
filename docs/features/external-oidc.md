@@ -90,8 +90,32 @@ Asserts:
 - Audiences array is non-empty
 - Claim mappings (username claim) are configured
 
+## Test Coverage
+
+| Test | File | Description |
+|------|------|-------------|
+| `test_external_oidc_renders_enabled` | `tests/test_feature_manager.py` | `enableExternalAuthProviders: true` rendered (3 templates) |
+| `test_external_oidc_with_issuer_renders_providers` | `tests/test_feature_manager.py` | Full `externalAuthProviders` block with issuerURL + audiences (3 templates) |
+| `test_external_oidc_false_omits_providers` | `tests/test_feature_manager.py` | Absent when `external_oidc: false` (3 templates) |
+| `test_default_omits_external_oidc` | `tests/test_feature_manager.py` | Absent by default (3 templates) |
+| `test_external_oidc_claim_mappings` | `tests/test_feature_manager.py` | Custom `username.claim` renders correctly (3 templates) |
+| `test_external_oidc_flag_only_no_providers` | `tests/test_feature_manager.py` | Flag without issuer URL renders only `enableExternalAuthProviders` (3 templates) |
+| `test_external_oidc_oidc_clients_block` | `tests/test_feature_manager.py` | `oidcClients` with clientID + clientSecret (3 templates) |
+| `test_external_oidc_oidc_clients_without_secret` | `tests/test_feature_manager.py` | `oidcClients` without `clientSecret` (3 templates) |
+| `test_external_oidc_groups_claim` | `tests/test_feature_manager.py` | Groups claim + prefix rendering (3 templates) |
+| `test_external_oidc_groups_claim_without_prefix` | `tests/test_feature_manager.py` | Groups claim without prefix (3 templates) |
+| `test_external_oidc_no_groups_by_default` | `tests/test_feature_manager.py` | No groups block by default (3 templates) |
+| `test_external_oidc_custom_audiences` | `tests/test_feature_manager.py` | Custom audiences list (3 templates) |
+| `test_external_oidc_custom_provider_name` | `tests/test_feature_manager.py` | Custom provider name (3 templates) |
+| `test_external_oidc_custom_prefix_policy` | `tests/test_feature_manager.py` | Custom `prefixPolicy` value (3 templates) |
+| `test_external_oidc_feature_metadata` | `tests/test_feature_manager.py` | Registry: resource, k8s_field, min_version |
+| `test_external_oidc_var_mapping` | `tests/test_feature_manager.py` | `external_oidc` in resolved extra vars |
+| `test_external_oidc_alias` | `tests/test_feature_manager.py` | CLI alias `external-oidc` resolves to `external_oidc` |
+| `test_external_oidc_rejected_on_418` | `tests/test_feature_manager.py` | Version gate rejects 4.18 |
+| `test_external_oidc_valid_on_419` | `tests/test_feature_manager.py` | Version gate accepts 4.19+ |
+
 ## Related
 
 - [Automated Feature Verification](automated-feature-verification.md)
-- Break-Glass Credentials (depends on this feature, not yet automated)
-- Feature Group: `day1-security`
+- Break-Glass Credentials (depends on this feature — see PR #70)
+- Feature Group: `day1-networking`
