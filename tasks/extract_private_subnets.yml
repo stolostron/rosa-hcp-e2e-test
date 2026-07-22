@@ -1,0 +1,70 @@
+---
+- name: Determine private subnet source
+  changed_when: false
+  set_fact:
+    private_subnets_source: >-
+      {%- if private_subnet_ids is defined and (private_subnet_ids | length > 0) -%}
+      user_provided
+      {%- elif rosa_network_subnets is defined and (rosa_network_subnets | length > 0) -%}
+      rosa_network
+      {%- else -%}
+      none
+      {%- endif -%}
+
+- name: Use user-provided private subnet IDs
+  when: private_subnets_source == 'user_provided'
+  block:
+    - name: Validate user-provided subnet IDs format
+      assert:
+        that:
+          - private_subnet_ids | length > 0
+          - private_subnet_ids | map('regex_search', '^subnet-([a-f0-9]{8}|[a-f0-9]{17})$') | select | list | length == private_subnet_ids | length
+        fail_msg: "FAIL: Invalid subnet ID format detected. Expected format: subnet-<8 or 17 hex chars>"
+
+    - name: Validate private availability zones provided
+      fail:
+        msg: >
+          User-provided private subnets require availability zones.
+          Pass them with: -e 'private_availability_zones=["us-west-2a","us-west-2b"]'
+      when: private_availability_zones is not defined or private_availability_zones | length == 0
+
+    - name: Set private subnets from user input
+      changed_when: false
+      set_fact:
+        cluster_private_subnets: "{{ private_subnet_ids }}"
+
+    - name: Display user-provided subnets
+      debug:
+        msg: "PASS: Using user-provided private subnets (count: {{ cluster_private_subnets | length }})"
+
+- name: Extract private subnets from ROSANetwork status
+  when: private_subnets_source == 'rosa_network'
+  block:
+    - name: Extract private subnet IDs from ROSANetwork
+      changed_when: false
+      set_fact:
+        cluster_private_subnets: "{{ rosa_network_subnets | selectattr('privateSubnet', 'defined') | map(attribute='privateSubnet') | list }}"
+
+    - name: Validate extracted subnet IDs
+      assert:
+        that:
+          - cluster_private_subnets | length > 0
+          - cluster_private_subnets | map('regex_search', '^subnet-([a-f0-9]{8}|[a-f0-9]{17})$') | select | list | length == cluster_private_subnets | length
+        fail_msg: "Failed to extract valid private subnet IDs from ROSANetwork status"
+
+    - name: Display extracted subnets
+      debug:
+        msg: "PASS: Extracted private subnets from ROSANetwork (count: {{ cluster_private_subnets | length }})"
+
+- name: Fail if no subnet source available
+  when: private_subnets_source == 'none'
+  fail:
+    msg: >
+      No private subnets available. Either provide subnet IDs via
+      -e 'private_subnet_ids=["subnet-abc","subnet-def"]' or ensure
+      ROSANetwork has completed and set rosa_network_subnets.
+
+- name: Display private subnet summary
+  when: cluster_private_subnets is defined
+  debug:
+    msg: "Private subnet configuration: source={{ private_subnets_source }}, count={{ cluster_private_subnets | length }}"

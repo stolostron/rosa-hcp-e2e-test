@@ -42,6 +42,7 @@
         ocp_user: "{{ OCP_HUB_CLUSTER_USER }}"
         ocp_password: "{{ OCP_HUB_CLUSTER_PASSWORD }}"
         api_url: "{{ OCP_HUB_API_URL }}"
+      no_log: true
 
     - name: Login to OpenShift Hub Cluster
       include_tasks: "{{ playbook_dir }}/../tasks/login_ocp.yml"
@@ -152,22 +153,88 @@
             fail_detail: "networkType is not 'Other'"
 
     # --- private_network ---
-    - name: "CHECK: Private Cluster (endpointAccess: Private)"
+    - name: "CHECK: Private Cluster (via AWS CLI)"
+      vars:
+        verify_region: "{{ aws_region | default(rcp.spec.region | default('us-west-2')) }}"
+        stack_name: "{{ cluster_name }}-rosa-network-stack"
       block:
-        - name: Assert endpointAccess is Private
+        - name: Query VPC ID from CloudFormation stack subnets
+          command:
+            argv:
+              - aws
+              - ec2
+              - describe-subnets
+              - --filters
+              - "Name=tag:aws:cloudformation:stack-name,Values={{ stack_name }}"
+              - --region
+              - "{{ verify_region }}"
+              - --query
+              - "Subnets[0].VpcId"
+              - --output
+              - text
+          register: aws_vpc_id_raw
+          changed_when: false
+
+        - name: Assert VPC ID was resolved from stack
           assert:
             that:
-              - rcp.spec.endpointAccess is defined
-              - rcp.spec.endpointAccess == 'Private'
-            fail_msg: "FAIL: endpointAccess is '{{ rcp.spec.endpointAccess | default('not set') }}', expected 'Private'"
-            success_msg: "PASS: endpointAccess = Private"
+              - (aws_vpc_id_raw.stdout | trim) not in ['', 'None', 'null']
+            fail_msg: "FAIL: Could not resolve VPC ID from CloudFormation stack"
+
+        - name: Check for internet gateway attached to VPC
+          command:
+            argv:
+              - aws
+              - ec2
+              - describe-internet-gateways
+              - --filters
+              - "Name=attachment.vpc-id,Values={{ aws_vpc_id_raw.stdout | trim }}"
+              - --region
+              - "{{ verify_region }}"
+              - --query
+              - "InternetGateways[].InternetGatewayId"
+              - --output
+              - json
+          register: aws_igw_raw
+          changed_when: false
+
+        - name: Parse IGW response
+          set_fact:
+            aws_igws: "{{ aws_igw_raw.stdout | from_json }}"
+
+        - name: Query load balancers in the VPC
+          command:
+            argv:
+              - aws
+              - elbv2
+              - describe-load-balancers
+              - --region
+              - "{{ verify_region }}"
+              - --query
+              - "LoadBalancers[?VpcId=='{{ aws_vpc_id_raw.stdout | trim }}'].{Name:LoadBalancerName,Scheme:Scheme}"
+              - --output
+              - json
+          register: aws_nlb_raw
+          changed_when: false
+
+        - name: Parse NLB response
+          set_fact:
+            aws_nlbs: "{{ aws_nlb_raw.stdout | from_json }}"
+
+        - name: Assert cluster is private (no internet-facing LBs)
+          assert:
+            that:
+              - aws_nlbs | selectattr('Scheme', 'equalto', 'internet-facing') | list | length == 0
+            fail_msg: "FAIL: Found internet-facing load balancer(s) in VPC — cluster is not private"
+            success_msg: "PASS: All load balancers are internal — cluster is private"
+
         - set_fact:
             features_passed: "{{ features_passed | int + 1 }}"
       rescue:
         - include_tasks: "{{ playbook_dir }}/../tasks/verify_feature_rescue.yml"
           vars:
             feature_id: private_network
-            fail_detail: "endpointAccess is not 'Private'"
+            fail_detail: "cluster is not private or could not verify VPC/LB configuration"
 
     # --- external_oidc ---
     - name: "CHECK: External OIDC (enableExternalAuthProviders + externalAuthProviders)"
