@@ -4,12 +4,27 @@
   any_errors_fatal: true
   vars_files:
     - ../vars/vars.yml
-    - ../vars/user_vars.yml
   tasks:
-    - set_fact:
+    - name: Load user variables
+      ansible.builtin.include_vars: "{{ item }}"
+      with_first_found:
+        - files:
+            - ../vars/user_vars.yml
+          skip: true
+
+    - name: Use provided AWS B64 encoded credentials
+      set_fact:
+        aws_b64_credentials_value: "{{ lookup('env', 'AWS_B64ENCODED_CREDENTIALS') }}"
+      no_log: true
+      when: lookup('env', 'AWS_B64ENCODED_CREDENTIALS') | length > 0
+
+    - name: Set individual AWS credentials for generation
+      set_fact:
         aws_access_key_id: "{{ lookup('env', 'AWS_ACCESS_KEY_ID') | default(AWS_ACCESS_KEY_ID, true) }}"
         aws_secret_access_key: "{{ lookup('env', 'AWS_SECRET_ACCESS_KEY') | default(AWS_SECRET_ACCESS_KEY, true) }}"
         aws_region: "{{ lookup('env', 'AWS_REGION') | default('us-east-1', true) }}"
+      no_log: true
+      when: aws_b64_credentials_value is not defined
 
     - name: Prepare ansible runner host
       include_tasks: ../tasks/prepare_ansible_runner.yml
@@ -36,6 +51,13 @@
           "{{ aws_access_key_id }}" "{{ aws_secret_access_key }}" "{{ aws_region }}" | base64 -w 0
       register: aws_b64_credentials
       no_log: true
+      when: aws_b64_credentials_value is not defined
+
+    - name: Set credentials value from generated output
+      set_fact:
+        aws_b64_credentials_value: "{{ aws_b64_credentials.stdout }}"
+      no_log: true
+      when: aws_b64_credentials_value is not defined
 
     - name: Install CAPI core controllers via Helm
       shell: |
@@ -51,9 +73,26 @@
           --include-crds \
           --namespace capa-system \
           --set ocp.enabled=true \
-          --set aws.encodedCredentials="{{ aws_b64_credentials.stdout }}" \
         | oc apply -n capa-system -f - --server-side --force-conflicts
+
+    - name: Patch CAPA bootstrap credentials secret
+      shell: |
+        oc patch secret capa-manager-bootstrap-credentials -n capa-system \
+          --type merge -p '{"data":{"credentials":"{{ aws_b64_credentials_value }}"}}'
       no_log: true
+
+    - name: Restart CAPA controller to pick up credentials
+      shell: |
+        oc rollout restart deployment/capa-controller-manager -n capa-system
+
+    - name: Get current kube context
+      shell: oc config current-context
+      register: current_context
+      changed_when: false
+
+    - name: Set current kube context
+      ansible.builtin.set_fact:
+        ocp_context: "{{ current_context.stdout | trim }}"
 
     - name: Wait for CAPI/CAPA controllers to be ready
       include_tasks: ../tasks/wait-for-capi-capa-ready.yml

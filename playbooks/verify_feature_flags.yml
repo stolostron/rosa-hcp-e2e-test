@@ -39,9 +39,9 @@
     # ================================================================
     - name: Set cluster credentials
       set_fact:
-        ocp_user: "{{ OCP_HUB_CLUSTER_USER }}"
-        ocp_password: "{{ OCP_HUB_CLUSTER_PASSWORD }}"
-        api_url: "{{ OCP_HUB_API_URL }}"
+        ocp_user: "{{ lookup('env', 'OCP_HUB_CLUSTER_USER') | default(OCP_HUB_CLUSTER_USER, true) }}"
+        ocp_password: "{{ lookup('env', 'OCP_HUB_CLUSTER_PASSWORD') | default(OCP_HUB_CLUSTER_PASSWORD, true) }}"
+        api_url: "{{ lookup('env', 'OCP_HUB_API_URL') | default(OCP_HUB_API_URL, true) }}"
       no_log: true
 
     - name: Login to OpenShift Hub Cluster

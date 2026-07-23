@@ -13,5 +13,5 @@
       "required": true
     }
   ],
-  "tags": ["setup", "standalone", "capi", "capa", "helm"]
+  "tags": ["setup", "standalone", "capi", "capa", "helm", "smoke"]
 }

@@ -4,8 +4,14 @@
   any_errors_fatal: true
   vars_files:
     - ../vars/vars.yml
-    - ../vars/user_vars.yml
   tasks:
+    - name: Load user variables
+      ansible.builtin.include_vars: "{{ item }}"
+      with_first_found:
+        - files:
+            - ../vars/user_vars.yml
+          skip: true
+
     - set_fact:
         ocp_user: "{{ lookup('env', 'OCP_HUB_CLUSTER_USER') | default(OCP_HUB_CLUSTER_USER, true) }}"
         ocp_password: "{{ lookup('env', 'OCP_HUB_CLUSTER_PASSWORD') | default(OCP_HUB_CLUSTER_PASSWORD, true) }}"

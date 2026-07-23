@@ -24,18 +24,24 @@
   any_errors_fatal: true
   vars_files:
     - ../vars/vars.yml
-    - ../vars/user_vars.yml
 
   vars:
     pause_duration: 30  # Seconds to wait between enabling Hypershift and disabling CAPI
 
   tasks:
+    - name: Load user variables
+      ansible.builtin.include_vars: "{{ item }}"
+      with_first_found:
+        - files:
+            - ../vars/user_vars.yml
+          skip: true
+
     - name: Set cluster credentials
       set_fact:
-        ocp_user: "{{ OCP_HUB_CLUSTER_USER }}"
-        ocp_password: "{{ OCP_HUB_CLUSTER_PASSWORD }}"
-        api_url: "{{ OCP_HUB_API_URL }}"
-        mce_namespace: "{{ MCE_NAMESPACE }}"
+        ocp_user: "{{ lookup('env', 'OCP_HUB_CLUSTER_USER') | default(OCP_HUB_CLUSTER_USER, true) }}"
+        ocp_password: "{{ lookup('env', 'OCP_HUB_CLUSTER_PASSWORD') | default(OCP_HUB_CLUSTER_PASSWORD, true) }}"
+        api_url: "{{ lookup('env', 'OCP_HUB_API_URL') | default(OCP_HUB_API_URL, true) }}"
+        mce_namespace: "{{ lookup('env', 'MCE_NAMESPACE') | default(MCE_NAMESPACE, true) }}"
 
     - name: Prepare ansible runner host
       include_tasks: ../tasks/prepare_ansible_runner.yml

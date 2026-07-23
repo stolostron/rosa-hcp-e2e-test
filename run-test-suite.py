@@ -1235,9 +1235,9 @@ Examples:
         return 0
 
     # Validate arguments
-    if not args.suite_id and not args.all:
+    if not args.suite_id and not args.all and not args.tag:
         parser.print_help()
-        print(f"\n{Colors.RED}Error: Please specify a suite ID or use --all{Colors.ENDC}")
+        print(f"\n{Colors.RED}Error: Please specify a suite ID, --all, or --tag <tag>{Colors.ENDC}")
         return 1
 
     # Track overall execution time

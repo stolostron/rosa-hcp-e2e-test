@@ -42,23 +42,44 @@
   any_errors_fatal: true
   vars_files:
     - ../vars/vars.yml
-    - ../vars/user_vars.yml
 
   vars:
     # These will be set by extra_vars from UI or command line, or use these defaults
 
   tasks:
+    - name: Load user variables
+      ansible.builtin.include_vars: "{{ item }}"
+      with_first_found:
+        - files:
+            - ../vars/user_vars.yml
+          skip: true
+
     - name: Set cluster credentials
       set_fact:
-        ocp_user: "{{ OCP_HUB_CLUSTER_USER }}"
-        ocp_password: "{{ OCP_HUB_CLUSTER_PASSWORD }}"
-        api_url: "{{ OCP_HUB_API_URL }}"
-        mce_namespace: "{{ MCE_NAMESPACE }}"
-        aws_account_id: "{{ AWS_ACCOUNT_ID }}"
-        aws_region: "{{ AWS_REGION }}"
+        ocp_user: "{{ lookup('env', 'OCP_HUB_CLUSTER_USER') | default(OCP_HUB_CLUSTER_USER, true) }}"
+        ocp_password: "{{ lookup('env', 'OCP_HUB_CLUSTER_PASSWORD') | default(OCP_HUB_CLUSTER_PASSWORD, true) }}"
+        api_url: "{{ lookup('env', 'OCP_HUB_API_URL') | default(OCP_HUB_API_URL, true) }}"
+        mce_namespace: "{{ lookup('env', 'MCE_NAMESPACE') | default(MCE_NAMESPACE, true) }}"
+      when: deployment_mode != 'standalone'
+
+    - name: Set AWS credentials
+      set_fact:
+        aws_account_id: "{{ lookup('env', 'AWS_ACCOUNT_ID') | default(AWS_ACCOUNT_ID, true) }}"
+        aws_region: "{{ lookup('env', 'AWS_REGION') | default(AWS_REGION | default('us-east-1'), true) }}"
 
     - name: Login to OpenShift Hub Cluster
       include_tasks: ../tasks/login_ocp.yml
+      when: deployment_mode != 'standalone'
+
+    - name: Get current kube context
+      shell: oc config current-context
+      register: current_context
+      changed_when: false
+      when: deployment_mode == 'standalone'
+
+    - set_fact:
+        ocp_context: "{{ current_context.stdout | trim }}"
+      when: deployment_mode == 'standalone'
 
     - name: Derive cluster name and domain prefix from name_prefix
       set_fact:
@@ -123,9 +144,11 @@
 
     - name: Login to OCP cluster
       include_tasks: ../tasks/login_ocp.yml
+      when: deployment_mode != 'standalone'
 
     - name: Configure MCE CAPI/CAPA Environment
       include_tasks: ../tasks/configure-capa-environment.yml
+      when: deployment_mode != 'standalone'
 
     - name: Display automation configuration
       debug:
