@@ -272,6 +272,14 @@ class TestFeatureGroups:
         assert "parallel_upgrade" in features
         assert "disk_size" in features
 
+    def test_resolve_networking_group(self, fm):
+        features = fm.resolve_group("day1-networking")
+        assert len(features) == 4
+        assert "no_cni" in features
+        assert "private_network" in features
+        assert "external_oidc" in features
+        assert "audit_logging" in features
+
     def test_resolve_unknown_group(self, fm):
         result = fm.resolve_group("nonexistent")
         assert result is None
@@ -604,6 +612,65 @@ class TestFeatureRegistrySecurityGroups:
     def test_security_groups_var_mapping(self, fm):
         result = fm.resolve_to_extra_vars(["security_groups"])
         assert "feature_security_groups_enabled" in result
+
+
+class TestNoCNI:
+    @pytest.mark.parametrize("version,template_name", [
+        ("4.22", "rosa-controlplane-only.yaml.j2"),
+        ("4.22", "rosa-combined-automation.yaml.j2"),
+        ("4.21", "rosa-controlplane-only.yaml.j2"),
+    ])
+    def test_no_cni_renders_network_type_other(self, version, template_name):
+        docs = _render_template(template_name, version, {"no_cni": True})
+        rcp = next((d for d in docs if d.get("kind") == "ROSAControlPlane"), None)
+        assert rcp is not None, f"{template_name}: no ROSAControlPlane document"
+        assert rcp["spec"]["network"]["networkType"] == "Other"
+
+    @pytest.mark.parametrize("version,template_name", [
+        ("4.22", "rosa-controlplane-only.yaml.j2"),
+        ("4.22", "rosa-combined-automation.yaml.j2"),
+        ("4.21", "rosa-controlplane-only.yaml.j2"),
+    ])
+    def test_no_cni_false_omits_network_type(self, version, template_name):
+        docs = _render_template(template_name, version, {"no_cni": False})
+        rcp = next((d for d in docs if d.get("kind") == "ROSAControlPlane"), None)
+        assert rcp is not None
+        assert "networkType" not in rcp["spec"].get("network", {}), \
+            f"{template_name}: networkType should not be rendered when no_cni is false"
+
+    @pytest.mark.parametrize("version,template_name", [
+        ("4.22", "rosa-controlplane-only.yaml.j2"),
+        ("4.22", "rosa-combined-automation.yaml.j2"),
+        ("4.21", "rosa-controlplane-only.yaml.j2"),
+    ])
+    def test_default_omits_network_type(self, version, template_name):
+        docs = _render_template(template_name, version)
+        rcp = next((d for d in docs if d.get("kind") == "ROSAControlPlane"), None)
+        assert rcp is not None
+        assert "networkType" not in rcp["spec"].get("network", {}), \
+            f"{template_name}: networkType should not be rendered by default"
+
+    def test_no_cni_feature_metadata(self, fm):
+        feat = fm.get_feature("no_cni")
+        assert feat is not None
+        assert feat["resource"] == "ROSAControlPlane"
+        assert feat["k8s_field"] == ".spec.network.networkType"
+        assert feat.get("min_version") == "4.19"
+
+    def test_no_cni_var_mapping(self, fm):
+        result = fm.resolve_to_extra_vars(["no_cni"])
+        assert "no_cni" in result
+
+    def test_no_cni_alias(self, fm):
+        assert fm.resolve_alias("no-cni") == "no_cni"
+
+    def test_no_cni_rejected_on_418(self, fm):
+        errors = fm.validate_features(["no_cni"], "4.18")
+        assert len(errors) > 0
+
+    def test_no_cni_valid_on_419(self, fm):
+        errors = fm.validate_features(["no_cni"], "4.19")
+        assert errors == []
 
 
 class TestPrivateClusterSubnets:

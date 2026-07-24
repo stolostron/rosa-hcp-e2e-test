@@ -126,8 +126,10 @@ feature_groups:
       - security_groups
 
   day1-networking:
-    description: "Network/auth features (requires OIDC provider and CloudWatch setup)"
+    description: "Network/auth features (no-CNI, private endpoint, OIDC, log forwarding)"
     features:
+      - no_cni
+      - private_network
       - external_oidc
       - audit_logging
 
@@ -424,6 +426,7 @@ suites:
         default: false
         k8s_field: ".spec.network.networkType"
         resource: ROSAControlPlane
+        min_version: "4.19"
 
       - id: proxy_enabled
         name: Proxy Enabled
