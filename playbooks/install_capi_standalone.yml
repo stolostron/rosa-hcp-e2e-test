@@ -59,13 +59,20 @@
       no_log: true
       when: aws_b64_credentials_value is not defined
 
-    - name: Install CAPI core controllers via Helm
+    - name: Install CAPI core controllers via Helm (standalone adjustments applied)
       shell: |
         helm template {{ output_dir }}/cluster-api-installer/charts/cluster-api \
           --include-crds \
           --namespace capi-system \
           --set ocp.enabled=true \
+        | sed '/--watch-filter=multicluster-engine/d' \
         | oc apply -n capi-system -f - --server-side --force-conflicts
+
+    - name: Remove MCE webhook (not needed in standalone mode)
+      shell: |
+        oc delete mutatingwebhookconfiguration mce-capi-webhook-config-configuration --ignore-not-found
+        oc delete deployment mce-capi-webhook-config -n capi-system --ignore-not-found
+        oc delete service mce-capi-webhook-config-service -n capi-system --ignore-not-found
 
     - name: Install CAPA controllers via Helm
       shell: |
