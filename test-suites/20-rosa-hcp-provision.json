@@ -2,7 +2,7 @@
   "name": "CAPA Cluster Provisioning",
   "description": "Provision a ROSA HCP cluster using CAPA with automated network and role configuration, including wait for cluster readiness (RHACM4K-61815)",
   "version": "1.0.0",
-  "tags": ["rosa", "hcp", "provisioning", "network-automation", "role-automation"],
+  "tags": ["rosa", "hcp", "provisioning", "network-automation", "role-automation", "smoke"],
   "environment": "mce",
   "playbooks": [
     {

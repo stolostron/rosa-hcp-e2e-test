@@ -43,12 +43,13 @@ This repository provides comprehensive automated testing for ROSA HCP cluster li
 
 ### Prerequisites
 
-- **OpenShift Hub Cluster** with MCE 2.x or ACM 2.x installed
+- **OpenShift Hub Cluster** with MCE 2.x or ACM 2.x installed, **or** CRC for standalone mode
 - **AWS Account** with appropriate permissions for ROSA
 - **OCM (OpenShift Cluster Manager)** credentials
 - **Python** 3.8+ with `boto3` and `PyYAML`
 - **Ansible** 2.19+
 - **oc CLI** installed and authenticated
+- **Helm** 3.x (standalone mode only)
 
 ### Environment Setup
 
@@ -81,6 +82,37 @@ MCE_NAMESPACE: "multicluster-engine"
 oc login <your-api-url> -u <your-user> -p <your-password>
 ```
 The playbooks load credentials from `vars/user_vars.yml` automatically via `vars_files`.
+
+### Local Standalone Testing with CRC
+
+You can run the full smoke test suite locally using [CRC (CodeReady Containers)](https://crc.dev/) without an MCE hub cluster. This deploys CAPI/CAPA controllers directly via Helm charts from the [cluster-api-installer](https://github.com/stolostron/cluster-api-installer) repo.
+
+**Requirements:**
+- [CRC](https://crc.dev/) installed and configured
+- A [Red Hat pull secret](https://console.redhat.com/openshift/create/local) saved to a file
+- `oc`, `helm` CLI tools
+- `vars/user_vars.yml` configured with AWS and OCM credentials
+
+**Run the standalone smoke tests:**
+```bash
+make crc-standalone PULL_SECRET_FILE=~/quay-pull-secret.json
+```
+
+This will:
+1. Start CRC (if not already running)
+2. Login as `kubeadmin`
+3. Run the `smoke`-tagged suites (install CAPI standalone → provision ROSA HCP → delete)
+
+**Stop CRC:**
+```bash
+make crc-stop
+```
+
+**What standalone mode does differently:**
+- Deploys CAPI/CAPA controllers via Helm instead of relying on MCE
+- Removes the MCE webhook (`mce-capi-webhook-config`) which is not needed without MCE
+- Removes the `--watch-filter=multicluster-engine` flag so the CAPI controller watches all resources
+- Skips MCE-specific configuration (OCP login, MCE namespace setup)
 
 ### Running Tests
 
@@ -313,6 +345,7 @@ rosa-hcp-e2e-test/
 │   ├── verify_feature_flags.yml
 │   ├── verify_break_glass_credentials.yml
 │   ├── verify_capi_environment.yaml
+│   ├── install_capi_standalone.yml
 │   ├── enable_capi_disable_hypershift.yml
 │   └── disable_capi_enable_hypershift.yml
 ├── tasks/                      # Reusable Ansible task files (60+)

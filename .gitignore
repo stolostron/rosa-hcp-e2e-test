@@ -13,6 +13,7 @@ test-results/**/*.json
 results/**/*.json
 
 # Generated files
+.last-cluster.json
 generated-yamls/
 *.backup
 *.swp

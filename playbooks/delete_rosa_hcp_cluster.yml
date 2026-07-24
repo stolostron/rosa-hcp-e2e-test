@@ -57,12 +57,18 @@
         ocp_user: "{{ lookup('env', 'OCP_HUB_CLUSTER_USER') | default(OCP_HUB_CLUSTER_USER, true) }}"
         ocp_password: "{{ lookup('env', 'OCP_HUB_CLUSTER_PASSWORD') | default(OCP_HUB_CLUSTER_PASSWORD, true) }}"
         api_url: "{{ lookup('env', 'OCP_HUB_API_URL') | default(OCP_HUB_API_URL, true) }}"
-        mce_namespace: "{{ lookup('env', 'MCE_NAMESPACE') | default(MCE_NAMESPACE, true) }}"
+        mce_namespace: "{{ lookup('env', 'MCE_NAMESPACE') | default(mce_namespace, true) }}"
+
+    - name: Load cluster state from previous suite run
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../.last-cluster.json"
+      when: cluster_name is not defined and name_prefix is not defined
+      ignore_errors: true
 
     - name: Derive cluster_name from name_prefix if provided
       set_fact:
         cluster_name: "{{ name_prefix }}-rosa-hcp"
-      when: name_prefix is defined
+      when: name_prefix is defined and cluster_name is not defined
 
     - name: Validate cluster name is provided
       fail:

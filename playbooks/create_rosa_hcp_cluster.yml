@@ -59,7 +59,7 @@
         ocp_user: "{{ lookup('env', 'OCP_HUB_CLUSTER_USER') | default(OCP_HUB_CLUSTER_USER, true) }}"
         ocp_password: "{{ lookup('env', 'OCP_HUB_CLUSTER_PASSWORD') | default(OCP_HUB_CLUSTER_PASSWORD, true) }}"
         api_url: "{{ lookup('env', 'OCP_HUB_API_URL') | default(OCP_HUB_API_URL, true) }}"
-        mce_namespace: "{{ lookup('env', 'MCE_NAMESPACE') | default(MCE_NAMESPACE, true) }}"
+        mce_namespace: "{{ lookup('env', 'MCE_NAMESPACE') | default(mce_namespace, true) }}"
       when: deployment_mode != 'standalone'
 
     - name: Set AWS credentials
@@ -187,6 +187,11 @@
 
     - name: Provision ROSA HCP cluster with automation
       include_tasks: ../tasks/provision_rosa_hcp_with_automation.yml
+
+    - name: Save cluster state for downstream suites
+      copy:
+        content: "{{ {'cluster_name': cluster_name, 'domain_prefix': domain_prefix, 'rosa_hcp_namespace': rosa_hcp_namespace, 'aws_region': aws_region} | to_nice_json }}"
+        dest: "{{ playbook_dir }}/../.last-cluster.json"
 
     - name: Provisioning complete
       debug:
