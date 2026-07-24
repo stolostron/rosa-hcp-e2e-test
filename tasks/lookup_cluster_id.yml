@@ -1,0 +1,152 @@
+---
+- name: Skip cluster ID lookup if already provided
+  set_fact:
+    ocm_cluster_id_lookup_success: true
+  when: cluster_id is defined and cluster_id | trim | length > 0
+
+- name: Get OCM credentials from rosa-creds-secret (multicluster-engine)
+  shell: >
+    oc get secret rosa-creds-secret -n multicluster-engine
+    -o jsonpath='{.data.ocmClientID}|{.data.ocmClientSecret}|{.data.ocmApiUrl}'
+  register: ocm_creds_mce
+  failed_when: false
+  changed_when: false
+  no_log: true
+  when: cluster_id is not defined or cluster_id | trim | length == 0
+
+- name: Get OCM credentials from rosa-creds-secret (capi namespace fallback)
+  shell: >
+    oc get secret rosa-creds-secret -n {{ capi_namespace | quote }}
+    -o jsonpath='{.data.ocmClientID}|{.data.ocmClientSecret}|{.data.ocmApiUrl}'
+  register: ocm_creds_capi
+  failed_when: false
+  changed_when: false
+  no_log: true
+  when: 
+    - cluster_id is not defined or cluster_id | trim | length == 0
+    - ocm_creds_mce.rc != 0 or ocm_creds_mce.stdout | length == 0
+
+- name: Select OCM credentials source
+  set_fact:
+    ocm_creds_raw: "{{ ocm_creds_mce if (ocm_creds_mce is defined and ocm_creds_mce.rc == 0 and ocm_creds_mce.stdout | length > 0) else (ocm_creds_capi | default(ocm_creds_mce | default({}))) }}"
+  no_log: true
+  when:
+    - cluster_id is not defined or cluster_id | trim | length == 0
+    - ocm_creds_mce is defined or ocm_creds_capi is defined
+
+- name: Split raw OCM credentials
+  set_fact:
+    ocm_creds_parts: "{{ ocm_creds_raw.stdout.split('|') }}"
+  when: 
+    - cluster_id is not defined or cluster_id | trim | length == 0
+    - ocm_creds_raw is defined
+    - ocm_creds_raw.rc | default(1) == 0
+    - ocm_creds_raw.stdout | default('') | length > 0
+  no_log: true
+
+- name: Decode OCM credentials
+  block:
+    - set_fact:
+        ocm_client_id: >-
+          {{ (ocm_creds_parts[0] | b64decode)
+             if ocm_creds_parts is defined and ocm_creds_parts | length > 0
+             else '' }}
+        ocm_client_secret: >-
+          {{ (ocm_creds_parts[1] | b64decode)
+             if ocm_creds_parts is defined and ocm_creds_parts | length > 1
+             else '' }}
+        ocm_api_url: >-
+          {{ (ocm_creds_parts[2] | b64decode)
+             if ocm_creds_parts is defined and ocm_creds_parts | length > 2
+                and ocm_creds_parts[2] | length > 0
+             else 'https://api.stage.openshift.com' }}
+      no_log: true
+  rescue:
+    - set_fact:
+        ocm_client_id: ""
+        ocm_client_secret: ""
+        ocm_api_url: "https://api.stage.openshift.com"
+  when: cluster_id is not defined or cluster_id | trim | length == 0
+
+- name: Initialize OCM vars if credentials unavailable
+  set_fact:
+    ocm_client_id: ""
+    ocm_client_secret: ""
+    ocm_api_url: "https://api.stage.openshift.com"
+  when: 
+    - cluster_id is not defined or cluster_id | trim | length == 0
+    - ocm_client_id is not defined or ocm_client_id | trim | length == 0
+
+- name: Reject non-HTTPS OCM API URL
+  assert:
+    that:
+      - ocm_api_url is match('^https://')
+    fail_msg: "FAIL: OCM API URL is not HTTPS"
+  when: 
+    - cluster_id is not defined or cluster_id | trim | length == 0
+    - ocm_client_id | default('') | length > 0
+
+- name: Get OCM bearer token
+  uri:
+    url: "https://sso.redhat.com/auth/realms/redhat-external/protocol/openid-connect/token"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      grant_type: client_credentials
+      client_id: "{{ ocm_client_id }}"
+      client_secret: "{{ ocm_client_secret }}"
+    status_code: 200
+    timeout: 15
+  register: ocm_token_result
+  failed_when: false
+  changed_when: false
+  no_log: true
+  when: 
+    - cluster_id is not defined or cluster_id | trim | length == 0
+    - ocm_client_id | default('') | length > 0
+
+- name: Query OCM for cluster details
+  uri:
+    url: "{{ ocm_api_url }}/api/clusters_mgmt/v1/clusters?search=name%3D'{{ cluster_name | urlencode }}'"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ ocm_token_result.json.access_token }}"
+      Accept: application/json
+    status_code: 200
+    timeout: 15
+  register: ocm_cluster_result
+  failed_when: false
+  changed_when: false
+  no_log: true
+  when: 
+    - cluster_id is not defined or cluster_id | trim | length == 0
+    - ocm_token_result is defined and ocm_token_result.json is defined and ocm_token_result.json.access_token is defined
+
+- name: Extract cluster ID from OCM response
+  set_fact:
+    cluster_id: "{{ (ocm_cluster_result.json.items | selectattr('name', 'equalto', cluster_name) | first).id }}"
+    ocm_cluster_id_lookup_success: true
+  when: 
+    - cluster_id is not defined or cluster_id | trim | length == 0
+    - ocm_cluster_result is defined
+    - ocm_cluster_result.json is defined
+    - ocm_cluster_result.json.items is defined
+    - ocm_cluster_result.json.items | selectattr('name', 'equalto', cluster_name) | list | length > 0
+
+- name: Handle cluster lookup failure
+  set_fact:
+    cluster_id: ""
+    ocm_cluster_id_lookup_success: false
+  when: 
+    - cluster_id is not defined or cluster_id | trim | length == 0
+    - (ocm_cluster_result is not defined or 
+       ocm_cluster_result.json is not defined or 
+       ocm_cluster_result.json.items is not defined or 
+       ocm_cluster_result.json.items | length == 0)
+
+- name: Debug cluster lookup failure warning
+  debug:
+    msg: "WARNING: Failed to lookup cluster ID for cluster name"
+  when: 
+    - ocm_cluster_id_lookup_success is defined
+    - not ocm_cluster_id_lookup_success
