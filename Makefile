@@ -21,7 +21,8 @@ crc-standalone:
 	@LOGIN_CMD=$$(crc console --credentials 2>/dev/null | grep kubeadmin | sed "s/.*'\(oc login[^']*\)'.*/\1/"); \
 		if [ -z "$$LOGIN_CMD" ]; then echo "Error: failed to extract kubeadmin login from crc"; exit 1; fi; \
 		eval "$$LOGIN_CMD"
-	DEPLOYMENT_MODE=standalone ./run-test-suite.py --tag smoke -vvv
+	NAME_PREFIX="lc$$(head -c 2 /dev/urandom | od -An -tx1 | tr -d ' ')" && \
+	DEPLOYMENT_MODE=standalone ./run-test-suite.py --tag smoke --ai-agent -e name_prefix="$$NAME_PREFIX" -vvv
 
 crc-stop:
 	crc stop

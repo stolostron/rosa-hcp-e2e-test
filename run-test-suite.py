@@ -29,6 +29,7 @@ Created: January 22, 2026
 """
 
 import argparse
+import fcntl
 import json
 import os
 import subprocess
@@ -49,6 +50,37 @@ except ImportError:
     AI_AGENTS_AVAILABLE = False
 
 # Terminal colors for output
+class _BlockingStream:
+    """Wrap a stream to reset O_NONBLOCK on BlockingIOError.
+
+    On macOS, the AI agent's sidecar thread can set O_NONBLOCK on stdout,
+    causing any print() to raise BlockingIOError ([Errno 35]). Wrapping
+    sys.stdout with this class makes every write auto-recover.
+    """
+
+    def __init__(self, stream):
+        self._stream = stream
+
+    def write(self, data):
+        try:
+            return self._stream.write(data)
+        except BlockingIOError:
+            fcntl.fcntl(self._stream, fcntl.F_SETFL,
+                        fcntl.fcntl(self._stream, fcntl.F_GETFL) & ~os.O_NONBLOCK)
+            return self._stream.write(data)
+
+    def flush(self):
+        try:
+            return self._stream.flush()
+        except BlockingIOError:
+            fcntl.fcntl(self._stream, fcntl.F_SETFL,
+                        fcntl.fcntl(self._stream, fcntl.F_GETFL) & ~os.O_NONBLOCK)
+            return self._stream.flush()
+
+    def __getattr__(self, name):
+        return getattr(self._stream, name)
+
+
 class Colors:
     HEADER = '\033[95m'
     BLUE = '\033[94m'
@@ -264,6 +296,7 @@ class TestSuiteRunner:
                 cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,  # Merge stderr into stdout
+                stdin=subprocess.DEVNULL,
                 text=True,
                 bufsize=1,  # Line buffered
                 cwd=self.base_dir
@@ -943,6 +976,8 @@ class TestSuiteRunner:
 
 def main():
     """Main entry point."""
+    sys.stdout = _BlockingStream(sys.stdout)
+
     parser = argparse.ArgumentParser(
         description="CAPA Test Suite Runner - Execute Ansible test suites for CAPA (Cluster API Provider AWS)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
