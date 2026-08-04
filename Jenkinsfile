@@ -6,9 +6,9 @@
 // ============================================================================
 // Pipeline Flow:
 //   1. Configure MCE Environment (suite 10) - Disable HyperShift, enable CAPI/CAPA
-//   2. Validate Feature Flags (dry-run) - Only runs if CLUSTER_FEATURES is set, fails fast on bad input
+//   2. Validate Feature Flags (dry-run) - Only runs if CLUSTER_FEATURES or FEATURE_GROUP is set, fails fast on bad input
 //   3. Provision ROSA HCP Cluster (suite 20) - Only runs if configuration passes
-//   4. Verify Feature Flags (suite 21) - Only runs if provisioning passes AND CLUSTER_FEATURES is set
+//   4. Verify Feature Flags (suite 21) - Only runs if provisioning passes AND CLUSTER_FEATURES or FEATURE_GROUP is set
 //   5. Add ROSA MachinePool (suite 27) - Only runs if provisioning passes
 //   6. Delete ROSA MachinePool (suite 28) - Only runs if add ROSA machinepool passes
 //   7. Upgrade ROSA Control Plane (suite 25) - Only runs if provisioning passes (optional)
@@ -52,9 +52,9 @@
 //
 // Pipeline Behavior:
 //   - Stage 1 (Configure): If fails → skips to Restore HyperShift stage
-//   - Stage 2 (Validate Features): Only runs if CLUSTER_FEATURES is set; validates input only (no cluster connection)
+//   - Stage 2 (Validate Features): Only runs if CLUSTER_FEATURES or FEATURE_GROUP is set; validates input only (no cluster connection)
 //   - Stage 3 (Provision): Only runs if Stage 1 succeeds (and Stage 2 if features set)
-//   - Stage 4 (Verify Features): Only runs if Stage 3 succeeds AND CLUSTER_FEATURES is set
+//   - Stage 4 (Verify Features): Only runs if Stage 3 succeeds AND CLUSTER_FEATURES or FEATURE_GROUP is set
 //   - Stage 5 (Add ROSA MachinePool): Only runs if Stage 3 succeeds
 //   - Stage 6 (Delete ROSA MachinePool): Only runs if Stage 5 succeeds
 //   - Stage 7 (Upgrade ROSA CP): Only runs if Stage 3 succeeds AND RUN_UPGRADE_TESTS=true
@@ -101,6 +101,7 @@ pipeline {
         string(name:'TEST_GIT_BRANCH', defaultValue: 'main', description: 'Git branch to test (for reference/documentation)')
         string(name:'NAME_PREFIX', defaultValue: 'jnk', description: 'Cluster name prefix (creates {prefix}-rosa-hcp)')
         string(name:'CLUSTER_FEATURES', defaultValue: '', description: 'Comma-separated cluster features (e.g., no-cni,external-oidc,autoscaler). Run --list-features to see options.')
+        string(name:'FEATURE_GROUP', defaultValue: '', description: 'Feature group preset (e.g., day1-basic, day1-combo, day1-security, day1-networking). Run --list-groups to see options. Can be combined with CLUSTER_FEATURES.')
         string(name:'EXTRA_FEATURE_VARS', defaultValue: '', description: 'Additional feature vars as key=value pairs separated by spaces (e.g., root_volume_size=500 user_agent=my-agent)')
         string(name:'ETCD_KMS_ARN', defaultValue: '', description: 'AWS KMS ARN for etcd encryption (required when CLUSTER_FEATURES includes etcd-kms)')
         booleanParam(name:'RUN_UPGRADE_TESTS', defaultValue: false, description: 'Run control plane and machine pool upgrade tests after provisioning')
@@ -192,11 +193,12 @@ pipeline {
             when {
                 allOf {
                     expression { currentBuild.result != 'FAILURE' }
-                    expression { params.CLUSTER_FEATURES != '' }
+                    expression { params.CLUSTER_FEATURES != '' || params.FEATURE_GROUP != '' }
                 }
             }
             environment {
                 CLUSTER_FEATURES = "${params.CLUSTER_FEATURES}"
+                FEATURE_GROUP = "${params.FEATURE_GROUP}"
                 EXTRA_FEATURE_VARS = "${params.EXTRA_FEATURE_VARS}"
                 ETCD_KMS_ARN = "${params.ETCD_KMS_ARN}"
             }
@@ -207,9 +209,16 @@ pipeline {
                             cd rosa-hcp-e2e-test
                             # Build feature flags from CLUSTER_FEATURES parameter
                             FEATURE_FLAGS=""
-                            for feature in $(echo "${CLUSTER_FEATURES}" | tr ',' ' '); do
-                                FEATURE_FLAGS="${FEATURE_FLAGS} --feature ${feature}"
-                            done
+                            if [ -n "${CLUSTER_FEATURES}" ]; then
+                                for feature in $(echo "${CLUSTER_FEATURES}" | tr ',' ' '); do
+                                    FEATURE_FLAGS="${FEATURE_FLAGS} --feature ${feature}"
+                                done
+                            fi
+                            # Build feature group flag from FEATURE_GROUP parameter
+                            GROUP_FLAG=""
+                            if [ -n "${FEATURE_GROUP}" ]; then
+                                GROUP_FLAG="--feature-group ${FEATURE_GROUP}"
+                            fi
                             # Build extra vars from EXTRA_FEATURE_VARS and ETCD_KMS_ARN
                             EXTRA_VARS=""
                             if [ -n "${ETCD_KMS_ARN}" ]; then
@@ -223,12 +232,12 @@ pipeline {
                             # Validate feature names, version compatibility, dependencies, and
                             # required inputs — no cluster connection needed, exits before ansible
                             ./run-test-suite.py 20-rosa-hcp-provision --validate-only ${FEATURE_FLAGS} \
-                              ${EXTRA_VARS}
+                              ${GROUP_FLAG} ${EXTRA_VARS}
                         '''
-                        echo "Feature validation passed for: ${CLUSTER_FEATURES}"
+                        echo "Feature validation passed for: ${CLUSTER_FEATURES} ${FEATURE_GROUP}"
                     }
                     catch (ex) {
-                        echo "Feature validation FAILED for: ${CLUSTER_FEATURES}"
+                        echo "Feature validation FAILED for: ${CLUSTER_FEATURES} ${FEATURE_GROUP}"
                         echo 'Check feature names with: ./run-test-suite.py --list-features'
                         currentBuild.result = 'FAILURE'
                     }
@@ -245,6 +254,7 @@ pipeline {
                 OCP_HUB_CLUSTER_PASSWORD = "${params.OCP_HUB_CLUSTER_PASSWORD}"
                 MCE_NAMESPACE = "${params.MCE_NAMESPACE}"
                 CLUSTER_FEATURES = "${params.CLUSTER_FEATURES}"
+                FEATURE_GROUP = "${params.FEATURE_GROUP}"
                 EXTRA_FEATURE_VARS = "${params.EXTRA_FEATURE_VARS}"
                 ETCD_KMS_ARN = "${params.ETCD_KMS_ARN}"
             }
@@ -267,6 +277,11 @@ pipeline {
                                         FEATURE_FLAGS="${FEATURE_FLAGS} --feature ${feature}"
                                     done
                                 fi
+                                # Build feature group flag from FEATURE_GROUP parameter
+                                GROUP_FLAG=""
+                                if [ -n "${FEATURE_GROUP}" ]; then
+                                    GROUP_FLAG="--feature-group ${FEATURE_GROUP}"
+                                fi
                                 # Build extra vars from EXTRA_FEATURE_VARS and ETCD_KMS_ARN
                                 EXTRA_VARS=""
                                 if [ -n "${ETCD_KMS_ARN}" ]; then
@@ -280,7 +295,7 @@ pipeline {
                                 # Execute the ROSA HCP provisioning test suite with maximum verbosity
                                 # Pass Jenkins parameters and credentials as Ansible extra vars
                                 # AI agents enabled for autonomous issue detection and remediation
-                                ./run-test-suite.py 20-rosa-hcp-provision --format junit -v --ai-agent ${FEATURE_FLAGS} \
+                                ./run-test-suite.py 20-rosa-hcp-provision --format junit -v --ai-agent ${FEATURE_FLAGS} ${GROUP_FLAG} \
                                   -e OCP_HUB_API_URL="${OCP_HUB_API_URL}" \
                                   -e OCP_HUB_CLUSTER_USER="${OCP_HUB_CLUSTER_USER}" \
                                   -e MCE_NAMESPACE="${MCE_NAMESPACE}" \
@@ -305,7 +320,7 @@ pipeline {
             when {
                 allOf {
                     expression { currentBuild.result != 'FAILURE' }
-                    expression { params.CLUSTER_FEATURES != '' }
+                    expression { params.CLUSTER_FEATURES != '' || params.FEATURE_GROUP != '' }
                 }
             }
             environment {
@@ -314,6 +329,7 @@ pipeline {
                 OCP_HUB_CLUSTER_PASSWORD = "${params.OCP_HUB_CLUSTER_PASSWORD}"
                 MCE_NAMESPACE = "${params.MCE_NAMESPACE}"
                 CLUSTER_FEATURES = "${params.CLUSTER_FEATURES}"
+                FEATURE_GROUP = "${params.FEATURE_GROUP}"
             }
             steps {
                 script {
@@ -321,12 +337,18 @@ pipeline {
                         sh '''
                             cd rosa-hcp-e2e-test
                             # Build feature flags so requested_features flows to the verify playbook
-                            # (CLUSTER_FEATURES guaranteed non-empty by stage when guard)
                             FEATURE_FLAGS=""
-                            for feature in $(echo "${CLUSTER_FEATURES}" | tr ',' ' '); do
-                                FEATURE_FLAGS="${FEATURE_FLAGS} --feature ${feature}"
-                            done
-                            ./run-test-suite.py 21-verify-feature-flags --format junit -v --ai-agent ${FEATURE_FLAGS} \
+                            if [ -n "${CLUSTER_FEATURES}" ]; then
+                                for feature in $(echo "${CLUSTER_FEATURES}" | tr ',' ' '); do
+                                    FEATURE_FLAGS="${FEATURE_FLAGS} --feature ${feature}"
+                                done
+                            fi
+                            # Build feature group flag from FEATURE_GROUP parameter
+                            GROUP_FLAG=""
+                            if [ -n "${FEATURE_GROUP}" ]; then
+                                GROUP_FLAG="--feature-group ${FEATURE_GROUP}"
+                            fi
+                            ./run-test-suite.py 21-verify-feature-flags --format junit -v --ai-agent ${FEATURE_FLAGS} ${GROUP_FLAG} \
                               -e OCP_HUB_API_URL="${OCP_HUB_API_URL}" \
                               -e OCP_HUB_CLUSTER_USER="${OCP_HUB_CLUSTER_USER}" \
                               -e MCE_NAMESPACE="${MCE_NAMESPACE}" \
