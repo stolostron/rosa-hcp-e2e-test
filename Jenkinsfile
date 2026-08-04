@@ -334,26 +334,33 @@ pipeline {
             steps {
                 script {
                     try {
-                        sh '''
-                            cd rosa-hcp-e2e-test
-                            # Build feature flags so requested_features flows to the verify playbook
-                            FEATURE_FLAGS=""
-                            if [ -n "${CLUSTER_FEATURES}" ]; then
-                                for feature in $(echo "${CLUSTER_FEATURES}" | tr ',' ' '); do
-                                    FEATURE_FLAGS="${FEATURE_FLAGS} --feature ${feature}"
-                                done
-                            fi
-                            # Build feature group flag from FEATURE_GROUP parameter
-                            GROUP_FLAG=""
-                            if [ -n "${FEATURE_GROUP}" ]; then
-                                GROUP_FLAG="--feature-group ${FEATURE_GROUP}"
-                            fi
-                            ./run-test-suite.py 21-verify-feature-flags --format junit -v --ai-agent ${FEATURE_FLAGS} ${GROUP_FLAG} \
-                              -e OCP_HUB_API_URL="${OCP_HUB_API_URL}" \
-                              -e OCP_HUB_CLUSTER_USER="${OCP_HUB_CLUSTER_USER}" \
-                              -e MCE_NAMESPACE="${MCE_NAMESPACE}" \
-                              -e cluster_name="${NAME_PREFIX}-rosa-hcp"
-                        '''
+                        withCredentials([
+                            string(credentialsId: 'CAPI_AWS_ACCESS_KEY_ID', variable: 'AWS_ACCESS_KEY_ID'),
+                            string(credentialsId: 'CAPI_AWS_SECRET_ACCESS_KEY', variable: 'AWS_SECRET_ACCESS_KEY'),
+                            string(credentialsId: 'CAPI_OCM_CLIENT_ID', variable: 'OCM_CLIENT_ID'),
+                            string(credentialsId: 'CAPI_OCM_CLIENT_SECRET', variable: 'OCM_CLIENT_SECRET')
+                        ]) {
+                            sh '''
+                                cd rosa-hcp-e2e-test
+                                # Build feature flags so requested_features flows to the verify playbook
+                                FEATURE_FLAGS=""
+                                if [ -n "${CLUSTER_FEATURES}" ]; then
+                                    for feature in $(echo "${CLUSTER_FEATURES}" | tr ',' ' '); do
+                                        FEATURE_FLAGS="${FEATURE_FLAGS} --feature ${feature}"
+                                    done
+                                fi
+                                # Build feature group flag from FEATURE_GROUP parameter
+                                GROUP_FLAG=""
+                                if [ -n "${FEATURE_GROUP}" ]; then
+                                    GROUP_FLAG="--feature-group ${FEATURE_GROUP}"
+                                fi
+                                ./run-test-suite.py 21-verify-feature-flags --format junit -v --ai-agent ${FEATURE_FLAGS} ${GROUP_FLAG} \
+                                  -e OCP_HUB_API_URL="${OCP_HUB_API_URL}" \
+                                  -e OCP_HUB_CLUSTER_USER="${OCP_HUB_CLUSTER_USER}" \
+                                  -e MCE_NAMESPACE="${MCE_NAMESPACE}" \
+                                  -e cluster_name="${NAME_PREFIX}-rosa-hcp"
+                            '''
+                        }
                         archiveArtifacts artifacts: 'rosa-hcp-e2e-test/test-results/**/*.xml', allowEmptyArchive: true, followSymlinks: false, fingerprint: true
                     }
                     catch (ex) {
