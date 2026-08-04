@@ -2,7 +2,7 @@
   "name": "Add ROSAMachinePool",
   "description": "Add a new machine pool to an existing ROSA HCP cluster by creating a MachinePool + ROSAMachinePool pair",
   "version": "1.0.0",
-  "tags": ["rosa", "hcp", "machinepool", "add"],
+  "tags": ["rosa", "hcp", "machinepool", "add", "full"],
   "environment": "mce",
   "playbooks": [
     {
@@ -10,8 +10,6 @@
       "file": "playbooks/add_rosa_machine_pool.yml",
       "description": "Creates a MachinePool and ROSAMachinePool resource pair and waits for the pool to become ready",
       "extra_vars": {
-        "cluster_name": "",
-        "pool_name": "",
         "rosa_hcp_namespace": "ns-rosa-hcp",
         "instance_type": "m5.xlarge",
         "replicas": 1

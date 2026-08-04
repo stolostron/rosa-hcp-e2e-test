@@ -2,7 +2,7 @@
   "name": "Delete ROSAMachinePool",
   "description": "Delete a machine pool from an existing ROSA HCP cluster by removing the MachinePool + ROSAMachinePool pair",
   "version": "1.0.0",
-  "tags": ["rosa", "hcp", "machinepool", "delete"],
+  "tags": ["rosa", "hcp", "machinepool", "delete", "full"],
   "environment": "mce",
   "playbooks": [
     {
@@ -10,8 +10,6 @@
       "file": "playbooks/delete_rosa_machine_pool.yml",
       "description": "Deletes the MachinePool and ROSAMachinePool resources and waits for full removal",
       "extra_vars": {
-        "cluster_name": "",
-        "pool_name": "",
         "rosa_hcp_namespace": "ns-rosa-hcp"
       }
     }

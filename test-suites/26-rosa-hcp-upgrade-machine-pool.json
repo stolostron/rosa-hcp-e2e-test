@@ -2,7 +2,7 @@
   "name": "Upgrade ROSA HCP Machine Pool",
   "description": "Upgrade a ROSA HCP cluster machine pool to the next available OpenShift version via ROSAMachinePool spec.version patch",
   "version": "1.0.0",
-  "tags": ["rosa", "hcp", "upgrade", "machine-pool"],
+  "tags": ["rosa", "hcp", "upgrade", "machine-pool", "full"],
   "environment": "mce",
   "playbooks": [
     {
@@ -10,7 +10,6 @@
       "file": "playbooks/upgrade_rosa_machine_pool.yml",
       "description": "Upgrades the ROSAMachinePool to the next available version and waits for completion",
       "extra_vars": {
-        "cluster_name": "",
         "rosa_hcp_namespace": "ns-rosa-hcp"
       }
     }

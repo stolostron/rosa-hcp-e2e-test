@@ -32,6 +32,7 @@
         ocp_password: "{{ lookup('env', 'OCP_HUB_CLUSTER_PASSWORD') | default(OCP_HUB_CLUSTER_PASSWORD, true) }}"
         api_url: "{{ lookup('env', 'OCP_HUB_API_URL') | default(OCP_HUB_API_URL, true) }}"
         AUTOMATION_PATH: "{{ lookup('env', 'AUTOMATION_PATH') | default(playbook_dir + '/..', true) }}"
+      when: deployment_mode != 'standalone'
 
     - name: Set defaults
       set_fact:
@@ -43,11 +44,39 @@
 
     - name: Login to OCP cluster
       include_tasks: ../tasks/login_ocp.yml
+      when: deployment_mode != 'standalone'
+
+    - name: Get current kube context
+      shell: oc config current-context
+      register: current_context
+      changed_when: false
+      when: deployment_mode == 'standalone'
+
+    - set_fact:
+        ocp_context: "{{ current_context.stdout | trim }}"
+      when: deployment_mode == 'standalone'
+
+    - name: Load cluster state from previous suite run
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../.last-cluster.json"
+      when: (cluster_name is not defined or cluster_name == "") and (name_prefix is not defined or name_prefix == "")
+      register: load_cluster_state
+      ignore_errors: true
+
+    - name: Derive cluster_name from name_prefix if provided
+      set_fact:
+        cluster_name: "{{ name_prefix }}-rosa-hcp"
+      when: name_prefix is defined and name_prefix != "" and (cluster_name is not defined or cluster_name == "")
+
+    - name: Set default pool_name
+      set_fact:
+        pool_name: "extra-pool"
+      when: pool_name is not defined or pool_name == ""
 
     - name: Validate required parameters
       fail:
-        msg: "cluster_name and pool_name are required. Usage: -e cluster_name=my-cluster -e pool_name=my-pool"
-      when: cluster_name is not defined or cluster_name == "" or pool_name is not defined or pool_name == ""
+        msg: "cluster_name is required. Usage: -e cluster_name=my-cluster -e pool_name=my-pool"
+      when: cluster_name is not defined or cluster_name == ""
 
     - name: Check if ROSAMachinePool exists
       shell: |

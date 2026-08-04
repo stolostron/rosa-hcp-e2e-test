@@ -30,7 +30,7 @@
 
     - name: Query OCM for available HCP versions
       uri:
-        url: "{{ _ocm_api_url }}/api/clusters_mgmt/v1/versions?search={{ _version_search | urlencode }}&order={{ 'raw_id desc' | urlencode }}&size=1"
+        url: "{{ _ocm_api_url }}/api/clusters_mgmt/v1/versions?search={{ _version_search | urlencode }}&order={{ 'raw_id desc' | urlencode }}&size={{ _query_size }}"
         method: GET
         headers:
           Authorization: "Bearer {{ _ocm_version_token.json.access_token }}"
@@ -40,6 +40,7 @@
       vars:
         _version_prefix: "{{ openshift_version.split('.')[:2] | join('.') }}"
         _version_search: "raw_id like '{{ _version_prefix }}%' and rosa_enabled='true' and hosted_control_plane_enabled='true' and enabled='true' and channel_group='{{ channel_group | default('stable') }}'"
+        _query_size: "{{ 10 if reserve_upgrade_path | default(false) | bool else 1 }}"
       register: _ocm_versions_result
       no_log: true
 
@@ -53,9 +54,20 @@
           ocm get /api/clusters_mgmt/v1/versions --parameter search="raw_id like '{{ openshift_version }}%' and hosted_control_plane_enabled='true' and enabled='true' and channel_group='{{ channel_group | default('stable') }}'"
       when: _ocm_versions_result.json.total == 0
 
+    - name: Find versions with available upgrade path
+      set_fact:
+        _upgradeable_versions: "{{ _ocm_versions_result.json['items'] | selectattr('available_upgrades', 'defined') | selectattr('available_upgrades') | list }}"
+      when: reserve_upgrade_path | default(false) | bool
+
+    - name: Select version with available upgrade path
+      set_fact:
+        resolved_openshift_version: "{{ _upgradeable_versions[0].raw_id }}"
+      when: reserve_upgrade_path | default(false) | bool and (_upgradeable_versions | default([]) | length > 0)
+
     - name: Set resolved OpenShift version
       set_fact:
         resolved_openshift_version: "{{ _ocm_versions_result.json['items'][0].raw_id }}"
+      when: resolved_openshift_version is not defined
 
     - name: Display resolved version
       debug:

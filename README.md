@@ -96,15 +96,20 @@ You can run the full smoke test suite locally using [CRC (CodeReady Containers)]
 - `oc`, `helm` CLI tools
 - `vars/user_vars.yml` configured with AWS and OCM credentials
 
-**Run the standalone smoke tests:**
+**Run the standalone smoke tests (provision + delete):**
 ```bash
-make crc-standalone PULL_SECRET_FILE=~/quay-pull-secret.json
+make crc-smoke PULL_SECRET_FILE=~/quay-pull-secret.json
 ```
 
-This will:
+**Run the full lifecycle tests (provision → upgrade CP → upgrade MP → add pool → delete pool → delete cluster):**
+```bash
+make crc-full PULL_SECRET_FILE=~/quay-pull-secret.json
+```
+
+Both will:
 1. Start CRC (if not already running)
 2. Login as `kubeadmin`
-3. Run the `smoke`-tagged suites (install CAPI standalone → provision ROSA HCP → delete)
+3. Run the tagged suites with a random cluster prefix
 
 **Stop CRC:**
 ```bash
