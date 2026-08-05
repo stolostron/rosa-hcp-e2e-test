@@ -1,6 +1,7 @@
 ---
 - name: Configure MCE Environment for CAPI/CAPA
   hosts: localhost
+  gather_facts: false
   any_errors_fatal: true
   vars_files:
     - ../vars/vars.yml
@@ -17,6 +18,7 @@
         ocp_password: "{{ lookup('env', 'OCP_HUB_CLUSTER_PASSWORD') | default(OCP_HUB_CLUSTER_PASSWORD, true) }}"
         api_url: "{{ lookup('env', 'OCP_HUB_API_URL') | default(OCP_HUB_API_URL, true) }}"
         mce_namespace: "{{ lookup('env', 'MCE_NAMESPACE') | default(mce_namespace, true) }}"
+      no_log: true
 
     - name: Prepare ansible runner host
       include_tasks: ../tasks/prepare_ansible_runner.yml
