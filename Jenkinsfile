@@ -119,13 +119,15 @@ pipeline {
                             sh '''
                                 rm -rf rosa-hcp-e2e-test
 
-                                # Configure Git to use the token for this command only via a secure header.
-                                git -c http.https://github.com/.extraheader="AUTHORIZATION: basic $(echo -n x-oauth-basic:${GITHUB_TOKEN} | base64)" \
+                                # Disable tracing to prevent token/header exposure in logs
+                                set +x
+                                git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $(printf '%s' "x-oauth-basic:${GITHUB_TOKEN}" | base64)" \
                                     -c http.sslVerify=false \
                                     clone \
                                     -b "''' + git_branch + '''" \
                                     "https://github.com/''' + repo + '''" \
                                     rosa-hcp-e2e-test/
+                                set -x
                             '''
                         }
                     }
