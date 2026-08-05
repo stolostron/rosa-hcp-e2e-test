@@ -73,7 +73,7 @@ jobs:
         run: |
           set -o pipefail
           mkdir -p logs
-          NAME_PREFIX="ci$(head -c 2 /dev/urandom | od -An -tx1 | tr -d ' ')"
+          NAME_PREFIX="wf$(head -c 2 /dev/urandom | od -An -tx1 | tr -d ' ')"
           ./run-test-suite.py --tag smoke --ai-agent -e name_prefix="$NAME_PREFIX" -v 2>&1 | tee logs/e2e.log
 
       - name: Upload test logs
@@ -138,7 +138,7 @@ jobs:
         run: |
           set -o pipefail
           mkdir -p logs
-          NAME_PREFIX="ci$(head -c 2 /dev/urandom | od -An -tx1 | tr -d ' ')"
+          NAME_PREFIX="wf$(head -c 2 /dev/urandom | od -An -tx1 | tr -d ' ')"
           ./run-test-suite.py --tag full --ai-agent -e name_prefix="$NAME_PREFIX" -e reserve_upgrade_path=true -v 2>&1 | tee logs/e2e.log
 
       - name: Upload test logs
