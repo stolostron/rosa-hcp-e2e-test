@@ -24,7 +24,9 @@
 - name: Upgrade ROSA HCP Control Plane
   hosts: localhost
   connection: local
-  gather_facts: false
+  gather_facts: true
+  gather_subset:
+    - "!env"
   any_errors_fatal: true
   vars_files:
     - ../vars/vars.yml
