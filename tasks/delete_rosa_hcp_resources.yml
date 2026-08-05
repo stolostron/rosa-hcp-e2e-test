@@ -331,6 +331,7 @@
     - "'not-found' not in rn_exists.stdout"
 
 - name: Verify CloudFormation stack cleanup after ROSANetwork deletion
+  no_log: true
   environment:
     AWS_ACCESS_KEY_ID: "{{ AWS_ACCESS_KEY_ID | default(omit) }}"
     AWS_SECRET_ACCESS_KEY: "{{ AWS_SECRET_ACCESS_KEY | default(omit) }}"

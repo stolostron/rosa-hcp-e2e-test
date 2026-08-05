@@ -1,5 +1,6 @@
 ---
 - name: Find security groups tagged for this cluster
+  no_log: true
   environment:
     AWS_ACCESS_KEY_ID: "{{ AWS_ACCESS_KEY_ID }}"
     AWS_SECRET_ACCESS_KEY: "{{ AWS_SECRET_ACCESS_KEY }}"
@@ -13,6 +14,7 @@
   failed_when: false
 
 - name: Delete security groups with ENI detach retry
+  no_log: true
   when: sg_lookup_result.stdout | default('') | trim | length > 0
   environment:
     AWS_ACCESS_KEY_ID: "{{ AWS_ACCESS_KEY_ID }}"
