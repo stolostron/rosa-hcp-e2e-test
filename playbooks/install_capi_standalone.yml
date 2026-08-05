@@ -1,7 +1,9 @@
 ---
 - name: Install CAPI/CAPA Standalone via Helm
   hosts: localhost
-  gather_facts: false
+  gather_facts: true
+  gather_subset:
+    - "!env"
   any_errors_fatal: true
   vars_files:
     - ../vars/vars.yml

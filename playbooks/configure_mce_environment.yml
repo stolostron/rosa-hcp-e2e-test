@@ -1,7 +1,9 @@
 ---
 - name: Configure MCE Environment for CAPI/CAPA
   hosts: localhost
-  gather_facts: false
+  gather_facts: true
+  gather_subset:
+    - "!env"
   any_errors_fatal: true
   vars_files:
     - ../vars/vars.yml
