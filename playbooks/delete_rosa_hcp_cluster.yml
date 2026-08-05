@@ -33,6 +33,7 @@
 - name: Delete ROSA HCP cluster and automation resources
   hosts: localhost
   connection: local
+  gather_facts: false
   any_errors_fatal: true
   vars_files:
     - ../vars/vars.yml
@@ -57,6 +58,7 @@
         ocp_user: "{{ lookup('env', 'OCP_HUB_CLUSTER_USER') | default(OCP_HUB_CLUSTER_USER, true) }}"
         ocp_password: "{{ lookup('env', 'OCP_HUB_CLUSTER_PASSWORD') | default(OCP_HUB_CLUSTER_PASSWORD, true) }}"
         api_url: "{{ lookup('env', 'OCP_HUB_API_URL') | default(OCP_HUB_API_URL, true) }}"
+      no_log: true
       when: deployment_mode != 'standalone'
 
     - name: Load cluster state from previous suite run

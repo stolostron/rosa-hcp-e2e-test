@@ -3,6 +3,7 @@
 # This task runs the configure-capa-environment role
 
 - name: Configure the MCE CAPI/CAPA environment
+  no_log: true
   import_role:
     name: configure-capa-environment
   vars:
