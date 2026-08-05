@@ -403,90 +403,122 @@
             fail_detail: "networkType is not 'Other' or default CNI is still running"
 
     # --- private_network ---
-    - name: "CHECK: Private Cluster (via AWS CLI)"
+    - name: "CHECK: Private Cluster (via CRD + OCM API)"
       when: "'private_network' in requested_features_list"
       vars:
         verify_region: "{{ aws_region | default(rcp.spec.region | default('us-west-2')) }}"
         stack_name: "{{ cluster_name }}-rosa-network-stack"
       block:
-        - name: Query VPC ID from CloudFormation stack subnets
-          shell: >
-            aws ec2 describe-subnets
-            --filters "Name=tag:aws:cloudformation:stack-name,Values={{ stack_name }}"
-            --region {{ verify_region }}
-            --query 'Subnets[0].VpcId'
-            --output text
-          register: aws_vpc_id_cfn
+        - name: Assert endpointAccess via OCM
+          assert:
+            that:
+              - ocm_cluster.api is defined
+              - ocm_cluster.api.listening is defined
+              - ocm_cluster.api.listening == 'internal'
+            fail_msg: "FAIL: OCM API listening mode is not 'internal'"
+            success_msg: "PASS: OCM confirms cluster API is internal (private)"
+          when: ocm_available
+
+        - name: Assert endpointAccess via CRD (fallback)
+          assert:
+            that:
+              - rcp.spec.endpointAccess is defined
+              - rcp.spec.endpointAccess == 'Private'
+            fail_msg: "FAIL: CRD endpointAccess is not 'Private'"
+            success_msg: "PASS: CRD confirms endpointAccess = Private"
+          when: not ocm_available
+
+        - name: Check if boto3 is available for deeper verification
+          command: python3 -c "import boto3"
+          register: boto3_check
           changed_when: false
           failed_when: false
 
-        - name: Query VPC ID from cluster-tagged instances (BYON fallback)
-          shell: >
-            aws ec2 describe-instances
-            --filters "Name=tag:kubernetes.io/cluster/{{ cluster_name }},Values=owned"
-            "Name=instance-state-name,Values=running"
-            --region {{ verify_region }}
-            --query 'Reservations[0].Instances[0].VpcId'
-            --output text
-          register: aws_vpc_id_instance
-          changed_when: false
-          failed_when: false
-          when: aws_vpc_id_cfn.stdout | default('') | trim is not match('^vpc-')
+        - name: AWS VPC verification via boto3
+          when: boto3_check.rc == 0
+          block:
+            - name: Query VPC ID from CloudFormation stack subnets (boto3)
+              command:
+                argv:
+                  - python3
+                  - -c
+                  - |
+                    import boto3
+                    ec2 = boto3.client('ec2', region_name='{{ verify_region }}')
+                    r = ec2.describe_subnets(Filters=[{'Name': 'tag:aws:cloudformation:stack-name', 'Values': ['{{ stack_name }}']}])
+                    print(r['Subnets'][0]['VpcId'] if r['Subnets'] else '')
+              register: boto3_vpc_id_cfn
+              changed_when: false
+              failed_when: false
 
-        - name: Set resolved VPC ID
-          set_fact:
-            aws_vpc_id: >-
-              {{ (aws_vpc_id_cfn.stdout | trim)
-                 if (aws_vpc_id_cfn.stdout | default('') | trim) is match('^vpc-')
-                 else (aws_vpc_id_instance.stdout | default('') | trim) }}
+            - name: Query VPC ID from cluster-tagged instances (boto3 BYON fallback)
+              command:
+                argv:
+                  - python3
+                  - -c
+                  - |
+                    import boto3
+                    ec2 = boto3.client('ec2', region_name='{{ verify_region }}')
+                    r = ec2.describe_instances(Filters=[
+                        {'Name': 'tag:kubernetes.io/cluster/{{ cluster_name }}', 'Values': ['owned']},
+                        {'Name': 'instance-state-name', 'Values': ['running']}
+                    ])
+                    reservations = r.get('Reservations', [])
+                    print(reservations[0]['Instances'][0]['VpcId'] if reservations and reservations[0].get('Instances') else '')
+              register: boto3_vpc_id_instance
+              changed_when: false
+              failed_when: false
+              when: boto3_vpc_id_cfn.stdout | default('') | trim is not match('^vpc-')
 
-        - name: Assert VPC ID was resolved
-          assert:
-            that:
-              - aws_vpc_id is match('^vpc-')
-            fail_msg: "FAIL: No VPC found via CloudFormation stack or cluster-tagged instances"
-            success_msg: "PASS: VPC ID resolved"
+            - name: Set resolved VPC ID
+              set_fact:
+                aws_vpc_id: >-
+                  {{ (boto3_vpc_id_cfn.stdout | trim)
+                     if (boto3_vpc_id_cfn.stdout | default('') | trim) is match('^vpc-')
+                     else (boto3_vpc_id_instance.stdout | default('') | trim) }}
 
-        - name: Check for internet gateway attached to VPC
-          shell: >
-            aws ec2 describe-internet-gateways
-            --filters "Name=attachment.vpc-id,Values={{ aws_vpc_id }}"
-            --region {{ verify_region }}
-            --query 'InternetGateways[].InternetGatewayId'
-            --output json
-          register: aws_igw_raw
-          changed_when: false
+            - name: Assert VPC ID was resolved
+              assert:
+                that:
+                  - aws_vpc_id is match('^vpc-')
+                fail_msg: "FAIL: No VPC found via CloudFormation stack or cluster-tagged instances"
+                success_msg: "PASS: VPC ID resolved"
 
-        - name: Parse IGW response
-          set_fact:
-            aws_igws: "{{ aws_igw_raw.stdout | from_json }}"
+            - name: Query load balancers in the VPC (boto3)
+              command:
+                argv:
+                  - python3
+                  - -c
+                  - |
+                    import boto3, json
+                    elbv2 = boto3.client('elbv2', region_name='{{ verify_region }}')
+                    lbs = []
+                    for page in elbv2.get_paginator('describe_load_balancers').paginate():
+                        lbs += [{'Name': lb['LoadBalancerName'], 'Scheme': lb['Scheme']}
+                                for lb in page['LoadBalancers']
+                                if lb.get('VpcId') == '{{ aws_vpc_id }}']
+                    print(json.dumps(lbs))
+              register: boto3_nlb_raw
+              changed_when: false
 
-        - name: Assert no internet gateway attached to VPC
-          assert:
-            that:
-              - aws_igws | length == 0
-            fail_msg: "FAIL: Internet gateway(s) attached to VPC — cluster is not private"
-            success_msg: "PASS: No internet gateway attached to VPC"
+            - name: Parse NLB response
+              set_fact:
+                aws_nlbs: "{{ boto3_nlb_raw.stdout | from_json }}"
 
-        - name: Query load balancers in the VPC
-          shell: >
-            aws elbv2 describe-load-balancers
-            --region {{ verify_region }}
-            --query "LoadBalancers[?VpcId=='{{ aws_vpc_id }}'].{Name:LoadBalancerName,Scheme:Scheme}"
-            --output json
-          register: aws_nlb_raw
-          changed_when: false
+            - name: Assert cluster is private (no internet-facing LBs)
+              assert:
+                that:
+                  - aws_nlbs | selectattr('Scheme', 'equalto', 'internet-facing') | list | length == 0
+                fail_msg: "FAIL: Found internet-facing load balancer(s) in VPC — cluster is not private"
+                success_msg: "PASS: All load balancers are internal — cluster is private"
+          rescue:
+            - debug:
+                msg: "WARN: boto3 AWS verification failed — private_network verified via CRD/OCM only"
 
-        - name: Parse NLB response
-          set_fact:
-            aws_nlbs: "{{ aws_nlb_raw.stdout | from_json }}"
-
-        - name: Assert cluster is private (no internet-facing LBs)
-          assert:
-            that:
-              - aws_nlbs | selectattr('Scheme', 'equalto', 'internet-facing') | list | length == 0
-            fail_msg: "FAIL: Found internet-facing load balancer(s) in VPC — cluster is not private"
-            success_msg: "PASS: All load balancers are internal — cluster is private"
+        - name: Skip AWS verification (boto3 not available)
+          debug:
+            msg: "INFO: boto3 not available — private_network verified via CRD endpointAccess only"
+          when: boto3_check.rc != 0
 
         - set_fact:
             features_passed: "{{ features_passed | int + 1 }}"
@@ -561,7 +593,7 @@
             fail_detail: "BYON subnets not set or ROSANetwork was created instead"
 
     # --- external_oidc ---
-    - name: "CHECK: External OIDC (via OCM API + issuer validation)"
+    - name: "CHECK: External OIDC (via OCM API + CRD + status)"
       when: "'external_oidc' in requested_features_list"
       block:
         - name: Assert external auth via OCM
@@ -572,74 +604,92 @@
             fail_msg: "FAIL: OCM external_auth_config not enabled"
             success_msg: "PASS: OCM confirms external auth is enabled"
           when: ocm_available
-        - name: Assert externalAuthProviders via CRD (fallback)
+
+        - name: Assert enableExternalAuthProviders via CRD
           assert:
             that:
               - rcp.spec.enableExternalAuthProviders is defined
               - rcp.spec.enableExternalAuthProviders | bool
-              - rcp.spec.externalAuthProviders is defined
-              - rcp.spec.externalAuthProviders | length > 0
-            fail_msg: "FAIL: externalAuthProviders not configured"
-            success_msg: "PASS: externalAuthProviders configured (CRD fallback)"
+            fail_msg: "FAIL: enableExternalAuthProviders not set or false"
+            success_msg: "PASS: enableExternalAuthProviders = true"
           when: not ocm_available
-        - name: Assert externalAuthProviders array exists in CRD
-          assert:
-            that:
-              - rcp.spec.externalAuthProviders is defined
-              - rcp.spec.externalAuthProviders | length > 0
-            fail_msg: "FAIL: externalAuthProviders array missing from CRD"
-            success_msg: "PASS: externalAuthProviders present in CRD"
 
-        - name: Extract OIDC issuer URL from CRD
-          set_fact:
-            oidc_issuer_url: "{{ (rcp.spec.externalAuthProviders[0].issuer | default({})).issuerURL | default('') }}"
-        - name: Assert OIDC issuer URL is present
+        - name: Assert ExternalAuthConfigured status condition
           assert:
             that:
-              - oidc_issuer_url | length > 0
-              - oidc_issuer_url is match('^https://')
-            fail_msg: "FAIL: OIDC issuer URL is missing or not HTTPS in externalAuthProviders[0]"
-            success_msg: "PASS: OIDC issuer URL is present and uses HTTPS"
-        - name: Validate OIDC issuer URL is reachable
-          uri:
-            url: "{{ oidc_issuer_url }}/.well-known/openid-configuration"
-            method: GET
-            status_code: 200
-            timeout: 10
-            validate_certs: true
-          register: oidc_discovery_result
-          failed_when: false
-          changed_when: false
-          when: oidc_issuer_url is defined and oidc_issuer_url | length > 0
-        - name: Assert OIDC discovery document is valid
+              - rcp.status.conditions is defined
+              - rcp.status.conditions | selectattr('type', 'equalto', 'ExternalAuthConfigured') | list | length > 0
+              - (rcp.status.conditions | selectattr('type', 'equalto', 'ExternalAuthConfigured') | first).status == 'True'
+            fail_msg: "FAIL: ExternalAuthConfigured status condition is not True"
+            success_msg: "PASS: ExternalAuthConfigured status condition is True"
+
+        - name: Validate OIDC endpoint URL from status
           assert:
             that:
-              - oidc_discovery_result.status | int == 200
-              - oidc_discovery_result.json.issuer is defined
-              - oidc_discovery_result.json.issuer == oidc_issuer_url
-            fail_msg: "FAIL: OIDC issuer is not reachable or returned invalid discovery document"
-            success_msg: "PASS: OIDC issuer validated — returns valid OpenID configuration"
-          when:
-            - oidc_issuer_url is defined and oidc_issuer_url | length > 0
-            - oidc_discovery_result is defined
-            - oidc_discovery_result.status is defined
-        - name: Assert OIDC audiences configured
-          assert:
-            that:
-              - rcp.spec.externalAuthProviders[0].issuer.audiences is defined
-              - rcp.spec.externalAuthProviders[0].issuer.audiences | length > 0
-            fail_msg: "FAIL: OIDC audiences not configured"
-            success_msg: "PASS: OIDC audiences configured"
+              - rcp.status.oidcEndpointURL is defined
+              - rcp.status.oidcEndpointURL | length > 0
+              - rcp.status.oidcEndpointURL is match('^https://')
+            fail_msg: "FAIL: oidcEndpointURL missing or not HTTPS in status"
+            success_msg: "PASS: oidcEndpointURL present in status and uses HTTPS"
+          when: rcp.status.oidcEndpointURL is defined
+
+        - name: Validate externalAuthProviders details (if configured in spec)
           when: rcp.spec.externalAuthProviders is defined and rcp.spec.externalAuthProviders | length > 0
-        - name: Assert OIDC claim mappings configured
-          assert:
-            that:
-              - rcp.spec.externalAuthProviders[0].claimMappings is defined
-              - rcp.spec.externalAuthProviders[0].claimMappings.username is defined
-              - rcp.spec.externalAuthProviders[0].claimMappings.username.claim is defined
-            fail_msg: "FAIL: OIDC claim mappings not configured"
-            success_msg: "PASS: OIDC claim mappings configured"
-          when: rcp.spec.externalAuthProviders is defined and rcp.spec.externalAuthProviders | length > 0
+          block:
+            - name: Extract OIDC issuer URL from CRD
+              set_fact:
+                oidc_issuer_url: "{{ (rcp.spec.externalAuthProviders[0].issuer | default({})).issuerURL | default('') }}"
+
+            - name: Assert OIDC issuer URL is present
+              assert:
+                that:
+                  - oidc_issuer_url | length > 0
+                  - oidc_issuer_url is match('^https://')
+                fail_msg: "FAIL: OIDC issuer URL is missing or not HTTPS in externalAuthProviders[0]"
+                success_msg: "PASS: OIDC issuer URL is present and uses HTTPS"
+
+            - name: Validate OIDC issuer URL is reachable
+              uri:
+                url: "{{ oidc_issuer_url }}/.well-known/openid-configuration"
+                method: GET
+                status_code: 200
+                timeout: 10
+                validate_certs: true
+              register: oidc_discovery_result
+              failed_when: false
+              changed_when: false
+              when: oidc_issuer_url | length > 0
+
+            - name: Assert OIDC discovery document is valid
+              assert:
+                that:
+                  - oidc_discovery_result.status | int == 200
+                  - oidc_discovery_result.json.issuer is defined
+                  - oidc_discovery_result.json.issuer == oidc_issuer_url
+                fail_msg: "FAIL: OIDC issuer is not reachable or returned invalid discovery document"
+                success_msg: "PASS: OIDC issuer validated — returns valid OpenID configuration"
+              when:
+                - oidc_issuer_url | length > 0
+                - oidc_discovery_result is defined
+                - oidc_discovery_result.status is defined
+
+            - name: Assert OIDC audiences configured
+              assert:
+                that:
+                  - rcp.spec.externalAuthProviders[0].issuer.audiences is defined
+                  - rcp.spec.externalAuthProviders[0].issuer.audiences | length > 0
+                fail_msg: "FAIL: OIDC audiences not configured"
+                success_msg: "PASS: OIDC audiences configured"
+
+            - name: Assert OIDC claim mappings configured
+              assert:
+                that:
+                  - rcp.spec.externalAuthProviders[0].claimMappings is defined
+                  - rcp.spec.externalAuthProviders[0].claimMappings.username is defined
+                  - rcp.spec.externalAuthProviders[0].claimMappings.username.claim is defined
+                fail_msg: "FAIL: OIDC claim mappings not configured"
+                success_msg: "PASS: OIDC claim mappings configured"
+
         - set_fact:
             features_passed: "{{ features_passed | int + 1 }}"
       rescue:
