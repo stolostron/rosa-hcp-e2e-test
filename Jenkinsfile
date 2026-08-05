@@ -154,7 +154,6 @@ pipeline {
             environment {
                 OCP_HUB_API_URL = "${params.OCP_HUB_API_URL}"
                 OCP_HUB_CLUSTER_USER = "${params.OCP_HUB_CLUSTER_USER}"
-                OCP_HUB_CLUSTER_PASSWORD = "${params.OCP_HUB_CLUSTER_PASSWORD}"
                 MCE_NAMESPACE = "${params.MCE_NAMESPACE}"
             }
             steps {
@@ -234,10 +233,10 @@ pipeline {
                             ./run-test-suite.py 20-rosa-hcp-provision --validate-only ${FEATURE_FLAGS} \
                               ${GROUP_FLAG} ${EXTRA_VARS}
                         '''
-                        echo "Feature validation passed for: ${CLUSTER_FEATURES} ${FEATURE_GROUP}"
+                        echo "Feature validation passed for: ${env.CLUSTER_FEATURES} ${env.FEATURE_GROUP}"
                     }
                     catch (ex) {
-                        echo "Feature validation FAILED for: ${CLUSTER_FEATURES} ${FEATURE_GROUP}"
+                        echo "Feature validation FAILED for: ${env.CLUSTER_FEATURES} ${env.FEATURE_GROUP}"
                         echo 'Check feature names with: ./run-test-suite.py --list-features'
                         currentBuild.result = 'FAILURE'
                     }
@@ -251,7 +250,6 @@ pipeline {
             environment {
                 OCP_HUB_API_URL = "${params.OCP_HUB_API_URL}"
                 OCP_HUB_CLUSTER_USER = "${params.OCP_HUB_CLUSTER_USER}"
-                OCP_HUB_CLUSTER_PASSWORD = "${params.OCP_HUB_CLUSTER_PASSWORD}"
                 MCE_NAMESPACE = "${params.MCE_NAMESPACE}"
                 CLUSTER_FEATURES = "${params.CLUSTER_FEATURES}"
                 FEATURE_GROUP = "${params.FEATURE_GROUP}"
@@ -326,7 +324,6 @@ pipeline {
             environment {
                 OCP_HUB_API_URL = "${params.OCP_HUB_API_URL}"
                 OCP_HUB_CLUSTER_USER = "${params.OCP_HUB_CLUSTER_USER}"
-                OCP_HUB_CLUSTER_PASSWORD = "${params.OCP_HUB_CLUSTER_PASSWORD}"
                 MCE_NAMESPACE = "${params.MCE_NAMESPACE}"
                 CLUSTER_FEATURES = "${params.CLUSTER_FEATURES}"
                 FEATURE_GROUP = "${params.FEATURE_GROUP}"
@@ -400,7 +397,6 @@ pipeline {
             environment {
                 OCP_HUB_API_URL = "${params.OCP_HUB_API_URL}"
                 OCP_HUB_CLUSTER_USER = "${params.OCP_HUB_CLUSTER_USER}"
-                OCP_HUB_CLUSTER_PASSWORD = "${params.OCP_HUB_CLUSTER_PASSWORD}"
                 MCE_NAMESPACE = "${params.MCE_NAMESPACE}"
             }
             steps {
@@ -431,7 +427,6 @@ pipeline {
             environment {
                 OCP_HUB_API_URL = "${params.OCP_HUB_API_URL}"
                 OCP_HUB_CLUSTER_USER = "${params.OCP_HUB_CLUSTER_USER}"
-                OCP_HUB_CLUSTER_PASSWORD = "${params.OCP_HUB_CLUSTER_PASSWORD}"
                 MCE_NAMESPACE = "${params.MCE_NAMESPACE}"
             }
             steps {
@@ -465,7 +460,6 @@ pipeline {
             environment {
                 OCP_HUB_API_URL = "${params.OCP_HUB_API_URL}"
                 OCP_HUB_CLUSTER_USER = "${params.OCP_HUB_CLUSTER_USER}"
-                OCP_HUB_CLUSTER_PASSWORD = "${params.OCP_HUB_CLUSTER_PASSWORD}"
                 MCE_NAMESPACE = "${params.MCE_NAMESPACE}"
                 UPGRADE_CLUSTER_NAME = "${params.NAME_PREFIX}-rosa-hcp"
             }
@@ -511,7 +505,6 @@ pipeline {
             environment {
                 OCP_HUB_API_URL = "${params.OCP_HUB_API_URL}"
                 OCP_HUB_CLUSTER_USER = "${params.OCP_HUB_CLUSTER_USER}"
-                OCP_HUB_CLUSTER_PASSWORD = "${params.OCP_HUB_CLUSTER_PASSWORD}"
                 MCE_NAMESPACE = "${params.MCE_NAMESPACE}"
                 UPGRADE_CLUSTER_NAME = "${params.NAME_PREFIX}-rosa-hcp"
             }
@@ -557,7 +550,6 @@ pipeline {
             environment {
                 OCP_HUB_API_URL = "${params.OCP_HUB_API_URL}"
                 OCP_HUB_CLUSTER_USER = "${params.OCP_HUB_CLUSTER_USER}"
-                OCP_HUB_CLUSTER_PASSWORD = "${params.OCP_HUB_CLUSTER_PASSWORD}"
                 MCE_NAMESPACE = "${params.MCE_NAMESPACE}"
             }
             steps {
@@ -605,7 +597,6 @@ pipeline {
             environment {
                 OCP_HUB_API_URL = "${params.OCP_HUB_API_URL}"
                 OCP_HUB_CLUSTER_USER = "${params.OCP_HUB_CLUSTER_USER}"
-                OCP_HUB_CLUSTER_PASSWORD = "${params.OCP_HUB_CLUSTER_PASSWORD}"
                 MCE_NAMESPACE = "${params.MCE_NAMESPACE}"
             }
             steps {
