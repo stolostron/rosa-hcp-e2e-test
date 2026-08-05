@@ -23,6 +23,7 @@
     sg_vpc_id: "{{ vpc_id_result.stdout }}"
 
 - name: Check for existing security group by name and VPC
+  no_log: true
   environment:
     AWS_ACCESS_KEY_ID: "{{ AWS_ACCESS_KEY_ID }}"
     AWS_SECRET_ACCESS_KEY: "{{ AWS_SECRET_ACCESS_KEY }}"
@@ -43,6 +44,7 @@
   when: existing_sg_result.stdout | trim | length > 0
   block:
     - name: Ensure cleanup tags on existing security group
+      no_log: true
       environment:
         AWS_ACCESS_KEY_ID: "{{ AWS_ACCESS_KEY_ID }}"
         AWS_SECRET_ACCESS_KEY: "{{ AWS_SECRET_ACCESS_KEY }}"
@@ -62,6 +64,7 @@
   when: existing_sg_result.stdout | trim | length == 0
   block:
     - name: Run AWS create-security-group
+      no_log: true
       environment:
         AWS_ACCESS_KEY_ID: "{{ AWS_ACCESS_KEY_ID }}"
         AWS_SECRET_ACCESS_KEY: "{{ AWS_SECRET_ACCESS_KEY }}"

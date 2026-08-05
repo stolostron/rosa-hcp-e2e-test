@@ -7,6 +7,7 @@
     ocm_client_id: "{{ OCM_CLIENT_ID }}"
     ocm_client_secret: "{{ OCM_CLIENT_SECRET }}"
     ocm_api_url: "{{ OCM_API_URL | default('https://api.stage.openshift.com', true) }}"
+  no_log: true
 
 - name: Set cluster file path
   set_fact:
