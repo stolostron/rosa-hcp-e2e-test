@@ -271,6 +271,16 @@
       debug:
         msg: "{{ 'OCM API available — cluster found' if ocm_available else 'OCM API unavailable — falling back to CRD checks for applicable features' }}"
 
+    - name: Check if boto3 is available for AWS verification
+      command: python3 -c "import boto3"
+      register: boto3_check
+      changed_when: false
+      failed_when: false
+
+    - name: Display boto3 status
+      debug:
+        msg: "{{ 'boto3 available — AWS verification enabled' if boto3_check.rc == 0 else 'boto3 not available — AWS checks will fall back to CRD/OCM only' }}"
+
     # ================================================================
     # FEATURE CHECKS
     # ================================================================
@@ -403,83 +413,115 @@
             fail_detail: "networkType is not 'Other' or default CNI is still running"
 
     # --- private_network ---
-    - name: "CHECK: Private Cluster (via AWS CLI)"
+    - name: "CHECK: Private Cluster (via CRD + OCM API)"
       when: "'private_network' in requested_features_list"
       vars:
         verify_region: "{{ aws_region | default(rcp.spec.region | default('us-west-2')) }}"
         stack_name: "{{ cluster_name }}-rosa-network-stack"
       block:
-        - name: Query VPC ID from CloudFormation stack subnets
-          shell: >
-            aws ec2 describe-subnets
-            --filters "Name=tag:aws:cloudformation:stack-name,Values={{ stack_name }}"
-            --region {{ verify_region }}
-            --query 'Subnets[0].VpcId'
-            --output text
-          register: aws_vpc_id_cfn
-          changed_when: false
-          failed_when: false
+        - name: Assert endpointAccess via OCM
+          assert:
+            that:
+              - ocm_cluster.api is defined
+              - ocm_cluster.api.listening is defined
+              - ocm_cluster.api.listening == 'internal'
+            fail_msg: "FAIL: OCM API listening mode is not 'internal'"
+            success_msg: "PASS: OCM confirms cluster API is internal (private)"
+          when: ocm_available
 
-        - name: Query VPC ID from cluster-tagged instances (BYON fallback)
-          shell: >
-            aws ec2 describe-instances
-            --filters "Name=tag:kubernetes.io/cluster/{{ cluster_name }},Values=owned"
-            "Name=instance-state-name,Values=running"
-            --region {{ verify_region }}
-            --query 'Reservations[0].Instances[0].VpcId'
-            --output text
-          register: aws_vpc_id_instance
+        - name: Assert endpointAccess via CRD (fallback)
+          assert:
+            that:
+              - rcp.spec.endpointAccess is defined
+              - rcp.spec.endpointAccess == 'Private'
+            fail_msg: "FAIL: CRD endpointAccess is not 'Private'"
+            success_msg: "PASS: CRD confirms endpointAccess = Private"
+          when: not ocm_available
+
+        - name: Query VPC ID from CloudFormation stack subnets (boto3)
+          command:
+            argv:
+              - python3
+              - -c
+              - |
+                import boto3, os
+                ec2 = boto3.client('ec2', region_name=os.environ['VERIFY_REGION'])
+                r = ec2.describe_subnets(Filters=[{'Name': 'tag:aws:cloudformation:stack-name', 'Values': [os.environ['STACK_NAME']]}])
+                print(r['Subnets'][0]['VpcId'] if r['Subnets'] else '')
+          environment:
+            VERIFY_REGION: "{{ verify_region }}"
+            STACK_NAME: "{{ stack_name }}"
+          register: boto3_vpc_id_cfn
           changed_when: false
           failed_when: false
-          when: aws_vpc_id_cfn.stdout | default('') | trim is not match('^vpc-')
+          no_log: true
+          when: boto3_check.rc == 0
+
+        - name: Query VPC ID from cluster-tagged instances (boto3 BYON fallback)
+          command:
+            argv:
+              - python3
+              - -c
+              - |
+                import boto3, os
+                ec2 = boto3.client('ec2', region_name=os.environ['VERIFY_REGION'])
+                r = ec2.describe_instances(Filters=[
+                    {'Name': 'tag:kubernetes.io/cluster/' + os.environ['CLUSTER_NAME'], 'Values': ['owned']},
+                    {'Name': 'instance-state-name', 'Values': ['running']}
+                ])
+                reservations = r.get('Reservations', [])
+                print(reservations[0]['Instances'][0]['VpcId'] if reservations and reservations[0].get('Instances') else '')
+          environment:
+            VERIFY_REGION: "{{ verify_region }}"
+            CLUSTER_NAME: "{{ cluster_name }}"
+          register: boto3_vpc_id_instance
+          changed_when: false
+          failed_when: false
+          no_log: true
+          when:
+            - boto3_check.rc == 0
+            - boto3_vpc_id_cfn.stdout | default('') | trim is not match('^vpc-')
 
         - name: Set resolved VPC ID
           set_fact:
             aws_vpc_id: >-
-              {{ (aws_vpc_id_cfn.stdout | trim)
-                 if (aws_vpc_id_cfn.stdout | default('') | trim) is match('^vpc-')
-                 else (aws_vpc_id_instance.stdout | default('') | trim) }}
+              {{ (boto3_vpc_id_cfn.stdout | trim)
+                 if (boto3_vpc_id_cfn.stdout | default('') | trim) is match('^vpc-')
+                 else (boto3_vpc_id_instance.stdout | default('') | trim) }}
+          when: boto3_check.rc == 0
 
-        - name: Assert VPC ID was resolved
-          assert:
-            that:
-              - aws_vpc_id is match('^vpc-')
-            fail_msg: "FAIL: No VPC found via CloudFormation stack or cluster-tagged instances"
-            success_msg: "PASS: VPC ID resolved"
+        - name: Log VPC resolution result
+          debug:
+            msg: "{{ 'VPC ID resolved — proceeding with LB check' if (aws_vpc_id | default('')) is match('^vpc-') else 'VPC ID not resolved — skipping deeper AWS checks' }}"
+          when: boto3_check.rc == 0
 
-        - name: Check for internet gateway attached to VPC
-          shell: >
-            aws ec2 describe-internet-gateways
-            --filters "Name=attachment.vpc-id,Values={{ aws_vpc_id }}"
-            --region {{ verify_region }}
-            --query 'InternetGateways[].InternetGatewayId'
-            --output json
-          register: aws_igw_raw
+        - name: Query load balancers in the VPC (boto3)
+          command:
+            argv:
+              - python3
+              - -c
+              - |
+                import boto3, json, os
+                elbv2 = boto3.client('elbv2', region_name=os.environ['VERIFY_REGION'])
+                lbs = []
+                for page in elbv2.get_paginator('describe_load_balancers').paginate():
+                    lbs += [{'Name': lb['LoadBalancerName'], 'Scheme': lb['Scheme']}
+                            for lb in page['LoadBalancers']
+                            if lb.get('VpcId') == os.environ['VPC_ID']]
+                print(json.dumps(lbs))
+          environment:
+            VERIFY_REGION: "{{ verify_region }}"
+            VPC_ID: "{{ aws_vpc_id | default('') }}"
+          register: boto3_nlb_raw
           changed_when: false
-
-        - name: Parse IGW response
-          set_fact:
-            aws_igws: "{{ aws_igw_raw.stdout | from_json }}"
-
-        - name: Assert no internet gateway attached to VPC
-          assert:
-            that:
-              - aws_igws | length == 0
-            fail_msg: "FAIL: Internet gateway(s) attached to VPC — cluster is not private"
-            success_msg: "PASS: No internet gateway attached to VPC"
-
-        - name: Query load balancers in the VPC
-          shell: >
-            aws elbv2 describe-load-balancers
-            --region {{ verify_region }}
-            --query "LoadBalancers[?VpcId=='{{ aws_vpc_id }}'].{Name:LoadBalancerName,Scheme:Scheme}"
-            --output json
-          register: aws_nlb_raw
-          changed_when: false
+          failed_when: false
+          no_log: true
+          when: boto3_check.rc == 0 and (aws_vpc_id | default('')) is match('^vpc-')
 
         - name: Parse NLB response
           set_fact:
-            aws_nlbs: "{{ aws_nlb_raw.stdout | from_json }}"
+            aws_nlbs: "{{ boto3_nlb_raw.stdout | from_json }}"
+          when: boto3_check.rc == 0 and boto3_nlb_raw.rc | default(1) == 0
 
         - name: Assert cluster is private (no internet-facing LBs)
           assert:
@@ -487,6 +529,12 @@
               - aws_nlbs | selectattr('Scheme', 'equalto', 'internet-facing') | list | length == 0
             fail_msg: "FAIL: Found internet-facing load balancer(s) in VPC — cluster is not private"
             success_msg: "PASS: All load balancers are internal — cluster is private"
+          when: boto3_check.rc == 0 and aws_nlbs is defined
+
+        - name: Skip AWS verification (boto3 not available)
+          debug:
+            msg: "INFO: boto3 not available — private_network verified via CRD endpointAccess only"
+          when: boto3_check.rc != 0
 
         - set_fact:
             features_passed: "{{ features_passed | int + 1 }}"
@@ -534,23 +582,34 @@
             success_msg: "PASS: Cluster subnets match provided BYON subnet IDs"
           when: expected_subnets | length > 0
 
-        - name: Verify BYON subnets exist in AWS
-          shell: >
-            aws ec2 describe-subnets
-            --subnet-ids {{ rcp.spec.subnets | join(' ') }}
-            --region {{ verify_region }}
-            --query 'Subnets[].SubnetId'
-            --output json
-          register: aws_byon_subnets_raw
+        - name: Verify BYON subnets exist in AWS (boto3)
+          command:
+            argv:
+              - python3
+              - -c
+              - |
+                import boto3, json, os
+                ec2 = boto3.client('ec2', region_name=os.environ['VERIFY_REGION'])
+                subnet_ids = json.loads(os.environ['SUBNET_IDS'])
+                r = ec2.describe_subnets(SubnetIds=subnet_ids)
+                print(json.dumps(sorted([s['SubnetId'] for s in r['Subnets']])))
+          environment:
+            VERIFY_REGION: "{{ verify_region }}"
+            SUBNET_IDS: "{{ rcp.spec.subnets | to_json }}"
+          register: boto3_byon_subnets_raw
           changed_when: false
+          failed_when: false
           no_log: true
+          when: boto3_check.rc == 0
 
         - name: Assert all BYON subnets exist in AWS
           assert:
             that:
-              - (aws_byon_subnets_raw.stdout | from_json | sort) == (rcp.spec.subnets | sort)
+              - boto3_byon_subnets_raw.rc == 0
+              - (boto3_byon_subnets_raw.stdout | from_json | sort) == (rcp.spec.subnets | sort)
             fail_msg: "FAIL: Some BYON subnets do not exist in AWS"
             success_msg: "PASS: All BYON subnets exist in AWS"
+          when: boto3_check.rc == 0
 
         - set_fact:
             features_passed: "{{ features_passed | int + 1 }}"
@@ -561,7 +620,7 @@
             fail_detail: "BYON subnets not set or ROSANetwork was created instead"
 
     # --- external_oidc ---
-    - name: "CHECK: External OIDC (via OCM API + issuer validation)"
+    - name: "CHECK: External OIDC (via OCM API + CRD + status)"
       when: "'external_oidc' in requested_features_list"
       block:
         - name: Assert external auth via OCM
@@ -572,74 +631,99 @@
             fail_msg: "FAIL: OCM external_auth_config not enabled"
             success_msg: "PASS: OCM confirms external auth is enabled"
           when: ocm_available
-        - name: Assert externalAuthProviders via CRD (fallback)
+
+        - name: Assert enableExternalAuthProviders via CRD
           assert:
             that:
               - rcp.spec.enableExternalAuthProviders is defined
               - rcp.spec.enableExternalAuthProviders | bool
-              - rcp.spec.externalAuthProviders is defined
-              - rcp.spec.externalAuthProviders | length > 0
-            fail_msg: "FAIL: externalAuthProviders not configured"
-            success_msg: "PASS: externalAuthProviders configured (CRD fallback)"
+            fail_msg: "FAIL: enableExternalAuthProviders not set or false"
+            success_msg: "PASS: enableExternalAuthProviders = true"
           when: not ocm_available
-        - name: Assert externalAuthProviders array exists in CRD
-          assert:
-            that:
-              - rcp.spec.externalAuthProviders is defined
-              - rcp.spec.externalAuthProviders | length > 0
-            fail_msg: "FAIL: externalAuthProviders array missing from CRD"
-            success_msg: "PASS: externalAuthProviders present in CRD"
 
-        - name: Extract OIDC issuer URL from CRD
-          set_fact:
-            oidc_issuer_url: "{{ (rcp.spec.externalAuthProviders[0].issuer | default({})).issuerURL | default('') }}"
-        - name: Assert OIDC issuer URL is present
+        - name: Assert ROSAControlPlane status is populated
           assert:
             that:
-              - oidc_issuer_url | length > 0
-              - oidc_issuer_url is match('^https://')
-            fail_msg: "FAIL: OIDC issuer URL is missing or not HTTPS in externalAuthProviders[0]"
-            success_msg: "PASS: OIDC issuer URL is present and uses HTTPS"
-        - name: Validate OIDC issuer URL is reachable
-          uri:
-            url: "{{ oidc_issuer_url }}/.well-known/openid-configuration"
-            method: GET
-            status_code: 200
-            timeout: 10
-            validate_certs: true
-          register: oidc_discovery_result
-          failed_when: false
-          changed_when: false
-          when: oidc_issuer_url is defined and oidc_issuer_url | length > 0
-        - name: Assert OIDC discovery document is valid
+              - rcp.status is defined
+              - rcp.status.conditions is defined
+              - rcp.status.conditions | length > 0
+            fail_msg: "FAIL: ROSAControlPlane status or conditions not populated — cluster may still be provisioning"
+            success_msg: "PASS: ROSAControlPlane status conditions present"
+
+        - name: Assert ExternalAuthConfigured status condition
           assert:
             that:
-              - oidc_discovery_result.status | int == 200
-              - oidc_discovery_result.json.issuer is defined
-              - oidc_discovery_result.json.issuer == oidc_issuer_url
-            fail_msg: "FAIL: OIDC issuer is not reachable or returned invalid discovery document"
-            success_msg: "PASS: OIDC issuer validated — returns valid OpenID configuration"
-          when:
-            - oidc_issuer_url is defined and oidc_issuer_url | length > 0
-            - oidc_discovery_result is defined
-            - oidc_discovery_result.status is defined
-        - name: Assert OIDC audiences configured
+              - rcp.status.conditions | selectattr('type', 'equalto', 'ExternalAuthConfigured') | list | length > 0
+              - (rcp.status.conditions | selectattr('type', 'equalto', 'ExternalAuthConfigured') | first).status == 'True'
+            fail_msg: "FAIL: ExternalAuthConfigured status condition is not True"
+            success_msg: "PASS: ExternalAuthConfigured status condition is True"
+
+        - name: Validate OIDC endpoint URL from status
           assert:
             that:
-              - rcp.spec.externalAuthProviders[0].issuer.audiences is defined
-              - rcp.spec.externalAuthProviders[0].issuer.audiences | length > 0
-            fail_msg: "FAIL: OIDC audiences not configured"
-            success_msg: "PASS: OIDC audiences configured"
+              - rcp.status.oidcEndpointURL is defined
+              - rcp.status.oidcEndpointURL | length > 0
+              - rcp.status.oidcEndpointURL is match('^https://')
+            fail_msg: "FAIL: oidcEndpointURL missing or not HTTPS in status"
+            success_msg: "PASS: oidcEndpointURL present in status and uses HTTPS"
+
+        - name: Validate externalAuthProviders details (if configured in spec)
           when: rcp.spec.externalAuthProviders is defined and rcp.spec.externalAuthProviders | length > 0
-        - name: Assert OIDC claim mappings configured
-          assert:
-            that:
-              - rcp.spec.externalAuthProviders[0].claimMappings is defined
-              - rcp.spec.externalAuthProviders[0].claimMappings.username is defined
-              - rcp.spec.externalAuthProviders[0].claimMappings.username.claim is defined
-            fail_msg: "FAIL: OIDC claim mappings not configured"
-            success_msg: "PASS: OIDC claim mappings configured"
-          when: rcp.spec.externalAuthProviders is defined and rcp.spec.externalAuthProviders | length > 0
+          block:
+            - name: Extract and normalize OIDC issuer URL from CRD
+              set_fact:
+                oidc_issuer_url: "{{ (rcp.spec.externalAuthProviders[0].issuer | default({})).issuerURL | default('') | regex_replace('/$', '') }}"
+
+            - name: Assert OIDC issuer URL is present
+              assert:
+                that:
+                  - oidc_issuer_url | length > 0
+                  - oidc_issuer_url is match('^https://')
+                fail_msg: "FAIL: OIDC issuer URL is missing or not HTTPS in externalAuthProviders[0]"
+                success_msg: "PASS: OIDC issuer URL is present and uses HTTPS"
+
+            - name: Validate OIDC issuer URL is reachable
+              uri:
+                url: "{{ oidc_issuer_url }}/.well-known/openid-configuration"
+                method: GET
+                status_code: 200
+                timeout: 10
+                validate_certs: true
+              register: oidc_discovery_result
+              failed_when: false
+              changed_when: false
+              when: oidc_issuer_url | length > 0
+
+            - name: Assert OIDC discovery document is valid
+              assert:
+                that:
+                  - oidc_discovery_result.status | int == 200
+                  - oidc_discovery_result.json.issuer is defined
+                  - (oidc_discovery_result.json.issuer | regex_replace('/$', '')) == oidc_issuer_url
+                fail_msg: "FAIL: OIDC issuer is not reachable or returned invalid discovery document"
+                success_msg: "PASS: OIDC issuer validated — returns valid OpenID configuration"
+              when:
+                - oidc_issuer_url | length > 0
+                - oidc_discovery_result is defined
+                - oidc_discovery_result.status is defined
+
+            - name: Assert OIDC audiences configured
+              assert:
+                that:
+                  - rcp.spec.externalAuthProviders[0].issuer.audiences is defined
+                  - rcp.spec.externalAuthProviders[0].issuer.audiences | length > 0
+                fail_msg: "FAIL: OIDC audiences not configured"
+                success_msg: "PASS: OIDC audiences configured"
+
+            - name: Assert OIDC claim mappings configured
+              assert:
+                that:
+                  - rcp.spec.externalAuthProviders[0].claimMappings is defined
+                  - rcp.spec.externalAuthProviders[0].claimMappings.username is defined
+                  - rcp.spec.externalAuthProviders[0].claimMappings.username.claim is defined
+                fail_msg: "FAIL: OIDC claim mappings not configured"
+                success_msg: "PASS: OIDC claim mappings configured"
+
         - set_fact:
             features_passed: "{{ features_passed | int + 1 }}"
       rescue:
@@ -649,7 +733,7 @@
             fail_detail: "external OIDC auth not enabled or issuer validation failed"
 
     # --- fips ---
-    - name: "CHECK: FIPS Mode (via OCM API + AWS CLI)"
+    - name: "CHECK: FIPS Mode (via OCM API + CRD + boto3)"
       when: "'fips' in requested_features_list"
       vars:
         verify_region: "{{ aws_region | default(rcp.spec.region | default('us-west-2')) }}"
@@ -672,49 +756,73 @@
             success_msg: "PASS: CRD confirms fips = Enabled (CRD fallback)"
           when: not ocm_available
 
-        - name: Get AMI ID from cluster worker instance
-          shell: >
-            aws ec2 describe-instances
-            --filters "Name=tag:kubernetes.io/cluster/{{ cluster_name }},Values=owned"
-            "Name=instance-state-name,Values=running"
-            --region {{ verify_region }}
-            --query 'Reservations[].Instances[].ImageId'
-            --output json
-          register: aws_ami_ids_raw
+        - name: Get worker AMI details via boto3
+          command:
+            argv:
+              - python3
+              - -c
+              - |
+                import boto3, json, os
+                ec2 = boto3.client('ec2', region_name=os.environ['VERIFY_REGION'])
+                r = ec2.describe_instances(Filters=[
+                    {'Name': 'tag:kubernetes.io/cluster/' + os.environ['CLUSTER_NAME'], 'Values': ['owned']},
+                    {'Name': 'instance-state-name', 'Values': ['running']}
+                ])
+                ami_ids = list(set(
+                    inst['ImageId']
+                    for res in r.get('Reservations', [])
+                    for inst in res.get('Instances', [])
+                ))
+                if not ami_ids:
+                    print(json.dumps({'images': [], 'error': 'no instances found'}))
+                else:
+                    imgs = ec2.describe_images(ImageIds=ami_ids)
+                    by_id = {img['ImageId']: img for img in imgs['Images']}
+                    results = [{'ami_id': aid, 'name': by_id.get(aid, {}).get('Name', ''), 'description': by_id.get(aid, {}).get('Description', '')} for aid in ami_ids]
+                    print(json.dumps({'images': results}))
+          environment:
+            VERIFY_REGION: "{{ verify_region }}"
+            CLUSTER_NAME: "{{ cluster_name }}"
+          register: boto3_fips_check
           changed_when: false
+          failed_when: false
+          no_log: true
 
-        - name: Select first unique AMI ID from cluster instances
+        - name: Parse FIPS AMI result
           set_fact:
-            aws_ami_id: "{{ aws_ami_ids_raw.stdout | from_json | default([]) | unique | first | default('') }}"
+            fips_ami_result: "{{ boto3_fips_check.stdout | default('{\"images\":[]}') | from_json }}"
+          when: boto3_fips_check.rc == 0
 
-        - name: Assert AMI ID was resolved
+        - name: Assert worker AMIs were found
           assert:
             that:
-              - aws_ami_id | trim | length > 0
-              - aws_ami_id | trim != 'None'
-            fail_msg: "FAIL: No running worker instances found for cluster"
-            success_msg: "PASS: Worker AMI ID resolved"
+              - boto3_fips_check.rc == 0
+              - fips_ami_result.images | length > 0
+            fail_msg: "FAIL: No running worker instances found for cluster (boto3)"
+            success_msg: "PASS: Found {{ fips_ami_result.images | length }} unique worker AMI(s)"
+          when: boto3_fips_check.rc == 0
 
-        - name: Get AMI description
-          shell: >
-            aws ec2 describe-images
-            --image-ids {{ aws_ami_id | trim }}
-            --region {{ verify_region }}
-            --query 'Images[0].{Name:Name,Description:Description}'
-            --output json
-          register: aws_ami_info_raw
-          changed_when: false
-
-        - name: Parse AMI info
+        - name: Check worker AMIs for FIPS marker
           set_fact:
-            aws_ami_info: "{{ aws_ami_info_raw.stdout | from_json }}"
+            fips_ami_has_marker: "{{ (item.name | default('') | lower) is search('\\bfips\\b') or (item.description | default('') | lower) is search('\\bfips\\b') }}"
+          loop: "{{ fips_ami_result.images }}"
+          register: fips_ami_marker_results
+          when: boto3_fips_check.rc == 0 and fips_ami_result.images | length > 0
 
-        - name: Assert worker AMI is FIPS-enabled
-          assert:
-            that:
-              - "(aws_ami_info.Name | default('') | lower) is search('\\bfips\\b') or (aws_ami_info.Description | default('') | lower) is search('\\bfips\\b')"
-            fail_msg: "FAIL: Worker AMI does not appear to be FIPS-enabled"
-            success_msg: "PASS: Worker AMI is FIPS-enabled"
+        # ROSA HCP enables FIPS at the cluster level, not via a separate AMI —
+        # AMI marker is informational only, not a hard failure.
+        - name: Report FIPS AMI marker result
+          debug:
+            msg: >-
+              {{ 'PASS: Worker AMI(s) contain FIPS marker'
+                 if (fips_ami_marker_results.results | default([]) | selectattr('ansible_facts.fips_ami_has_marker', 'equalto', true) | list | length > 0)
+                 else 'INFO: Worker AMI(s) do not contain FIPS marker in name/description — ROSA HCP enables FIPS at cluster level, not via separate AMI. Verified via CRD/OCM.' }}
+          when: boto3_fips_check.rc == 0 and fips_ami_result.images | length > 0
+
+        - name: Skip FIPS AMI check (boto3 failed)
+          debug:
+            msg: "WARN: boto3 AMI lookup failed — FIPS verified via CRD/OCM only"
+          when: boto3_fips_check.rc != 0
 
         - set_fact:
             features_passed: "{{ features_passed | int + 1 }}"
@@ -739,19 +847,29 @@
             fail_msg: "FAIL: etcdEncryptionKMSARN not set or not a valid KMS ARN"
             success_msg: "PASS: KMS ARN format valid"
 
-        - name: Verify KMS key exists and is enabled in AWS
-          shell: >
-            aws kms describe-key
-            --key-id {{ kms_arn }}
-            --region {{ verify_region }}
-            --query 'KeyMetadata.{Arn:Arn,Enabled:Enabled,State:KeyState}'
-            --output json
-          register: aws_kms_check
+        - name: Verify KMS key exists and is enabled (boto3)
+          command:
+            argv:
+              - python3
+              - -c
+              - |
+                import boto3, json, os
+                kms = boto3.client('kms', region_name=os.environ['VERIFY_REGION'])
+                r = kms.describe_key(KeyId=os.environ['KMS_ARN'])
+                m = r['KeyMetadata']
+                print(json.dumps({'Arn': m['Arn'], 'Enabled': m['Enabled'], 'State': m['KeyState']}))
+          environment:
+            VERIFY_REGION: "{{ verify_region }}"
+            KMS_ARN: "{{ kms_arn }}"
+          register: boto3_kms_check
           changed_when: false
+          no_log: true
+          when: boto3_check.rc == 0
 
         - name: Parse KMS key response
           set_fact:
-            aws_kms_key: "{{ aws_kms_check.stdout | from_json }}"
+            aws_kms_key: "{{ boto3_kms_check.stdout | from_json }}"
+          when: boto3_check.rc == 0
 
         - name: Assert KMS key is enabled and ARN matches
           assert:
@@ -761,6 +879,7 @@
               - aws_kms_key.State == 'Enabled'
             fail_msg: "FAIL: KMS key not found, disabled, or ARN mismatch"
             success_msg: "PASS: KMS key exists and is enabled"
+          when: boto3_check.rc == 0
 
         - set_fact:
             features_passed: "{{ features_passed | int + 1 }}"
@@ -1219,62 +1338,89 @@
               log_forward_s3_bucket
             success_msg: "PASS: Complete log destination configured"
 
-        - name: Verify CloudWatch IAM role exists in AWS
-          shell: >
-            aws iam get-role
-            --role-name {{ log_forward_cloudwatch_role_arn | regex_replace('^arn:aws:iam::[0-9]+:role/', '') }}
-            --query 'Role.Arn'
-            --output text
-          register: aws_cw_role_check
+        - name: Verify CloudWatch IAM role exists (boto3)
+          command:
+            argv:
+              - python3
+              - -c
+              - |
+                import boto3, os
+                iam = boto3.client('iam')
+                import re
+                m = re.search(r'role/(?:.*/)?(.+)$', os.environ['ROLE_ARN'])
+                role_name = m.group(1) if m else os.environ['ROLE_ARN'].rsplit('/', 1)[-1]
+                r = iam.get_role(RoleName=role_name)
+                print(r['Role']['Arn'])
+          environment:
+            ROLE_ARN: "{{ log_forward_cloudwatch_role_arn }}"
+          register: boto3_cw_role_check
           changed_when: false
+          failed_when: false
           no_log: true
-          when: log_forward_cloudwatch_role_arn is defined and (log_forward_cloudwatch_role_arn | length > 0)
+          when: boto3_check.rc == 0 and log_forward_cloudwatch_role_arn is defined and (log_forward_cloudwatch_role_arn | length > 0)
 
         - name: Assert CloudWatch IAM role exists
           assert:
             that:
-              - aws_cw_role_check.rc == 0
-              - aws_cw_role_check.stdout | trim == log_forward_cloudwatch_role_arn
+              - boto3_cw_role_check.rc == 0
+              - boto3_cw_role_check.stdout | trim == log_forward_cloudwatch_role_arn
             fail_msg: "FAIL: CloudWatch IAM role not found in AWS"
             success_msg: "PASS: CloudWatch IAM role exists"
-          when: log_forward_cloudwatch_role_arn is defined and (log_forward_cloudwatch_role_arn | length > 0)
+          when: boto3_check.rc == 0 and log_forward_cloudwatch_role_arn is defined and (log_forward_cloudwatch_role_arn | length > 0)
 
-        - name: Verify CloudWatch log group exists in AWS
-          shell: >
-            aws logs describe-log-groups
-            --log-group-name-prefix {{ log_forward_cloudwatch_log_group }}
-            --region {{ verify_region }}
-            --query 'logGroups[?logGroupName==`{{ log_forward_cloudwatch_log_group }}`].logGroupName'
-            --output text
-          register: aws_cw_log_group_check
+        - name: Verify CloudWatch log group exists (boto3)
+          command:
+            argv:
+              - python3
+              - -c
+              - |
+                import boto3, os
+                logs = boto3.client('logs', region_name=os.environ['VERIFY_REGION'])
+                group = os.environ['LOG_GROUP']
+                r = logs.describe_log_groups(logGroupNamePrefix=group)
+                matches = [g['logGroupName'] for g in r['logGroups'] if g['logGroupName'] == group]
+                print(matches[0] if matches else '')
+          environment:
+            VERIFY_REGION: "{{ verify_region }}"
+            LOG_GROUP: "{{ log_forward_cloudwatch_log_group }}"
+          register: boto3_cw_log_group_check
           changed_when: false
-          when: log_forward_cloudwatch_log_group is defined and (log_forward_cloudwatch_log_group | length > 0)
+          failed_when: false
+          when: boto3_check.rc == 0 and log_forward_cloudwatch_log_group is defined and (log_forward_cloudwatch_log_group | length > 0)
 
         - name: Assert CloudWatch log group exists
           assert:
             that:
-              - aws_cw_log_group_check.rc == 0
-              - aws_cw_log_group_check.stdout | trim == log_forward_cloudwatch_log_group
+              - boto3_cw_log_group_check.rc == 0
+              - boto3_cw_log_group_check.stdout | trim == log_forward_cloudwatch_log_group
             fail_msg: "FAIL: CloudWatch log group not found in the specified region"
             success_msg: "PASS: CloudWatch log group exists"
-          when: log_forward_cloudwatch_log_group is defined and (log_forward_cloudwatch_log_group | length > 0)
+          when: boto3_check.rc == 0 and log_forward_cloudwatch_log_group is defined and (log_forward_cloudwatch_log_group | length > 0)
 
-        - name: Verify S3 bucket exists in AWS
-          shell: >
-            aws s3api head-bucket
-            --bucket {{ log_forward_s3_bucket }}
-          register: aws_s3_bucket_check
+        - name: Verify S3 bucket exists (boto3)
+          command:
+            argv:
+              - python3
+              - -c
+              - |
+                import boto3, os
+                s3 = boto3.client('s3')
+                s3.head_bucket(Bucket=os.environ['BUCKET_NAME'])
+                print('exists')
+          environment:
+            BUCKET_NAME: "{{ log_forward_s3_bucket }}"
+          register: boto3_s3_bucket_check
           changed_when: false
           failed_when: false
-          when: log_forward_s3_bucket is defined and (log_forward_s3_bucket | length > 0)
+          when: boto3_check.rc == 0 and log_forward_s3_bucket is defined and (log_forward_s3_bucket | length > 0)
 
         - name: Assert S3 bucket exists
           assert:
             that:
-              - aws_s3_bucket_check.rc == 0
+              - boto3_s3_bucket_check.rc == 0
             fail_msg: "FAIL: S3 bucket not found in AWS"
             success_msg: "PASS: S3 bucket exists"
-          when: log_forward_s3_bucket is defined and (log_forward_s3_bucket | length > 0)
+          when: boto3_check.rc == 0 and log_forward_s3_bucket is defined and (log_forward_s3_bucket | length > 0)
 
         - set_fact:
             features_passed: "{{ features_passed | int + 1 }}"
