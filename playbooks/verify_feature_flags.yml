@@ -454,6 +454,7 @@
           register: boto3_vpc_id_cfn
           changed_when: false
           failed_when: false
+          no_log: true
           when: boto3_check.rc == 0
 
         - name: Query VPC ID from cluster-tagged instances (boto3 BYON fallback)
@@ -476,6 +477,7 @@
           register: boto3_vpc_id_instance
           changed_when: false
           failed_when: false
+          no_log: true
           when:
             - boto3_check.rc == 0
             - boto3_vpc_id_cfn.stdout | default('') | trim is not match('^vpc-')
@@ -490,7 +492,7 @@
 
         - name: Log VPC resolution result
           debug:
-            msg: "{{ 'VPC ID resolved: ' + aws_vpc_id if (aws_vpc_id | default('')) is match('^vpc-') else 'VPC ID not resolved — skipping deeper AWS checks' }}"
+            msg: "{{ 'VPC ID resolved — proceeding with LB check' if (aws_vpc_id | default('')) is match('^vpc-') else 'VPC ID not resolved — skipping deeper AWS checks' }}"
           when: boto3_check.rc == 0
 
         - name: Query load balancers in the VPC (boto3)
@@ -513,6 +515,7 @@
           register: boto3_nlb_raw
           changed_when: false
           failed_when: false
+          no_log: true
           when: boto3_check.rc == 0 and (aws_vpc_id | default('')) is match('^vpc-')
 
         - name: Parse NLB response
@@ -638,10 +641,18 @@
             success_msg: "PASS: enableExternalAuthProviders = true"
           when: not ocm_available
 
+        - name: Assert ROSAControlPlane status is populated
+          assert:
+            that:
+              - rcp.status is defined
+              - rcp.status.conditions is defined
+              - rcp.status.conditions | length > 0
+            fail_msg: "FAIL: ROSAControlPlane status or conditions not populated — cluster may still be provisioning"
+            success_msg: "PASS: ROSAControlPlane status conditions present"
+
         - name: Assert ExternalAuthConfigured status condition
           assert:
             that:
-              - rcp.status.conditions is defined
               - rcp.status.conditions | selectattr('type', 'equalto', 'ExternalAuthConfigured') | list | length > 0
               - (rcp.status.conditions | selectattr('type', 'equalto', 'ExternalAuthConfigured') | first).status == 'True'
             fail_msg: "FAIL: ExternalAuthConfigured status condition is not True"
@@ -775,6 +786,7 @@
           register: boto3_fips_check
           changed_when: false
           failed_when: false
+          no_log: true
 
         - name: Parse FIPS AMI result
           set_fact:
@@ -797,6 +809,8 @@
           register: fips_ami_marker_results
           when: boto3_fips_check.rc == 0 and fips_ami_result.images | length > 0
 
+        # ROSA HCP enables FIPS at the cluster level, not via a separate AMI —
+        # AMI marker is informational only, not a hard failure.
         - name: Report FIPS AMI marker result
           debug:
             msg: >-
@@ -849,6 +863,7 @@
             KMS_ARN: "{{ kms_arn }}"
           register: boto3_kms_check
           changed_when: false
+          no_log: true
           when: boto3_check.rc == 0
 
         - name: Parse KMS key response
@@ -1331,7 +1346,9 @@
               - |
                 import boto3, os
                 iam = boto3.client('iam')
-                role_name = os.environ['ROLE_ARN'].split('role/')[-1].split('/')[-1]
+                import re
+                m = re.search(r'role/(?:.*/)?(.+)$', os.environ['ROLE_ARN'])
+                role_name = m.group(1) if m else os.environ['ROLE_ARN'].rsplit('/', 1)[-1]
                 r = iam.get_role(RoleName=role_name)
                 print(r['Role']['Arn'])
           environment:
