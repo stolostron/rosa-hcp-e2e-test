@@ -219,6 +219,20 @@
         fail_msg: "FAIL: OCM API URL is not HTTPS — refusing to send bearer token"
       when: ocm_client_id | default('') | length > 0
 
+    - name: Check SSO endpoint reachability
+      uri:
+        url: "https://sso.redhat.com/auth/realms/redhat-external/.well-known/openid-configuration"
+        method: GET
+        status_code: 200
+        timeout: 10
+      register: sso_health_check
+      failed_when: false
+      changed_when: false
+
+    - name: Log SSO reachability
+      debug:
+        msg: "{{ 'SSO endpoint reachable (HTTP ' ~ sso_health_check.status ~ ')' if sso_health_check.status is defined and sso_health_check.status == 200 else 'SSO endpoint NOT reachable — HTTP ' ~ (sso_health_check.status | default('no response')) ~ '. OCM verification will be skipped.' }}"
+
     - name: Get OCM bearer token
       uri:
         url: "https://sso.redhat.com/auth/realms/redhat-external/protocol/openid-connect/token"
@@ -234,7 +248,12 @@
       failed_when: false
       changed_when: false
       no_log: true
-      when: ocm_client_id | default('') | length > 0
+      when: ocm_client_id | default('') | length > 0 and sso_health_check.status | default(0) == 200
+
+    - name: Log OCM token exchange result
+      debug:
+        msg: "{{ 'OCM token exchange succeeded' if (ocm_token_result is defined and ocm_token_result.status is defined and ocm_token_result.status == 200) else 'OCM token exchange failed — credentials may be invalid or expired' }}"
+      when: ocm_client_id | default('') | length > 0 and sso_health_check.status | default(0) == 200
 
     - name: Query OCM for cluster details
       uri:
