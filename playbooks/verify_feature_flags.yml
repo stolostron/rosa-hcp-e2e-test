@@ -228,10 +228,12 @@
       register: sso_health_check
       failed_when: false
       changed_when: false
+      when: ocm_client_id | default('') | length > 0
 
     - name: Log SSO reachability
       debug:
         msg: "{{ 'SSO endpoint reachable (HTTP ' ~ sso_health_check.status ~ ')' if sso_health_check.status is defined and sso_health_check.status == 200 else 'SSO endpoint NOT reachable — HTTP ' ~ (sso_health_check.status | default('no response')) ~ '. OCM verification will be skipped.' }}"
+      when: ocm_client_id | default('') | length > 0
 
     - name: Get OCM bearer token
       uri:
@@ -248,12 +250,12 @@
       failed_when: false
       changed_when: false
       no_log: true
-      when: ocm_client_id | default('') | length > 0 and sso_health_check.status | default(0) == 200
+      when: (ocm_client_id | default('') | length > 0) and (sso_health_check.status | default(0) == 200)
 
     - name: Log OCM token exchange result
       debug:
-        msg: "{{ 'OCM token exchange succeeded' if (ocm_token_result is defined and ocm_token_result.status is defined and ocm_token_result.status == 200) else 'OCM token exchange failed — credentials may be invalid or expired' }}"
-      when: ocm_client_id | default('') | length > 0 and sso_health_check.status | default(0) == 200
+        msg: "{{ 'OCM token exchange succeeded' if (ocm_token_result is defined and not ocm_token_result is skipped) else 'OCM token exchange failed — credentials may be invalid or expired' }}"
+      when: (ocm_client_id | default('') | length > 0) and (sso_health_check.status | default(0) == 200)
 
     - name: Query OCM for cluster details
       uri:
