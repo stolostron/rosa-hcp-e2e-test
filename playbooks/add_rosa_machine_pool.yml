@@ -144,7 +144,7 @@
     - name: Create MachinePool resource
       shell: |
         cat <<'YAML' | oc apply -f -
-        apiVersion: cluster.x-k8s.io/v1beta1
+        apiVersion: cluster.x-k8s.io/v1beta2
         kind: MachinePool
         metadata:
           name: {{ pool_name }}

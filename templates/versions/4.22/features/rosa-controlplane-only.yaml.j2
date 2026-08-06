@@ -12,7 +12,7 @@ spec:
   hubAcceptsClient: true
 ---
 {% endif %}
-apiVersion: cluster.x-k8s.io/v1beta1
+apiVersion: cluster.x-k8s.io/v1beta2
 kind: Cluster
 metadata:
   name: {{ cluster_name }}
@@ -249,7 +249,7 @@ spec:
   # References to automation resources created separately
   # No inline ROSANetwork or ROSARoleConfig definitions
 ---
-apiVersion: cluster.x-k8s.io/v1beta1
+apiVersion: cluster.x-k8s.io/v1beta2
 kind: MachinePool
 metadata:
   name: {{ cluster_name }}
