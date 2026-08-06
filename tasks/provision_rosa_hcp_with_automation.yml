@@ -145,13 +145,6 @@
 - name: Verify AWS credentials are configured
   when: create_rosa_roles | bool or create_rosa_network | bool
   block:
-    - name: Check if AWS credentials are provided
-      debug:
-        msg: |
-          🔍 Checking AWS credentials...
-          AWS_ACCESS_KEY_ID: {{ 'Set ✓' if AWS_ACCESS_KEY_ID is defined and AWS_ACCESS_KEY_ID != '' else 'Missing ✗' }}
-          AWS_SECRET_ACCESS_KEY: {{ 'Set ✓' if AWS_SECRET_ACCESS_KEY is defined and AWS_SECRET_ACCESS_KEY != '' else 'Missing ✗' }}
-
     - name: Fail if AWS credentials are missing
       fail:
         msg: |
