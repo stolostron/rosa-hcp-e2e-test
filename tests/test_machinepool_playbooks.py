@@ -112,7 +112,7 @@ def test_delete_playbook_handles_missing_pool_gracefully():
 
 def test_add_playbook_uses_correct_machinepool_api():
     text = _get_playbook_text(PLAYBOOKS_DIR / "add_rosa_machine_pool.yml")
-    assert "cluster.x-k8s.io/v1beta1" in text, "MachinePool should use v1beta1"
+    assert "cluster.x-k8s.io/v1beta2" in text, "MachinePool should use v1beta2"
     assert "infrastructure.cluster.x-k8s.io/v1beta2" in text, "ROSAMachinePool should use v1beta2"
 
 
