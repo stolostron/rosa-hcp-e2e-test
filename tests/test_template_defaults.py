@@ -2,11 +2,11 @@
 """
 Tests for Jinja2 template defaults and API versions.
 
-Validates templates in templates/versions/4.20/features/ and 4.21/features/:
+Validates templates in templates/versions/4.20-4.22/features/:
     - defaultMachinePoolSpec min <= max and both > 0
     - MachinePool replicas > 0
-    - Correct API versions (v1beta1 for MachinePool, v1beta2 for
-      ROSAMachinePool/ROSAControlPlane/ROSACluster)
+    - Correct API versions (v1beta2 for Cluster/MachinePool on 4.22+,
+      v1beta1 on older; v1beta2 for ROSAMachinePool/ROSAControlPlane/ROSACluster)
     - rosa-capi-roles-cluster.yaml.j2 is excluded from v1beta2 checks
       because it intentionally uses v1beta1 for some infrastructure resources
 
@@ -129,7 +129,7 @@ def test_machinepool_replicas_greater_than_zero(template):
 
 
 # ================================================================
-# API Version: MachinePool uses v1beta1
+# API Version: MachinePool uses correct version per OCP release
 # ================================================================
 
 @pytest.mark.parametrize("template", ALL_J2_TEMPLATES, ids=_template_id)
