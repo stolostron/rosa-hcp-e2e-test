@@ -160,10 +160,9 @@
                 dataSecretName: ""
               clusterName: {{ cluster_name }}
               infrastructureRef:
-                apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+                apiGroup: infrastructure.cluster.x-k8s.io
                 kind: ROSAMachinePool
                 name: {{ pool_name }}
-                namespace: {{ rosa_hcp_namespace }}
         YAML
       register: mp_result
       failed_when: mp_result.rc != 0

@@ -170,8 +170,8 @@ def test_delete_machinepool_suite_json():
 
 def test_add_suite_requires_cluster_name():
     suite = json.loads(TEST_SUITES_DIR.joinpath("27-rosa-hcp-add-machinepool.json").read_text())
-    extra_vars = suite["playbooks"][0]["extra_vars"]
-    assert "cluster_name" in extra_vars
+    customization = suite["documentation"]["customization"]
+    assert "cluster_name" in customization
 
 
 def test_add_suite_has_documentation():
