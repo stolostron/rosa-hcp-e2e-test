@@ -40,12 +40,12 @@
           skip: true
 
     - name: Set cluster credentials
+      no_log: true
       set_fact:
         ocp_user: "{{ lookup('env', 'OCP_HUB_CLUSTER_USER') | default(OCP_HUB_CLUSTER_USER, true) }}"
         ocp_password: "{{ lookup('env', 'OCP_HUB_CLUSTER_PASSWORD') | default(OCP_HUB_CLUSTER_PASSWORD, true) }}"
         api_url: "{{ lookup('env', 'OCP_HUB_API_URL') | default(OCP_HUB_API_URL, true) }}"
         AUTOMATION_PATH: "{{ lookup('env', 'AUTOMATION_PATH') | default(playbook_dir + '/..', true) }}"
-      no_log: true
       when: deployment_mode != 'standalone'
 
     - name: Set default namespace
