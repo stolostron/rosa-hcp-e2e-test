@@ -68,7 +68,7 @@
 
     - name: Set AWS credentials
       set_fact:
-        aws_account_id: "{{ lookup('env', 'AWS_ACCOUNT_ID') | default(AWS_ACCOUNT_ID, true) }}"
+        aws_account_id: "{{ lookup('env', 'AWS_ACCOUNT_ID') | default(AWS_ACCOUNT_ID, true) | string }}"
         aws_region: "{{ lookup('env', 'AWS_REGION') | default(AWS_REGION | default('us-west-2'), true) }}"
         AWS_ACCESS_KEY_ID: "{{ lookup('env', 'AWS_ACCESS_KEY_ID') | default(AWS_ACCESS_KEY_ID | default(''), true) }}"
         AWS_SECRET_ACCESS_KEY: "{{ lookup('env', 'AWS_SECRET_ACCESS_KEY') | default(AWS_SECRET_ACCESS_KEY | default(''), true) }}"
@@ -203,6 +203,16 @@
           • AWS IAM roles or manual role references
           • VPC ID and subnet IDs
           {% endif %}
+
+    - name: Set OCM credentials
+      set_fact:
+        OCM_CLIENT_ID: "{{ lookup('env', 'OCM_CLIENT_ID') | default(OCM_CLIENT_ID, true) }}"
+        OCM_CLIENT_SECRET: "{{ lookup('env', 'OCM_CLIENT_SECRET') | default(OCM_CLIENT_SECRET, true) }}"
+        OCM_API_URL: "{{ lookup('env', 'OCM_API_URL') | default(OCM_API_URL, true) }}"
+      no_log: true
+
+    - name: Pre-flight check OCM role linkage to AWS account
+      include_tasks: ../tasks/preflight_check_ocm_role.yml
 
     - name: Provision ROSA HCP cluster with automation
       include_tasks: ../tasks/provision_rosa_hcp_with_automation.yml

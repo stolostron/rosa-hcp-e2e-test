@@ -1,3 +1,9 @@
+#==== OCM (OpenShift Cluster Manager) ====
+# Override in vars/user_vars.yml or via environment variables
+OCM_CLIENT_ID: ""
+OCM_CLIENT_SECRET: ""
+OCM_API_URL: ""
+
 #==== Common ====
 output_dir: "{{ lookup('env', 'HOME') }}/output"
 skip_ansible_runner: false
