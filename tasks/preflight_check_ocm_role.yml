@@ -1,0 +1,446 @@
+---
+# ================================================================
+# Pre-flight Check: OCM Role Linkage to AWS Account
+# ================================================================
+# Verifies that an OCM role is linked to the target AWS account's
+# organization. If missing, creates the IAM role in AWS and links
+# it to the OCM organization via the accounts management API.
+#
+# Required variables:
+#   - OCM_CLIENT_ID / OCM_CLIENT_SECRET  (SSO credentials)
+#   - aws_account_id                     (target AWS account)
+#   - AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY (for IAM creation)
+#
+# Optional variables:
+#   - OCM_API_URL  (required - set in vars/user_vars.yml or environment)
+# ================================================================
+
+# ================================================================
+# STEP 0: Validate required OCM credentials
+# ================================================================
+- name: Validate OCM credentials are configured
+  ansible.builtin.fail:
+    msg: >-
+      OCM credentials not configured. Set OCM_CLIENT_ID and OCM_CLIENT_SECRET
+      in vars/user_vars.yml or as environment variables.
+  when: >-
+    (OCM_CLIENT_ID | default('') | length == 0) or
+    (OCM_CLIENT_SECRET | default('') | length == 0)
+
+- name: Validate OCM API URL is configured
+  ansible.builtin.fail:
+    msg: >-
+      OCM_API_URL is not configured. Set OCM_API_URL in vars/user_vars.yml
+      or as an environment variable (e.g. https://api.stage.openshift.com).
+  when: (OCM_API_URL | default('') | length == 0)
+
+- name: Validate OCM API URL uses HTTPS
+  ansible.builtin.fail:
+    msg: >-
+      OCM_API_URL must use HTTPS (current value: {{ OCM_API_URL }}).
+      Bearer tokens must not be sent over non-HTTPS connections.
+  when: not (OCM_API_URL | default('') | regex_search('^https://'))
+
+- name: Validate OCM API URL host is an approved OCM endpoint
+  ansible.builtin.fail:
+    msg: >-
+      OCM_API_URL host is not in the approved allowlist (current value: {{ OCM_API_URL }}).
+      Approved hosts: api.openshift.com, api.stage.openshift.com
+  vars:
+    _ocm_allowed_hosts:
+      - "https://api.openshift.com"
+      - "https://api.stage.openshift.com"
+  when: OCM_API_URL | regex_replace('/+$', '') not in _ocm_allowed_hosts
+
+# ================================================================
+# STEP 1: Acquire OCM Bearer Token via SSO
+# ================================================================
+- name: Acquire OCM bearer token from Red Hat SSO
+  ansible.builtin.uri:
+    url: "https://sso.redhat.com/auth/realms/redhat-external/protocol/openid-connect/token"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      grant_type: "client_credentials"
+      client_id: "{{ OCM_CLIENT_ID }}"
+      client_secret: "{{ OCM_CLIENT_SECRET }}"
+    status_code: [200]
+    return_content: true
+  register: _ocm_preflight_token
+  no_log: true
+  failed_when: false
+
+- name: Fail if OCM token acquisition failed
+  ansible.builtin.fail:
+    msg: |
+      OCM Role Pre-flight Check FAILED: Unable to acquire OCM bearer token.
+
+      SSO endpoint: https://sso.redhat.com/auth/realms/redhat-external/protocol/openid-connect/token
+      HTTP status: {{ _ocm_preflight_token.status | default('N/A') }}
+
+      Remediation:
+      1. Verify OCM_CLIENT_ID and OCM_CLIENT_SECRET are correct
+      2. Ensure the SSO endpoint is reachable (check VPN if applicable)
+      3. Check that the service account has not expired in console.redhat.com
+  when: _ocm_preflight_token.status | default(0) | int != 200
+
+- name: Set OCM bearer token fact
+  ansible.builtin.set_fact:
+    _ocm_bearer: "{{ (_ocm_preflight_token.content | from_json).access_token }}"
+  no_log: true
+
+# ================================================================
+# STEP 2: Get current account and organization ID
+# ================================================================
+- name: Get OCM current account information
+  ansible.builtin.uri:
+    url: "{{ OCM_API_URL }}/api/accounts_mgmt/v1/current_account"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ _ocm_bearer }}"
+      Accept: "application/json"
+    status_code: [200]
+    return_content: true
+  register: _ocm_current_account
+  no_log: true
+  failed_when: false
+
+- name: Fail if current account query failed
+  ansible.builtin.fail:
+    msg: |
+      OCM Role Pre-flight Check FAILED: Unable to query current OCM account.
+
+      API URL: {{ OCM_API_URL }}/api/accounts_mgmt/v1/current_account
+      HTTP status: {{ _ocm_current_account.status | default('N/A') }}
+
+      Remediation:
+      1. Verify OCM_API_URL is correct (current: {{ OCM_API_URL }})
+      2. Check that the bearer token is valid
+      3. Ensure the OCM API is reachable
+  when: _ocm_current_account.status | default(0) | int != 200
+
+- name: Extract organization ID from current account
+  ansible.builtin.set_fact:
+    _ocm_org_id: "{{ (_ocm_current_account.content | from_json).organization.id }}"
+  no_log: true
+
+# ================================================================
+# STEP 3: Query organization for linked OCM role
+# ================================================================
+- name: Query OCM organization labels for ocm_role_arn
+  ansible.builtin.uri:
+    url: "{{ OCM_API_URL }}/api/accounts_mgmt/v1/organizations/{{ _ocm_org_id }}/labels"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ _ocm_bearer }}"
+      Accept: "application/json"
+    status_code: [200]
+    return_content: true
+  register: _ocm_org_labels
+  no_log: true
+  failed_when: false
+
+- name: Fail if organization labels query failed
+  ansible.builtin.fail:
+    msg: |
+      OCM Role Pre-flight Check FAILED: Unable to query OCM organization labels.
+
+      Organization ID: ****{{ _ocm_org_id[-4:] }}
+      HTTP status: {{ _ocm_org_labels.status | default('N/A') }}
+
+      Remediation:
+      1. Ensure the service account has permission to read organization labels
+      2. Check OCM API availability
+  when: _ocm_org_labels.status | default(0) | int != 200
+
+- name: Determine if OCM role is linked to target AWS account
+  ansible.builtin.set_fact:
+    _ocm_role_linked: >-
+      {{ (_ocm_org_labels.content | from_json)['items']
+         | default([], true)
+         | selectattr('key', 'equalto', 'ocm_role_arn')
+         | selectattr('value', 'search', 'arn:aws:iam::' ~ aws_account_id ~ ':role/')
+         | list
+         | length > 0 }}
+    _ocm_existing_role_arn: >-
+      {{ ((_ocm_org_labels.content | from_json)['items']
+          | default([], true)
+          | selectattr('key', 'equalto', 'ocm_role_arn')
+          | selectattr('value', 'search', 'arn:aws:iam::' ~ aws_account_id ~ ':role/')
+          | map(attribute='value')
+          | list
+          | first)
+         | default('') }}
+  no_log: true
+
+- name: Display OCM role linkage status
+  ansible.builtin.debug:
+    msg: "OCM role linkage check: {{ 'LINKED' if (_ocm_role_linked | bool) else 'NOT LINKED' }} for AWS account ****{{ aws_account_id[-4:] }}"
+
+# ================================================================
+# STEP 4: Create IAM role if missing
+# ================================================================
+- name: Create and link OCM role to AWS account
+  when: not (_ocm_role_linked | bool)
+  block:
+    - name: Set OCM role name
+      ansible.builtin.set_fact:
+        _ocm_iam_role_name: "OCMRole-{{ aws_account_id[:8] }}"
+        _ocm_trust_account_id: "{{ acm21162.aws.rosa_service_account_id | default('710019948333') }}"
+      no_log: true
+
+    - name: Display OCM role creation plan
+      ansible.builtin.debug:
+        msg: |
+          OCM role not linked. Creating IAM role and linking to OCM organization.
+
+          IAM Role Name: ****{{ _ocm_iam_role_name[-4:] }}
+          Trust Principal: arn:aws:iam::****{{ _ocm_trust_account_id[-4:] }}:root
+          Target AWS Account: ****{{ aws_account_id[-4:] }}
+          OCM Organization: ****{{ _ocm_org_id[-4:] }}
+
+    - name: Create OCM IAM role in AWS
+      ansible.builtin.shell: |
+        python3 -c "
+        import boto3, json, os, sys
+
+        iam = boto3.client(
+            'iam',
+            aws_access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
+            aws_secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY'],
+            region_name=os.environ.get('AWS_DEFAULT_REGION', 'us-west-2')
+        )
+
+        role_name = os.environ['OCM_IAM_ROLE_NAME']
+        trust_account_id = os.environ['OCM_TRUST_ACCOUNT_ID']
+        external_id = os.environ['OCM_EXTERNAL_ID']
+        trust_policy = json.dumps({
+            'Version': '2012-10-17',
+            'Statement': [{
+                'Effect': 'Allow',
+                'Principal': {
+                    'AWS': f'arn:aws:iam::{trust_account_id}:root'
+                },
+                'Action': 'sts:AssumeRole',
+                'Condition': {
+                    'StringEquals': {
+                        'sts:ExternalId': external_id
+                    }
+                }
+            }]
+        })
+
+        policy_arn = 'arn:aws:iam::aws:policy/AdministratorAccess'
+
+        try:
+            # Check if role already exists
+            existing = iam.get_role(RoleName=role_name)
+            arn = existing['Role']['Arn']
+            # Ensure policy is attached (idempotent - covers partial previous runs)
+            iam.attach_role_policy(RoleName=role_name, PolicyArn=policy_arn)
+            print(json.dumps({'arn': arn, 'created': False}))
+        except iam.exceptions.NoSuchEntityException:
+            # Create the role
+            response = iam.create_role(
+                RoleName=role_name,
+                AssumeRolePolicyDocument=trust_policy,
+                Description='OCM role for ROSA HCP cluster management',
+                Tags=[
+                    {'Key': 'red-hat-managed', 'Value': 'true'},
+                    {'Key': 'CreatedBy', 'Value': 'ansible-automation'},
+                    {'Key': 'Purpose', 'Value': 'ocm-role-linkage'}
+                ]
+            )
+            arn = response['Role']['Arn']
+
+            # Attach AdministratorAccess policy
+            iam.attach_role_policy(RoleName=role_name, PolicyArn=policy_arn)
+            print(json.dumps({'arn': arn, 'created': True}))
+        except Exception as e:
+            print(json.dumps({'error': str(e)}), file=sys.stderr)
+            sys.exit(1)
+        "
+      register: _ocm_iam_create_result
+      no_log: true
+      failed_when: false
+      changed_when: >-
+        _ocm_iam_create_result.rc == 0 and
+        (_ocm_iam_create_result.stdout | from_json).created | default(false) | bool
+      environment:
+        AWS_ACCESS_KEY_ID: "{{ AWS_ACCESS_KEY_ID }}"
+        AWS_SECRET_ACCESS_KEY: "{{ AWS_SECRET_ACCESS_KEY }}"
+        AWS_DEFAULT_REGION: "{{ aws_region | default('us-west-2') }}"
+        OCM_IAM_ROLE_NAME: "{{ _ocm_iam_role_name }}"
+        OCM_TRUST_ACCOUNT_ID: "{{ _ocm_trust_account_id }}"
+        OCM_EXTERNAL_ID: "{{ _ocm_org_id }}"
+
+    - name: Fail if IAM role creation failed
+      ansible.builtin.fail:
+        msg: |
+          OCM Role Pre-flight Check FAILED: Unable to create IAM role.
+
+          Role Name: ****{{ _ocm_iam_role_name[-4:] }}
+          AWS Account: ****{{ aws_account_id[-4:] }}
+          Error: IAM operation failed (run with -v for details)
+
+          Remediation:
+          1. Verify AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY have IAM permissions
+          2. Required permissions: iam:CreateRole, iam:AttachRolePolicy, iam:GetRole
+          3. Check if the OCMRole already exists with conflicting settings
+          4. Manual creation:
+             aws iam create-role --role-name <OCMRole-name> \
+               --assume-role-policy-document '<trust-policy-json>'
+             aws iam attach-role-policy --role-name <OCMRole-name> \
+               --policy-arn arn:aws:iam::aws:policy/AdministratorAccess
+      when: _ocm_iam_create_result.rc | default(1) != 0
+
+    - name: Set OCM role ARN fact
+      ansible.builtin.set_fact:
+        _ocm_role_arn: "{{ (_ocm_iam_create_result.stdout | from_json).arn }}"
+      no_log: true
+
+    - name: Display IAM role creation result
+      ansible.builtin.debug:
+        msg: >-
+          IAM role ****{{ _ocm_iam_role_name[-4:] }}:
+          {{ 'already existed' if not ((_ocm_iam_create_result.stdout | from_json).created | bool) else 'created successfully' }}
+          (ARN: ****{{ _ocm_role_arn[-20:] }})
+
+    # ================================================================
+    # STEP 5: Link role to OCM organization
+    # ================================================================
+    - name: Link OCM role ARN to organization
+      ansible.builtin.uri:
+        url: "{{ OCM_API_URL }}/api/accounts_mgmt/v1/organizations/{{ _ocm_org_id }}/labels"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ _ocm_bearer }}"
+          Content-Type: "application/json"
+          Accept: "application/json"
+        body_format: json
+        body:
+          key: "ocm_role_arn"
+          value: "{{ _ocm_role_arn }}"
+        status_code: [200, 201]
+        return_content: true
+      register: _ocm_link_result
+      no_log: true
+      failed_when: false
+
+    - name: Fail if OCM role linkage failed
+      ansible.builtin.fail:
+        msg: |
+          OCM Role Pre-flight Check FAILED: Unable to link IAM role to OCM organization.
+
+          Organization ID: ****{{ _ocm_org_id[-4:] }}
+          Role ARN: ****{{ _ocm_role_arn[-20:] }}
+          HTTP status: {{ _ocm_link_result.status | default('N/A') }}
+
+          Remediation:
+          1. Ensure the service account has permission to write organization labels
+          2. Check if the label 'ocm_role_arn' already exists with a different value
+          3. Manual linkage via OCM API:
+             curl -X POST '<OCM_API_URL>/api/accounts_mgmt/v1/organizations/<org_id>/labels' \
+               -H 'Authorization: Bearer <token>' \
+               -H 'Content-Type: application/json' \
+               -d '{"key":"ocm_role_arn","value":"<role_arn>"}'
+      when: _ocm_link_result.status | default(0) | int not in [200, 201]
+
+    - name: Display OCM role linkage result
+      ansible.builtin.debug:
+        msg: "OCM role linked successfully: ****{{ _ocm_role_arn[-20:] }} -> organization ****{{ _ocm_org_id[-4:] }}"
+
+  rescue:
+    - name: Fail with remediation guidance
+      ansible.builtin.fail:
+        msg: |
+          OCM Role Pre-flight Check FAILED.
+
+          Failed task: {{ ansible_failed_task.name | default('unknown') }}
+          Error: {{ ansible_failed_result.msg | default(ansible_failed_result.stderr | default('unknown error')) }}
+
+          Organization ID: ****{{ (_ocm_org_id | default('unknown'))[-4:] }}
+          AWS Account ID: ****{{ aws_account_id[-4:] }}
+
+          Manual Remediation Steps:
+          1. Create IAM role manually:
+             aws iam create-role --role-name <OCMRole-name> \
+               --assume-role-policy-document '<trust-policy-json>'
+          2. Attach policy:
+             aws iam attach-role-policy --role-name <OCMRole-name> \
+               --policy-arn arn:aws:iam::aws:policy/AdministratorAccess
+          3. Link to OCM via console.redhat.com or the OCM API
+
+# ================================================================
+# STEP 6: Verify linkage
+# ================================================================
+- name: Verify OCM role linkage (re-query)
+  when: not (_ocm_role_linked | bool)
+  block:
+    - name: Wait for OCM label propagation
+      ansible.builtin.pause:
+        seconds: 5
+
+    - name: Re-query OCM organization labels for verification
+      ansible.builtin.uri:
+        url: "{{ OCM_API_URL }}/api/accounts_mgmt/v1/organizations/{{ _ocm_org_id }}/labels"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ _ocm_bearer }}"
+          Accept: "application/json"
+        status_code: [200]
+        return_content: true
+      register: _ocm_verify_labels
+      no_log: true
+      failed_when: false
+
+    - name: Verify OCM role is now linked
+      ansible.builtin.set_fact:
+        _ocm_role_verified: >-
+          {{ (_ocm_verify_labels.content | from_json)['items']
+             | default([], true)
+             | selectattr('key', 'equalto', 'ocm_role_arn')
+             | selectattr('value', 'search', 'arn:aws:iam::' ~ aws_account_id ~ ':role/')
+             | list
+             | length > 0 }}
+      no_log: true
+
+    - name: Fail if verification failed
+      ansible.builtin.fail:
+        msg: |
+          OCM Role Pre-flight Check FAILED: Verification after linkage did not confirm role.
+
+          Organization ID: ****{{ _ocm_org_id[-4:] }}
+          AWS Account ID: ****{{ aws_account_id[-4:] }}
+          Expected role ARN pattern: arn:aws:iam::****{{ aws_account_id[-4:] }}:role/OCMRole-****
+
+          The role was created and the link API call succeeded, but re-querying
+          the organization labels did not find the expected ocm_role_arn label.
+
+          Remediation:
+          1. Check OCM organization labels manually:
+             curl '<OCM_API_URL>/api/accounts_mgmt/v1/organizations/<org_id>/labels' \
+               -H 'Authorization: Bearer <token>'
+          2. Verify the label was persisted in console.redhat.com
+          3. Retry the playbook - this may be a transient API issue
+      when: not (_ocm_role_verified | bool)
+
+# ================================================================
+# STEP 7: Display result
+# ================================================================
+- name: Set final OCM role ARN for display
+  ansible.builtin.set_fact:
+    _ocm_final_role_arn: >-
+      {{ _ocm_existing_role_arn if (_ocm_role_linked | bool) else _ocm_role_arn | default('unknown') }}
+  no_log: true
+
+- name: Display OCM role pre-flight check result
+  ansible.builtin.debug:
+    msg: |
+      Pre-flight Check: OCM Role Linkage
+      ===================================
+      Status: PASSED
+      Organization ID: ****{{ _ocm_org_id[-4:] }}
+      AWS Account: ****{{ aws_account_id[-4:] }}
+      Role ARN: ****{{ _ocm_final_role_arn[-20:] }}
+      Linked: {{ 'Already linked (no changes)' if (_ocm_role_linked | bool) else 'Newly created and linked' }}
