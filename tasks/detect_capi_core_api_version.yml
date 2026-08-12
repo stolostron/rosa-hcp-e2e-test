@@ -1,0 +1,35 @@
+---
+# Detect whether the hub serves v1beta2 for core CAPI resources
+# (cluster.x-k8s.io: Cluster, MachinePool).
+#
+# Sets facts:
+#   capi_core_api_version: "v1beta2" or "v1beta1"
+#   capi_core_v1beta2:     true or false
+
+- name: Check Cluster CRD served versions
+  shell: >
+    oc get crd clusters.cluster.x-k8s.io -o json |
+    python3 -c "import json,sys; print(' '.join(v['name'] for v in json.load(sys.stdin)['spec']['versions'] if v.get('served',False)))"
+  register: _capi_cluster_crd_versions
+  changed_when: false
+
+- name: Check MachinePool CRD served versions
+  shell: >
+    oc get crd machinepools.cluster.x-k8s.io -o json |
+    python3 -c "import json,sys; print(' '.join(v['name'] for v in json.load(sys.stdin)['spec']['versions'] if v.get('served',False)))"
+  register: _capi_machinepool_crd_versions
+  changed_when: false
+
+- name: Determine core CAPI API version
+  set_fact:
+    capi_core_api_version: >-
+      {{ 'v1beta2' if ('v1beta2' in _capi_cluster_crd_versions.stdout and 'v1beta2' in _capi_machinepool_crd_versions.stdout) else 'v1beta1' }}
+    capi_core_v1beta2: >-
+      {{ ('v1beta2' in _capi_cluster_crd_versions.stdout and 'v1beta2' in _capi_machinepool_crd_versions.stdout) | bool }}
+
+- name: Display detected core CAPI API version
+  debug:
+    msg: >-
+      Core CAPI API version: {{ capi_core_api_version }}
+      (Cluster CRD: {{ _capi_cluster_crd_versions.stdout | trim }},
+       MachinePool CRD: {{ _capi_machinepool_crd_versions.stdout | trim }})

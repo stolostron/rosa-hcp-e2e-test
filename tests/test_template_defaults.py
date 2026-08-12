@@ -135,13 +135,25 @@ def test_machinepool_replicas_greater_than_zero(template):
 @pytest.mark.parametrize("template", ALL_J2_TEMPLATES, ids=_template_id)
 def test_machinepool_uses_correct_api_version(template):
     text = template.read_text()
-    pattern = r'apiVersion:\s*(cluster\.x-k8s\.io/v\w+)\s*\nkind:\s*MachinePool'
-    matches = re.findall(pattern, text)
+    has_machinepool = "kind: MachinePool" in text or "kind:  MachinePool" in text
+    if not has_machinepool:
+        return
     is_422_or_later = "/4.22/" in str(template) or "/4.23/" in str(template)
-    expected = "cluster.x-k8s.io/v1beta2" if is_422_or_later else "cluster.x-k8s.io/v1beta1"
-    for api_version in matches:
-        assert api_version == expected, \
-            f"{template.name}: MachinePool should use {expected}, got {api_version}"
+    if is_422_or_later:
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("apiVersion:") and "cluster.x-k8s.io" in stripped:
+                idx = text.splitlines().index(line)
+                next_lines = text.splitlines()[idx + 1:idx + 3]
+                if any("kind: MachinePool" in nl or "kind:  MachinePool" in nl for nl in next_lines):
+                    assert "capi_core_api_version" in stripped, \
+                        f"{template.name}: MachinePool apiVersion should use capi_core_api_version variable, got: {stripped}"
+    else:
+        pattern = r'apiVersion:\s*(cluster\.x-k8s\.io/v\w+)\s*\nkind:\s*MachinePool'
+        matches = re.findall(pattern, text)
+        for api_version in matches:
+            assert api_version == "cluster.x-k8s.io/v1beta1", \
+                f"{template.name}: MachinePool should use v1beta1, got {api_version}"
 
 
 # ================================================================
