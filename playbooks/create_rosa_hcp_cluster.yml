@@ -58,12 +58,12 @@
           skip: true
 
     - name: Set cluster credentials
+      no_log: true
       set_fact:
         ocp_user: "{{ lookup('env', 'OCP_HUB_CLUSTER_USER') | default(OCP_HUB_CLUSTER_USER, true) }}"
         ocp_password: "{{ lookup('env', 'OCP_HUB_CLUSTER_PASSWORD') | default(OCP_HUB_CLUSTER_PASSWORD, true) }}"
         api_url: "{{ lookup('env', 'OCP_HUB_API_URL') | default(OCP_HUB_API_URL, true) }}"
         mce_namespace: "{{ lookup('env', 'MCE_NAMESPACE') | default(mce_namespace, true) }}"
-      no_log: true
       when: deployment_mode != 'standalone'
 
     - name: Set AWS credentials
@@ -153,7 +153,7 @@
       set_fact:
         network_cidr: "{{ vpc_cidr_block }}"
         create_rosa_roles: "{{ create_rosa_role_config }}"
-        rosa_role_prefix: "{{ role_prefix | default(domain_prefix) }}"
+        rosa_role_prefix: "{{ role_prefix | default(domain_prefix, true) }}"
         rosa_role_config_name: "{{ cluster_name }}-roles"
         rosa_network_name: "{{ cluster_name }}-network"
 
@@ -165,9 +165,35 @@
       include_tasks: ../tasks/login_ocp.yml
       when: deployment_mode != 'standalone'
 
+    - name: Check if CAPI/CAPA controllers are already running
+      shell: >
+        oc get deploy capi-controller-manager capa-controller-manager
+        -n {{ mce_namespace | default('multicluster-engine') }}
+        -o jsonpath='{range .items[*]}{.metadata.name}{"="}{.status.readyReplicas}{"\n"}{end}'
+      register: capa_controllers_check
+      failed_when: false
+      changed_when: false
+      when: deployment_mode != 'standalone'
+
+    - name: Set CAPI/CAPA already configured flag
+      set_fact:
+        capa_already_configured: >-
+          {{ (capa_controllers_check.stdout_lines | default([]) | select('match', '^capi-controller-manager=[1-9]') | list | length > 0)
+             and (capa_controllers_check.stdout_lines | default([]) | select('match', '^capa-controller-manager=[1-9]') | list | length > 0) }}
+      when: deployment_mode != 'standalone'
+
     - name: Configure MCE CAPI/CAPA Environment
       include_tasks: ../tasks/configure-capa-environment.yml
-      when: deployment_mode != 'standalone'
+      when:
+        - deployment_mode != 'standalone'
+        - not (capa_already_configured | default(false) | bool)
+
+    - name: Skip configure (already running)
+      debug:
+        msg: "CAPI/CAPA controllers already running — skipping configuration"
+      when:
+        - deployment_mode != 'standalone'
+        - capa_already_configured | default(false) | bool
 
     - name: Display automation configuration
       debug:
