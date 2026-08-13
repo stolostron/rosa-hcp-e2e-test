@@ -60,6 +60,8 @@
 //   - Stage 7 (Upgrade ROSA CP): Only runs if Stage 3 succeeds AND RUN_UPGRADE_TESTS=true
 //   - Stage 8 (Upgrade ROSA MP): Only runs if Stage 7 succeeds AND RUN_UPGRADE_TESTS=true
 //   - Stage 9 (Delete): Only runs if provisioning succeeded AND CLEANUP_AFTER_TEST=true (runs even if upgrades fail)
+//   - Stage 9b (Best-effort Cleanup): If CLEANUP_AFTER_TEST=true but normal delete was skipped
+//     (e.g., provisioning failed), attempts best-effort cleanup to avoid leaking AWS resources
 //   - Stage 10 (Restore HyperShift): Runs if RESTORE_HYPERSHIFT=true (default) — disables CAPI/CAPA, re-enables HyperShift
 //   - Stage 11 (Archive): Archives all test results as JUnit XML for Jenkins reporting
 //
@@ -268,6 +270,7 @@ pipeline {
                             string(credentialsId: 'CAPI_OCM_CLIENT_ID', variable: 'OCM_CLIENT_ID'),
                             string(credentialsId: 'CAPI_OCM_CLIENT_SECRET', variable: 'OCM_CLIENT_SECRET')
                         ]) {
+                            env.PROVISION_STARTED = 'true'
                             sh '''
                                 cd rosa-hcp-e2e-test
                                 # Build feature flags from CLUSTER_FEATURES parameter
@@ -567,10 +570,8 @@ pipeline {
                             // Add timeout for deletion (can take 30-50 minutes)
                             timeout(time: 60, unit: 'MINUTES') {
                                 sh '''
+                                    set +x
                                     cd rosa-hcp-e2e-test
-                                    # Execute the ROSA HCP deletion test suite
-                                    # Pass all required credentials and parameters (same as provisioning)
-                                    # AI agents enabled for autonomous issue detection and remediation
                                     ./run-test-suite.py 30-rosa-hcp-delete --format junit -v --ai-agent \
                                       -e OCP_HUB_API_URL="${OCP_HUB_API_URL}" \
                                       -e OCP_HUB_CLUSTER_USER="${OCP_HUB_CLUSTER_USER}" \
@@ -583,11 +584,63 @@ pipeline {
                         }
                         // Archive deletion test results, including AI agent logs
                         archiveArtifacts artifacts: 'rosa-hcp-e2e-test/test-results/**/*, rosa-hcp-e2e-test/agents/knowledge_base/intervention_log.json', allowEmptyArchive: true, followSymlinks: false, fingerprint: true
+                        env.CLEANUP_DONE = 'true'
                     }
                     catch (ex) {
                         echo 'ROSA HCP Deletion Tests failed or timed out'
                         echo 'WARNING: Cluster may still exist and require manual cleanup'
                         currentBuild.result = 'UNSTABLE'
+                        env.CLEANUP_DONE = 'true'
+                    }
+                }
+            }
+        }
+        stage('Best-effort Cleanup') {
+            when {
+                allOf {
+                    expression { params.CLEANUP_AFTER_TEST == true }
+                    expression { env.PROVISION_STARTED == 'true' }
+                    expression { env.CLEANUP_DONE != 'true' }
+                }
+            }
+            environment {
+                OCP_HUB_API_URL = "${params.OCP_HUB_API_URL}"
+                OCP_HUB_CLUSTER_USER = "${params.OCP_HUB_CLUSTER_USER}"
+                MCE_NAMESPACE = "${params.MCE_NAMESPACE}"
+            }
+            steps {
+                script {
+                    echo 'Normal delete stage did not run — attempting best-effort cleanup'
+                    try {
+                        withCredentials([
+                            string(credentialsId: 'CAPI_AWS_ACCESS_KEY_ID', variable: 'AWS_ACCESS_KEY_ID'),
+                            string(credentialsId: 'CAPI_AWS_SECRET_ACCESS_KEY', variable: 'AWS_SECRET_ACCESS_KEY'),
+                            string(credentialsId: 'CAPI_AWS_ACCOUNT_ID', variable: 'AWS_ACCOUNT_ID'),
+                            string(credentialsId: 'CAPI_OCM_CLIENT_ID', variable: 'OCM_CLIENT_ID'),
+                            string(credentialsId: 'CAPI_OCM_CLIENT_SECRET', variable: 'OCM_CLIENT_SECRET')
+                        ]) {
+                            timeout(time: 60, unit: 'MINUTES') {
+                                sh '''
+                                    set +x
+                                    cd rosa-hcp-e2e-test
+                                    ./run-test-suite.py 30-rosa-hcp-delete --format junit -v --ai-agent \
+                                      -e OCP_HUB_API_URL="${OCP_HUB_API_URL}" \
+                                      -e OCP_HUB_CLUSTER_USER="${OCP_HUB_CLUSTER_USER}" \
+                                      -e MCE_NAMESPACE="${MCE_NAMESPACE}" \
+                                      -e AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID}" \
+                                      -e AWS_REGION="us-west-2" \
+                                      -e name_prefix="${NAME_PREFIX}"
+                                '''
+                            }
+                        }
+                        archiveArtifacts artifacts: 'rosa-hcp-e2e-test/test-results/**/*, rosa-hcp-e2e-test/agents/knowledge_base/intervention_log.json', allowEmptyArchive: true, followSymlinks: false, fingerprint: true
+                        env.CLEANUP_DONE = 'true'
+                    }
+                    catch (ex) {
+                        echo 'Best-effort cleanup failed or timed out'
+                        echo 'WARNING: Cluster may still exist and require manual cleanup'
+                        currentBuild.result = 'UNSTABLE'
+                        env.CLEANUP_DONE = 'true'
                     }
                 }
             }
