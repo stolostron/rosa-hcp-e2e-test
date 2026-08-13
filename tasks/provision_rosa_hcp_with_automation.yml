@@ -178,6 +178,24 @@
         msg: "✅ AWS credentials are present and will be validated during resource creation"
 
 # ================================================================
+# PRE-STEP: Ensure target namespace exists
+# ================================================================
+# The namespace is normally created by the configure-capa-environment role
+# (Step 3). However, if any earlier step in that role fails (e.g., CAPI
+# controllers not ready in Step 2), the namespace is never created and
+# subsequent oc apply commands fail with "namespace not found".
+#
+# This idempotent check ensures the namespace exists regardless of whether
+# configure-capa-environment completed successfully, making the provisioning
+# suite resilient to partial environment setup.
+# ================================================================
+- name: "Pre-flight: Ensure target namespace {{ rosa_hcp_namespace }} exists"
+  shell: |
+    oc create namespace {{ rosa_hcp_namespace }} --dry-run=client -o yaml | oc apply -f -
+  register: ns_preflight_result
+  changed_when: "'created' in ns_preflight_result.stdout or 'configured' in ns_preflight_result.stdout"
+
+# ================================================================
 # STEP 1: Create RosaRoleConfig (if requested)
 # ================================================================
 - name: Create RosaRoleConfig for automated AWS role creation
