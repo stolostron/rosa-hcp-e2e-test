@@ -75,6 +75,7 @@
           --include-crds \
           --namespace capi-system \
           --set ocp.enabled=true \
+          --set manager.image.url=registry.stage.redhat.io/openshift5/ose-cluster-api-rhel9 \
         | sed '/--watch-filter=multicluster-engine/d' \
         | oc apply -n capi-system -f - --server-side --force-conflicts
       args:
