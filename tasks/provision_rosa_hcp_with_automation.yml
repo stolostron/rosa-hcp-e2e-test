@@ -111,6 +111,9 @@
 - name: Resolve OpenShift version from OCM API
   include_tasks: resolve_ocm_version.yml
 
+- name: Detect core CAPI API version on hub cluster
+  include_tasks: detect_capi_core_api_version.yml
+
 - name: Display provisioning plan
   debug:
     msg: |

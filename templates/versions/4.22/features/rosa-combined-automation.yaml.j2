@@ -12,7 +12,7 @@ spec:
   hubAcceptsClient: true
 ---
 {% endif %}
-apiVersion: cluster.x-k8s.io/v1beta2
+apiVersion: cluster.x-k8s.io/{{ capi_core_api_version | default('v1beta1') }}
 kind: Cluster
 metadata:
   name: {{ cluster_name }}
@@ -26,11 +26,21 @@ spec:
     pods:
       cidrBlocks: ["{{ cluster_network.pod_cidr | default('10.128.0.0/14') }}"]
   infrastructureRef:
+{% if capi_core_api_version | default('v1beta1') == 'v1beta2' %}
     apiGroup: infrastructure.cluster.x-k8s.io
+{% else %}
+    apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+    namespace: {{ rosa_hcp_namespace }}
+{% endif %}
     kind: ROSACluster
     name: {{ cluster_name }}
   controlPlaneRef:
+{% if capi_core_api_version | default('v1beta1') == 'v1beta2' %}
     apiGroup: controlplane.cluster.x-k8s.io
+{% else %}
+    apiVersion: controlplane.cluster.x-k8s.io/v1beta2
+    namespace: {{ rosa_hcp_namespace }}
+{% endif %}
     kind: ROSAControlPlane
     name: {{ cluster_name }}
 ---
@@ -247,7 +257,7 @@ spec:
 {% endif %}
 
 ---
-apiVersion: cluster.x-k8s.io/v1beta2
+apiVersion: cluster.x-k8s.io/{{ capi_core_api_version | default('v1beta1') }}
 kind: MachinePool
 metadata:
   name: {{ cluster_name }}
@@ -265,7 +275,12 @@ spec:
       bootstrap:
         dataSecretName: ""
       infrastructureRef:
+{% if capi_core_api_version | default('v1beta1') == 'v1beta2' %}
         apiGroup: infrastructure.cluster.x-k8s.io
+{% else %}
+        apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+        namespace: {{ rosa_hcp_namespace }}
+{% endif %}
         kind: ROSAMachinePool
         name: {{ cluster_name }}
 ---
