@@ -189,6 +189,11 @@
 # configure-capa-environment completed successfully, making the provisioning
 # suite resilient to partial environment setup.
 # ================================================================
+- name: "Pre-flight: Validate rosa_hcp_namespace is a safe DNS-1123 name"
+  assert:
+    that: rosa_hcp_namespace is match('^[a-z0-9][a-z0-9\-]{0,61}[a-z0-9]$')
+    fail_msg: "rosa_hcp_namespace '{{ rosa_hcp_namespace }}' is not a valid Kubernetes namespace name"
+
 - name: "Pre-flight: Ensure target namespace {{ rosa_hcp_namespace }} exists"
   shell: |
     oc create namespace {{ rosa_hcp_namespace }} --dry-run=client -o yaml | oc apply -f -
