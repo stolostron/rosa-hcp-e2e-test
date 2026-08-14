@@ -491,6 +491,7 @@ class DiagnosticAgent(BaseAgent):
     def _diagnose_cloudformation_failure(self, context: Dict) -> Dict:
         """Diagnose CloudFormation stack deletion failure."""
         self.log("Analyzing CloudFormation failure...", "debug")
+
         return {
             "issue_type": "cloudformation_deletion_failure",
             "root_cause": "CloudFormation stack failed to delete, likely due to orphaned resources",
