@@ -36,19 +36,20 @@
 
 - name: Discover ROSANetwork by label or name
   shell: |
-    COUNT=$(oc get rosanetwork -n {{ rosa_hcp_namespace }} \
-      -l cluster.x-k8s.io/cluster-name={{ cluster_name }} \
+    COUNT=$(oc get rosanetwork -n {{ rosa_hcp_namespace | quote }} \
+      -l cluster.x-k8s.io/cluster-name={{ cluster_name | quote }} \
       -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null \
       | grep -c . || echo "0")
     COUNT=${COUNT:-0}
     if [ "$COUNT" -gt 1 ]; then
-      echo "WARNING: Found $COUNT ROSANetwork resources with label cluster.x-k8s.io/cluster-name={{ cluster_name }} — using first" >&2
+      echo "ERROR: Found $COUNT ROSANetwork resources with label cluster.x-k8s.io/cluster-name={{ cluster_name | quote }} — cannot safely determine target. Aborting." >&2
+      exit 1
     fi
-    FOUND=$(oc get rosanetwork -n {{ rosa_hcp_namespace }} \
-      -l cluster.x-k8s.io/cluster-name={{ cluster_name }} \
+    FOUND=$(oc get rosanetwork -n {{ rosa_hcp_namespace | quote }} \
+      -l cluster.x-k8s.io/cluster-name={{ cluster_name | quote }} \
       -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
     if [ -z "$FOUND" ]; then
-      FOUND=$(oc get rosanetwork {{ rosa_network_name }} -n {{ rosa_hcp_namespace }} \
+      FOUND=$(oc get rosanetwork {{ rosa_network_name | quote }} -n {{ rosa_hcp_namespace | quote }} \
         -o jsonpath='{.metadata.name}' 2>/dev/null)
     fi
     echo "${FOUND:-not-found}"
@@ -59,21 +60,38 @@
   set_fact:
     discovered_rosa_network_name: "{{ rn_exists.stdout | trim }}"
 
+- name: Get ROSANetwork stack name from resource spec
+  shell: |
+    oc get rosanetwork {{ discovered_rosa_network_name | quote }} \
+      -n {{ rosa_hcp_namespace | quote }} \
+      -o jsonpath='{.spec.stackName}' 2>/dev/null || true
+  register: rn_stack_name_raw
+  changed_when: false
+  when: discovered_rosa_network_name != 'not-found'
+
+- name: Set discovered CF stack name
+  set_fact:
+    discovered_cf_stack_name: >-
+      {{ rn_stack_name_raw.stdout | default('') | trim
+         if (discovered_rosa_network_name != 'not-found' and rn_stack_name_raw.stdout | default('') | trim != '')
+         else cluster_name + '-rosa-network-stack' }}
+
 - name: Discover ROSARoleConfig by label or name
   shell: |
-    COUNT=$(oc get rosaroleconfig -n {{ rosa_hcp_namespace }} \
-      -l cluster.x-k8s.io/cluster-name={{ cluster_name }} \
+    COUNT=$(oc get rosaroleconfig -n {{ rosa_hcp_namespace | quote }} \
+      -l cluster.x-k8s.io/cluster-name={{ cluster_name | quote }} \
       -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null \
       | grep -c . || echo "0")
     COUNT=${COUNT:-0}
     if [ "$COUNT" -gt 1 ]; then
-      echo "WARNING: Found $COUNT ROSARoleConfig resources with label cluster.x-k8s.io/cluster-name={{ cluster_name }} — using first" >&2
+      echo "ERROR: Found $COUNT ROSARoleConfig resources with label cluster.x-k8s.io/cluster-name={{ cluster_name | quote }} — cannot safely determine target. Aborting." >&2
+      exit 1
     fi
-    FOUND=$(oc get rosaroleconfig -n {{ rosa_hcp_namespace }} \
-      -l cluster.x-k8s.io/cluster-name={{ cluster_name }} \
+    FOUND=$(oc get rosaroleconfig -n {{ rosa_hcp_namespace | quote }} \
+      -l cluster.x-k8s.io/cluster-name={{ cluster_name | quote }} \
       -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
     if [ -z "$FOUND" ]; then
-      FOUND=$(oc get rosaroleconfig {{ rosa_role_config_name }} -n {{ rosa_hcp_namespace }} \
+      FOUND=$(oc get rosaroleconfig {{ rosa_role_config_name | quote }} -n {{ rosa_hcp_namespace | quote }} \
         -o jsonpath='{.metadata.name}' 2>/dev/null)
     fi
     echo "${FOUND:-not-found}"
@@ -255,13 +273,12 @@
     - discovered_rosa_network_name != 'not-found'
 
 - name: Wait for ROSANetwork deletion to complete
-  no_log: true
   environment:
     AWS_ACCESS_KEY_ID: "{{ AWS_ACCESS_KEY_ID | default(omit) }}"
     AWS_SECRET_ACCESS_KEY: "{{ AWS_SECRET_ACCESS_KEY | default(omit) }}"
   shell: |
     LOGFILE="{{ agent_monitor_log }}"
-    STACK_NAME="{{ cluster_name }}-rosa-network-stack"
+    STACK_NAME="{{ discovered_cf_stack_name | default(cluster_name + '-rosa-network-stack') }}"
     REGION="{{ aws_region | default('us-west-2') }}"
     RETRIES={{ (rosanetwork_timeout | default(deletion_timeout) | int / 10) | int }}
     ITERATION_COUNT=0
@@ -469,7 +486,7 @@
     AWS_SECRET_ACCESS_KEY: "{{ AWS_SECRET_ACCESS_KEY | default(omit) }}"
   shell: |
     LOGFILE="{{ agent_monitor_log }}"
-    STACK_NAME="{{ cluster_name }}-rosa-network-stack"
+    STACK_NAME="{{ discovered_cf_stack_name | default(cluster_name + '-rosa-network-stack') }}"
     REGION="{{ aws_region | default('us-west-2') }}"
     NETWORK_NAME="{{ discovered_rosa_network_name }}"
     NAMESPACE="{{ rosa_hcp_namespace }}"
