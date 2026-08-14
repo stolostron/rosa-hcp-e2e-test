@@ -5,25 +5,25 @@
 # to be fully ready before proceeding with configuration
 # ======================================================
 
-- name: Wait for CAPI controller to be ready
+- name: CAPI controller readiness check
   block:
     - name: Wait for CAPI controller deployment to be created
       shell: |
         oc --context='{{ ocp_context }}' get deploy -n {{ capi_namespace }} -ojson |\
-        jq -r '.items[] | select(.metadata.name | contains("capi-controller-manager")) | .metadata.name'
+        jq -r '.items[] | select(.metadata.name | contains("capi-controller-manager")) | .metadata.name' | head -n1
       register: capi_deploy_check
-      until: capi_deploy_check.stdout | length > 0
+      until: capi_deploy_check.stdout | trim | length > 0
       retries: 30
       delay: 10
       changed_when: false
 
     - name: Display CAPI controller deployment found
       debug:
-        msg: "✓ CAPI controller deployment found: {{ capi_deploy_check.stdout }}"
+        msg: "✓ CAPI controller deployment found: {{ capi_deploy_check.stdout | trim }}"
 
     - name: Wait for CAPI controller to be ready
       shell: |
-        oc --context='{{ ocp_context }}' get deploy {{ capi_deploy_check.stdout }} -n {{ capi_namespace }} -ojson |\
+        oc --context='{{ ocp_context }}' get deploy {{ capi_deploy_check.stdout | trim }} -n {{ capi_namespace }} -ojson |\
         jq -r 'if (.status.availableReplicas // 0) > 0 and (.status.availableReplicas == .status.replicas) then "ready" else "not ready" end'
       register: capi_ready_check
       until: capi_ready_check.stdout == "ready"
@@ -33,7 +33,7 @@
 
     - name: Display CAPI controller ready status
       debug:
-        msg: "✅ CAPI controller is READY - {{ capi_deploy_check.stdout }}"
+        msg: "✅ CAPI controller is READY - {{ capi_deploy_check.stdout | trim }}"
 
   rescue:
     - name: Gather CAPI controller pod diagnostics
@@ -45,10 +45,10 @@
         oc --context='{{ ocp_context }}' get pods -n {{ capi_namespace }} || true
         echo ""
         echo "=== CAPI Pod Details ==="
-        oc --context='{{ ocp_context }}' describe pods -n {{ capi_namespace }} | grep -A 20 'Events:\|State:\|Reason:\|Message:' || true
+        oc --context='{{ ocp_context }}' describe pods -n {{ capi_namespace }} | grep -E -A 20 'Events:|State:|Reason:|Message:' | head -100 || true
         echo ""
         echo "=== CAPI Recent Events ==="
-        oc --context='{{ ocp_context }}' get events -n {{ capi_namespace }} --sort-by='.lastTimestamp' | tail -20 || true
+        oc --context='{{ ocp_context }}' get events -n {{ capi_namespace }} --sort-by='.metadata.creationTimestamp' | tail -20 || true
       register: capi_diagnostics
       changed_when: false
       failed_when: false
@@ -59,27 +59,27 @@
           ❌ CAPI controller failed to become ready in {{ capi_namespace }}.
           Check the CAPI installation — likely cause is an image pull failure or crash loop.
 
-          {{ capi_diagnostics.stdout }}
+          {{ capi_diagnostics.stdout | default('(no diagnostic output collected)') }}
 
-- name: Wait for CAPA controller to be ready
+- name: CAPA controller readiness check
   block:
     - name: Wait for CAPA controller deployment to be created
       shell: |
         oc --context='{{ ocp_context }}' get deploy -n {{ capa_namespace }} -ojson |\
-        jq -r '.items[] | select(.metadata.name | contains("capa-controller-manager")) | .metadata.name'
+        jq -r '.items[] | select(.metadata.name | contains("capa-controller-manager")) | .metadata.name' | head -n1
       register: capa_deploy_check
-      until: capa_deploy_check.stdout | length > 0
+      until: capa_deploy_check.stdout | trim | length > 0
       retries: 30
       delay: 10
       changed_when: false
 
     - name: Display CAPA controller deployment found
       debug:
-        msg: "✓ CAPA controller deployment found: {{ capa_deploy_check.stdout }}"
+        msg: "✓ CAPA controller deployment found: {{ capa_deploy_check.stdout | trim }}"
 
     - name: Wait for CAPA controller to be ready
       shell: |
-        oc --context='{{ ocp_context }}' get deploy {{ capa_deploy_check.stdout }} -n {{ capa_namespace }} -ojson |\
+        oc --context='{{ ocp_context }}' get deploy {{ capa_deploy_check.stdout | trim }} -n {{ capa_namespace }} -ojson |\
         jq -r 'if (.status.availableReplicas // 0) > 0 and (.status.availableReplicas == .status.replicas) then "ready" else "not ready" end'
       register: capa_ready_check
       until: capa_ready_check.stdout == "ready"
@@ -89,7 +89,7 @@
 
     - name: Display CAPA controller ready status
       debug:
-        msg: "✅ CAPA controller is READY - {{ capa_deploy_check.stdout }}"
+        msg: "✅ CAPA controller is READY - {{ capa_deploy_check.stdout | trim }}"
 
   rescue:
     - name: Gather CAPA controller pod diagnostics
@@ -101,10 +101,10 @@
         oc --context='{{ ocp_context }}' get pods -n {{ capa_namespace }} || true
         echo ""
         echo "=== CAPA Pod Details ==="
-        oc --context='{{ ocp_context }}' describe pods -n {{ capa_namespace }} | grep -A 20 'Events:\|State:\|Reason:\|Message:' || true
+        oc --context='{{ ocp_context }}' describe pods -n {{ capa_namespace }} | grep -E -A 20 'Events:|State:|Reason:|Message:' | head -100 || true
         echo ""
         echo "=== CAPA Recent Events ==="
-        oc --context='{{ ocp_context }}' get events -n {{ capa_namespace }} --sort-by='.lastTimestamp' | tail -20 || true
+        oc --context='{{ ocp_context }}' get events -n {{ capa_namespace }} --sort-by='.metadata.creationTimestamp' | tail -20 || true
       register: capa_diagnostics
       changed_when: false
       failed_when: false
@@ -115,7 +115,7 @@
           ❌ CAPA controller failed to become ready in {{ capa_namespace }}.
           Check the CAPA installation — likely cause is an image pull failure or crash loop.
 
-          {{ capa_diagnostics.stdout }}
+          {{ capa_diagnostics.stdout | default('(no diagnostic output collected)') }}
 
 - name: CAPA webhook readiness check
   block:
@@ -164,7 +164,7 @@
       ✅ ✅ ✅ CAPI/CAPA CONTROLLERS ARE READY! ✅ ✅ ✅
 
       Both controllers are deployed and available:
-      - {{ capi_deploy_check.stdout }}: Ready
-      - {{ capa_deploy_check.stdout }}: Ready
+      - {{ capi_deploy_check.stdout | trim }}: Ready
+      - {{ capa_deploy_check.stdout | trim }}: Ready
 
       Proceeding with configuration object creation...
