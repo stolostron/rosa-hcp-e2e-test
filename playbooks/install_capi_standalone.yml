@@ -43,6 +43,19 @@
       shell: |
         oc create namespace capa-system --dry-run=client -o yaml | oc apply -f -
 
+    - name: Create quay.io pull secret for CAPI controller image
+      shell: |
+        oc create secret docker-registry capi-manager-pull-credentials \
+          --docker-server=quay.io \
+          --docker-username="$QUAY_USER" \
+          --docker-password="$QUAY_PASS" \
+          -n capi-system --dry-run=client -o yaml | oc apply -f -
+      environment:
+        QUAY_USER: "{{ quay_username }}"
+        QUAY_PASS: "{{ quay_password }}"
+      when: quay_username != '' and quay_password != ''
+      no_log: true
+
     - name: Create quay.io pull secret for CAPA controller image
       shell: |
         oc create secret docker-registry capa-manager-pull-credentials \
@@ -75,11 +88,20 @@
           --include-crds \
           --namespace capi-system \
           --set ocp.enabled=true \
-          --set manager.image.url=registry.stage.redhat.io/openshift5/ose-cluster-api-rhel9 \
         | sed '/--watch-filter=multicluster-engine/d' \
         | oc apply -n capi-system -f - --server-side --force-conflicts
       args:
         executable: /bin/bash
+
+    - name: Link quay.io pull secret to CAPI controller service account
+      shell: |
+        oc secrets link capi-manager capi-manager-pull-credentials --for=pull -n capi-system
+      when: quay_username != '' and quay_password != ''
+
+    - name: Restart CAPI controller to pick up pull credentials
+      shell: |
+        oc rollout restart deployment/capi-controller-manager -n capi-system
+      when: quay_username != '' and quay_password != ''
 
     - name: Remove MCE webhook (not needed in standalone mode)
       shell: |
