@@ -98,6 +98,7 @@ pipeline {
         string(name:'OCP_HUB_CLUSTER_USER', defaultValue: 'kubeadmin', description: 'Hub OCP username')
         password(name:'OCP_HUB_CLUSTER_PASSWORD', defaultValue: '', description: 'Hub cluster password')
         string(name:'MCE_NAMESPACE', defaultValue: 'multicluster-engine', description: 'The Namespace where MCE is installed')
+        string(name:'OCM_API_URL', defaultValue: 'https://api.stage.openshift.com', description: 'OCM API URL (e.g. https://api.openshift.com or https://api.stage.openshift.com)')
         string(name:'OCM_CLIENT_ID', defaultValue: '', description: 'OCM client ID for ROSA provisioning')
         password(name:'OCM_CLIENT_SECRET', defaultValue: '', description: 'OCM client secret for ROSA provisioning')
         string(name:'TEST_GIT_BRANCH', defaultValue: 'main', description: 'Git branch to test (for reference/documentation)')
@@ -305,6 +306,7 @@ pipeline {
                                   -e AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID}" \
                                   -e AWS_REGION="us-west-2" \
                                   -e name_prefix="${NAME_PREFIX}" \
+                                  -e OCM_API_URL="${OCM_API_URL}" \
                                   ${EXTRA_VARS}
                             '''
                         }
