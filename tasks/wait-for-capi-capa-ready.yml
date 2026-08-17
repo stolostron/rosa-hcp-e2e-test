@@ -61,6 +61,46 @@
   debug:
     msg: "✅ CAPA controller is READY - {{ capa_deploy_check.stdout }}"
 
+- name: CAPA webhook readiness check
+  block:
+    - name: Wait for CAPA webhook service endpoints to be registered
+      shell: |
+        oc --context='{{ ocp_context }}' get endpoints capa-webhook-service \
+          -n {{ capa_namespace }} \
+          -o jsonpath='{.subsets[0].addresses[0].ip}' 2>/dev/null || echo ""
+      register: capa_webhook_check
+      until: capa_webhook_check.stdout | trim | length > 0
+      retries: 60
+      delay: 10
+      changed_when: false
+
+    - name: Display CAPA webhook ready status
+      debug:
+        msg: "✅ CAPA webhook service endpoint registered: {{ capa_webhook_check.stdout | trim }}"
+
+  rescue:
+    - name: Gather CAPA webhook diagnostics
+      shell: |
+        echo "=== capa-webhook-service Endpoints ==="
+        oc --context='{{ ocp_context }}' get endpoints capa-webhook-service -n {{ capa_namespace }} -o yaml || true
+        echo ""
+        echo "=== CAPA Pods ==="
+        oc --context='{{ ocp_context }}' get pods -n {{ capa_namespace }} || true
+        echo ""
+        echo "=== CAPA Pod Details ==="
+        oc --context='{{ ocp_context }}' describe pods -n {{ capa_namespace }} | grep -E -A 20 'Events:|State:|Reason:|Message:' | head -100 || true
+      register: capa_webhook_diagnostics
+      changed_when: false
+      failed_when: false
+
+    - name: Fail with CAPA webhook diagnostics
+      fail:
+        msg: |
+          ❌ CAPA webhook service never got endpoints in {{ capa_namespace }}.
+          The CAPA pod may be crash-looping or the webhook server failed to start.
+
+          {{ capa_webhook_diagnostics.stdout | default('(no diagnostic output collected)') }}
+
 - name: Controllers readiness summary
   debug:
     msg: |
