@@ -34,17 +34,73 @@
   register: rmp_exists
   changed_when: false
 
-- name: Check if ROSANetwork exists
+- name: Discover ROSANetwork by label or name
   shell: |
-    oc get rosanetwork {{ rosa_network_name }} -n {{ rosa_hcp_namespace }} -o name 2>/dev/null || echo "not-found"
+    COUNT=$(oc get rosanetwork -n {{ rosa_hcp_namespace | quote }} \
+      -l cluster.x-k8s.io/cluster-name={{ cluster_name | quote }} \
+      -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null \
+      | grep -c . || echo "0")
+    COUNT=${COUNT:-0}
+    if [ "$COUNT" -gt 1 ]; then
+      echo "ERROR: Found $COUNT ROSANetwork resources with label cluster.x-k8s.io/cluster-name={{ cluster_name | quote }} — cannot safely determine target. Aborting." >&2
+      exit 1
+    fi
+    FOUND=$(oc get rosanetwork -n {{ rosa_hcp_namespace | quote }} \
+      -l cluster.x-k8s.io/cluster-name={{ cluster_name | quote }} \
+      -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+    if [ -z "$FOUND" ]; then
+      FOUND=$(oc get rosanetwork {{ rosa_network_name | quote }} -n {{ rosa_hcp_namespace | quote }} \
+        -o jsonpath='{.metadata.name}' 2>/dev/null)
+    fi
+    echo "${FOUND:-not-found}"
   register: rn_exists
   changed_when: false
 
-- name: Check if ROSARoleConfig exists
+- name: Set discovered ROSANetwork name
+  set_fact:
+    discovered_rosa_network_name: "{{ rn_exists.stdout | trim }}"
+
+- name: Get ROSANetwork stack name from resource spec
   shell: |
-    oc get rosaroleconfig {{ rosa_role_config_name }} -n {{ rosa_hcp_namespace }} -o name 2>/dev/null || echo "not-found"
+    oc get rosanetwork {{ discovered_rosa_network_name | quote }} \
+      -n {{ rosa_hcp_namespace | quote }} \
+      -o jsonpath='{.spec.stackName}' 2>/dev/null || true
+  register: rn_stack_name_raw
+  changed_when: false
+  when: discovered_rosa_network_name != 'not-found'
+
+- name: Set discovered CF stack name
+  set_fact:
+    discovered_cf_stack_name: >-
+      {{ rn_stack_name_raw.stdout | default('') | trim
+         if (discovered_rosa_network_name != 'not-found' and rn_stack_name_raw.stdout | default('') | trim != '')
+         else cluster_name + '-rosa-network-stack' }}
+
+- name: Discover ROSARoleConfig by label or name
+  shell: |
+    COUNT=$(oc get rosaroleconfig -n {{ rosa_hcp_namespace | quote }} \
+      -l cluster.x-k8s.io/cluster-name={{ cluster_name | quote }} \
+      -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null \
+      | grep -c . || echo "0")
+    COUNT=${COUNT:-0}
+    if [ "$COUNT" -gt 1 ]; then
+      echo "ERROR: Found $COUNT ROSARoleConfig resources with label cluster.x-k8s.io/cluster-name={{ cluster_name | quote }} — cannot safely determine target. Aborting." >&2
+      exit 1
+    fi
+    FOUND=$(oc get rosaroleconfig -n {{ rosa_hcp_namespace | quote }} \
+      -l cluster.x-k8s.io/cluster-name={{ cluster_name | quote }} \
+      -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+    if [ -z "$FOUND" ]; then
+      FOUND=$(oc get rosaroleconfig {{ rosa_role_config_name | quote }} -n {{ rosa_hcp_namespace | quote }} \
+        -o jsonpath='{.metadata.name}' 2>/dev/null)
+    fi
+    echo "${FOUND:-not-found}"
   register: rrc_exists
   changed_when: false
+
+- name: Set discovered ROSARoleConfig name
+  set_fact:
+    discovered_rosa_role_config_name: "{{ rrc_exists.stdout | trim }}"
 
 - name: Display resource status
   debug:
@@ -53,8 +109,8 @@
       • Cluster: {{ 'Found' if 'not-found' not in cluster_exists.stdout else 'Not Found' }}
       • ROSAControlPlane: {{ 'Found' if 'not-found' not in rcp_exists.stdout else 'Not Found' }}
       • ROSAMachinePool: {{ 'Found' if 'not-found' not in rmp_exists.stdout else 'Not Found' }}
-      • ROSANetwork: {{ 'Found' if 'not-found' not in rn_exists.stdout else 'Not Found' }}
-      • ROSARoleConfig: {{ 'Found' if 'not-found' not in rrc_exists.stdout else 'Not Found' }}
+      • ROSANetwork: {{ 'Found (' + discovered_rosa_network_name + ')' if discovered_rosa_network_name != 'not-found' else 'Not Found' }}
+      • ROSARoleConfig: {{ 'Found (' + discovered_rosa_role_config_name + ')' if discovered_rosa_role_config_name != 'not-found' else 'Not Found' }}
 
 - name: Build list of resources to delete
   set_fact:
@@ -192,21 +248,12 @@
 
 - name: Delete ROSANetwork (after ROSAControlPlane deletion completes)
   shell: |
-    oc delete rosanetwork {{ rosa_network_name }} -n {{ rosa_hcp_namespace }} --wait=false
+    oc delete rosanetwork {{ discovered_rosa_network_name }} -n {{ rosa_hcp_namespace }} --wait=false
   register: delete_rn
   failed_when: false
   when:
     - delete_network | bool
-    - "'not-found' not in rn_exists.stdout"
-
-- name: Delete ROSARoleConfig (after ROSAControlPlane deletion completes)
-  shell: |
-    oc delete rosaroleconfig {{ rosa_role_config_name }} -n {{ rosa_hcp_namespace }} --wait=false
-  register: delete_rrc
-  failed_when: false
-  when:
-    - delete_roles | bool
-    - "'not-found' not in rrc_exists.stdout"
+    - discovered_rosa_network_name != 'not-found'
 
 - name: Delete ManagedCluster (if exists)
   shell: |
@@ -218,19 +265,27 @@
 
 - name: Emit agent context for ROSANetwork deletion wait
   shell: |
-    echo "#AGENT_CONTEXT: resource_name={{ rosa_network_name }} namespace={{ rosa_hcp_namespace }} resource_type=rosanetwork" | tee -a "{{ agent_monitor_log }}"
+    echo "#AGENT_CONTEXT: resource_name={{ discovered_rosa_network_name }} namespace={{ rosa_hcp_namespace }} resource_type=rosanetwork" | tee -a "{{ agent_monitor_log }}"
   changed_when: false
   when:
     - wait_for_deletion | bool
     - delete_network | bool
-    - "'not-found' not in rn_exists.stdout"
+    - discovered_rosa_network_name != 'not-found'
 
 - name: Wait for ROSANetwork deletion to complete
+  environment:
+    AWS_ACCESS_KEY_ID: "{{ AWS_ACCESS_KEY_ID | default(omit) }}"
+    AWS_SECRET_ACCESS_KEY: "{{ AWS_SECRET_ACCESS_KEY | default(omit) }}"
   shell: |
     LOGFILE="{{ agent_monitor_log }}"
+    STACK_NAME="{{ discovered_cf_stack_name | default(cluster_name + '-rosa-network-stack') }}"
+    REGION="{{ aws_region | default('us-west-2') }}"
     RETRIES={{ (rosanetwork_timeout | default(deletion_timeout) | int / 10) | int }}
+    ITERATION_COUNT=0
+    MAX_CF_RETRIES=3
+    CF_RETRY_COUNT=0
     for i in $(seq 1 $RETRIES); do
-      OUTPUT=$(oc get rosanetwork {{ rosa_network_name }} -n {{ rosa_hcp_namespace }} 2>&1)
+      OUTPUT=$(oc get rosanetwork {{ discovered_rosa_network_name }} -n {{ rosa_hcp_namespace }} 2>&1)
       RC=$?
       if [ $RC -ne 0 ]; then
         if echo "$OUTPUT" | grep -qi "not found\|NotFound\|no resources found"; then
@@ -239,7 +294,96 @@
         fi
         echo "WARNING: oc get failed unexpectedly (rc=$RC): $OUTPUT" | tee -a "$LOGFILE"
       fi
-      echo "FAILED - RETRYING: [localhost]: Wait for rosanetwork {{ rosa_network_name }} deletion to complete ($((RETRIES - i)) retries left)." | tee -a "$LOGFILE"
+
+      ITERATION_COUNT=$((ITERATION_COUNT + 1))
+
+      # Only check CloudFormation after 3 consecutive failures (avoid API overhead on every iteration)
+      # and only up to MAX_CF_RETRIES times total (prevents infinite recovery loops)
+      if [ "$ITERATION_COUNT" -ge 3 ] && [ "$CF_RETRY_COUNT" -lt "$MAX_CF_RETRIES" ]; then
+        CF_STATUS=$(aws cloudformation describe-stacks \
+          --stack-name "$STACK_NAME" --region "$REGION" \
+          --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "GONE")
+        ITERATION_COUNT=0  # reset after every CF check so next check waits another 3 iterations
+
+        if [ "$CF_STATUS" = "DELETE_FAILED" ]; then
+          echo "#AGENT_CONTEXT: cf_status=DELETE_FAILED stack_name=$STACK_NAME resource_type=rosanetwork" | tee -a "$LOGFILE"
+          echo "CloudFormation stack $STACK_NAME is DELETE_FAILED — attempting force cleanup" | tee -a "$LOGFILE"
+
+          # Get VPC ID from stack
+          VPC_ID=$(aws cloudformation describe-stack-resource \
+            --stack-name "$STACK_NAME" --region "$REGION" \
+            --logical-resource-id VPC \
+            --query 'StackResourceDetail.PhysicalResourceId' \
+            --output text 2>/dev/null)
+
+          if [ -n "$VPC_ID" ] && [ "$VPC_ID" != "None" ]; then
+            # Safety: VPC_ID comes from the CloudFormation stack's own VPC logical resource,
+            # so it is dedicated to this cluster. BYON-VPC clusters have no VPC logical resource
+            # in their stack, so describe-stack-resource fails and VPC_ID is empty — the
+            # [ -n "$VPC_ID" ] guard above prevents cleanup on shared VPCs.
+            #
+            # NOTE: This VPC cleanup logic is also implemented in agents/remediation_agent.py
+            # (_fix_retry_cloudformation_delete). Keep both in sync when adding new resource types.
+            # The agent additionally handles subnets and internet gateways (TODO: add those here).
+            # The agent path is a concurrent secondary recovery; see PR #135 for architecture notes.
+            echo "Cleaning up VPC $VPC_ID dependencies" | tee -a "$LOGFILE"
+            CLEANUP_ERRORS=0
+
+            # Delete VPC endpoints first (create ela-attach ENIs that block deletion)
+            VPCE_IDS=$(aws ec2 describe-vpc-endpoints \
+              --region "$REGION" \
+              --filters "Name=vpc-id,Values=$VPC_ID" "Name=vpc-endpoint-state,Values=available,pending,deleting" \
+              --query 'VpcEndpoints[*].VpcEndpointId' --output text 2>/dev/null)
+            VPCE_IDS=$(echo $VPCE_IDS)  # normalize tab-separated output to spaces
+            if [ -n "$VPCE_IDS" ]; then
+              echo "Deleting VPC endpoints: $VPCE_IDS" | tee -a "$LOGFILE"
+              aws ec2 delete-vpc-endpoints --region "$REGION" --vpc-endpoint-ids $VPCE_IDS 2>&1 | tee -a "$LOGFILE" || { CLEANUP_ERRORS=$((CLEANUP_ERRORS + 1)); true; }
+              sleep 20
+            fi
+
+            # Delete orphaned ENIs — detach first to handle attached interfaces
+            ENI_IDS=$(aws ec2 describe-network-interfaces \
+              --region "$REGION" \
+              --filters "Name=vpc-id,Values=$VPC_ID" \
+              --query 'NetworkInterfaces[*].NetworkInterfaceId' --output text 2>/dev/null)
+            for ENI_ID in $ENI_IDS; do
+              ATTACH_ID=$(aws ec2 describe-network-interfaces \
+                --region "$REGION" \
+                --network-interface-ids "$ENI_ID" \
+                --query 'NetworkInterfaces[0].Attachment.AttachmentId' --output text 2>/dev/null)
+              if [ -n "$ATTACH_ID" ] && [ "$ATTACH_ID" != "None" ]; then
+                aws ec2 detach-network-interface --region "$REGION" \
+                  --attachment-id "$ATTACH_ID" --force 2>&1 | tee -a "$LOGFILE" || { CLEANUP_ERRORS=$((CLEANUP_ERRORS + 1)); true; }
+                sleep 5
+              fi
+              aws ec2 delete-network-interface --region "$REGION" --network-interface-id "$ENI_ID" 2>&1 | tee -a "$LOGFILE" || { CLEANUP_ERRORS=$((CLEANUP_ERRORS + 1)); true; }
+            done
+
+            # Delete non-default security groups
+            SG_IDS=$(aws ec2 describe-security-groups \
+              --region "$REGION" \
+              --filters "Name=vpc-id,Values=$VPC_ID" \
+              --query 'SecurityGroups[?GroupName!=`default`].GroupId' --output text 2>/dev/null)
+            for SG_ID in $SG_IDS; do
+              aws ec2 delete-security-group --region "$REGION" --group-id "$SG_ID" 2>&1 | tee -a "$LOGFILE" || { CLEANUP_ERRORS=$((CLEANUP_ERRORS + 1)); true; }
+            done
+
+            # Log summary of VPC cleanup results
+            echo "CF recovery VPC cleanup: $CLEANUP_ERRORS error(s) during resource deletion" | tee -a "$LOGFILE"
+          fi
+
+          # Retry the CloudFormation stack deletion
+          echo "Retrying CloudFormation stack deletion: $STACK_NAME" | tee -a "$LOGFILE"
+          aws cloudformation delete-stack --stack-name "$STACK_NAME" --region "$REGION" 2>&1 | tee -a "$LOGFILE" || true
+          CF_RETRY_COUNT=$((CF_RETRY_COUNT + 1))
+          if [ "$CF_RETRY_COUNT" -ge "$MAX_CF_RETRIES" ]; then
+            echo "WARNING: CF recovery attempted $CF_RETRY_COUNT/$MAX_CF_RETRIES times — further attempts suppressed" | tee -a "$LOGFILE"
+          fi
+          sleep 15
+        fi
+      fi
+
+      echo "FAILED - RETRYING: [localhost]: Wait for rosanetwork {{ discovered_rosa_network_name }} deletion to complete ($((RETRIES - i)) retries left)." | tee -a "$LOGFILE"
       sleep 10
     done
     echo "Timed out waiting for ROSANetwork deletion" | tee -a "$LOGFILE"
@@ -249,13 +393,13 @@
   when:
     - wait_for_deletion | bool
     - delete_network | bool
-    - "'not-found' not in rn_exists.stdout"
+    - discovered_rosa_network_name != 'not-found'
 
 - name: Final check - verify ROSANetwork is actually gone
   shell: |
     LOGFILE="{{ agent_monitor_log }}"
     for i in $(seq 1 36); do
-      OUTPUT=$(oc get rosanetwork {{ rosa_network_name }} -n {{ rosa_hcp_namespace }} 2>&1)
+      OUTPUT=$(oc get rosanetwork {{ discovered_rosa_network_name }} -n {{ rosa_hcp_namespace }} 2>&1)
       RC=$?
       if [ $RC -ne 0 ]; then
         if echo "$OUTPUT" | grep -qi "not found\|NotFound\|no resources found"; then
@@ -264,7 +408,7 @@
         fi
         echo "WARNING: oc get failed unexpectedly (rc=$RC): $OUTPUT" | tee -a "$LOGFILE"
       fi
-      echo "FAILED - RETRYING: [localhost]: Final check rosanetwork {{ rosa_network_name }} deletion ($((36 - i)) retries left)." | tee -a "$LOGFILE"
+      echo "FAILED - RETRYING: [localhost]: Final check rosanetwork {{ discovered_rosa_network_name }} deletion ($((36 - i)) retries left)." | tee -a "$LOGFILE"
       sleep 10
     done
     echo "ROSANetwork still exists after final check" | tee -a "$LOGFILE"
@@ -275,22 +419,22 @@
   when:
     - wait_for_deletion | bool
     - delete_network | bool
-    - "'not-found' not in rn_exists.stdout"
+    - discovered_rosa_network_name != 'not-found'
     - wait_rn.rc != 0
 
 - name: Display ROSANetwork deletion result
   debug:
     msg: |
       {% if wait_rn.rc == 0 or (final_rn_check.rc | default(1)) == 0 %}
-      ✅ ROSANetwork successfully deleted: {{ rosa_network_name }}
+      ✅ ROSANetwork successfully deleted: {{ discovered_rosa_network_name }}
       {% else %}
       ⚠️  ROSANetwork still exists (CloudFormation stack may still be deleting)
-      Check status: oc get rosanetwork {{ rosa_network_name }} -n {{ rosa_hcp_namespace }}
+      Check status: oc get rosanetwork {{ discovered_rosa_network_name }} -n {{ rosa_hcp_namespace }}
       {% endif %}
   when:
     - wait_for_deletion | bool
     - delete_network | bool
-    - "'not-found' not in rn_exists.stdout"
+    - discovered_rosa_network_name != 'not-found'
 
 - name: Warn if ROSANetwork still exists after all retries
   set_fact:
@@ -298,14 +442,14 @@
   when:
     - wait_for_deletion | bool
     - delete_network | bool
-    - "'not-found' not in rn_exists.stdout"
+    - discovered_rosa_network_name != 'not-found'
     - wait_rn.rc != 0
     - (final_rn_check.rc | default(1)) != 0
 
 - name: Display ROSANetwork timeout warning
   debug:
     msg: |
-      ⚠️  ROSANetwork {{ rosa_network_name }} still exists after timeout.
+      ⚠️  ROSANetwork {{ discovered_rosa_network_name }} still exists after timeout.
       Continuing with remaining resource cleanup...
       CloudFormation stack may need manual cleanup.
       Check: python3 -c "import boto3; print(boto3.client('cloudformation', region_name='{{ aws_region | default('us-west-2') }}').describe_stacks(StackName='{{ cluster_name }}-rosa-network-stack'))"
@@ -323,13 +467,18 @@
 
 - name: Emit agent context for CloudFormation verification
   shell: |
-    echo "#AGENT_CONTEXT: resource_name={{ rosa_network_name }} namespace={{ rosa_hcp_namespace }} resource_type=rosanetwork" | tee -a "{{ agent_monitor_log }}"
+    echo "#AGENT_CONTEXT: resource_name={{ discovered_rosa_network_name }} namespace={{ rosa_hcp_namespace }} resource_type=rosanetwork" | tee -a "{{ agent_monitor_log }}"
   changed_when: false
   when:
     - wait_for_deletion | bool
     - delete_network | bool
-    - "'not-found' not in rn_exists.stdout"
+    - discovered_rosa_network_name != 'not-found'
 
+# This task is a final confirmation check that runs after the inline CF recovery
+# in the "Wait for ROSANetwork deletion" task above. If the inline recovery succeeded,
+# this task confirms the stack is gone. If the inline recovery hit MAX_CF_RETRIES or
+# failed silently, this task detects DELETE_FAILED and logs it for operator attention.
+# It does not perform cleanup — the inline recovery is the active recovery mechanism.
 - name: Verify CloudFormation stack cleanup after ROSANetwork deletion
   no_log: true
   environment:
@@ -337,9 +486,9 @@
     AWS_SECRET_ACCESS_KEY: "{{ AWS_SECRET_ACCESS_KEY | default(omit) }}"
   shell: |
     LOGFILE="{{ agent_monitor_log }}"
-    STACK_NAME="{{ cluster_name }}-rosa-network-stack"
+    STACK_NAME="{{ discovered_cf_stack_name | default(cluster_name + '-rosa-network-stack') }}"
     REGION="{{ aws_region | default('us-west-2') }}"
-    NETWORK_NAME="{{ rosa_network_name }}"
+    NETWORK_NAME="{{ discovered_rosa_network_name }}"
     NAMESPACE="{{ rosa_hcp_namespace }}"
     RETRIES=36
     echo "Verifying CloudFormation stack $STACK_NAME cleanup..." | tee -a "$LOGFILE"
@@ -389,7 +538,7 @@
   when:
     - wait_for_deletion | bool
     - delete_network | bool
-    - "'not-found' not in rn_exists.stdout"
+    - discovered_rosa_network_name != 'not-found'
 
 - name: Display CloudFormation verification result
   debug:
@@ -403,24 +552,33 @@
   when:
     - wait_for_deletion | bool
     - delete_network | bool
-    - "'not-found' not in rn_exists.stdout"
+    - discovered_rosa_network_name != 'not-found'
     - cfn_verify is defined
+
+- name: Delete ROSARoleConfig (after ROSANetwork deletion completes)
+  shell: |
+    oc delete rosaroleconfig {{ discovered_rosa_role_config_name }} -n {{ rosa_hcp_namespace }} --wait=false
+  register: delete_rrc
+  failed_when: false
+  when:
+    - delete_roles | bool
+    - discovered_rosa_role_config_name != 'not-found'
 
 - name: Emit agent context for ROSARoleConfig deletion wait
   shell: |
-    echo "#AGENT_CONTEXT: resource_name={{ rosa_role_config_name }} namespace={{ rosa_hcp_namespace }} resource_type=rosaroleconfig" | tee -a "{{ agent_monitor_log }}"
+    echo "#AGENT_CONTEXT: resource_name={{ discovered_rosa_role_config_name }} namespace={{ rosa_hcp_namespace }} resource_type=rosaroleconfig" | tee -a "{{ agent_monitor_log }}"
   changed_when: false
   when:
     - wait_for_deletion | bool
     - delete_roles | bool
-    - "'not-found' not in rrc_exists.stdout"
+    - discovered_rosa_role_config_name != 'not-found'
 
 - name: Wait for ROSARoleConfig deletion to complete
   shell: |
     LOGFILE="{{ agent_monitor_log }}"
     RETRIES={{ (rosaroleconfig_timeout | default(deletion_timeout) | int / 10) | int }}
     for i in $(seq 1 $RETRIES); do
-      OUTPUT=$(oc get rosaroleconfig {{ rosa_role_config_name }} -n {{ rosa_hcp_namespace }} 2>&1)
+      OUTPUT=$(oc get rosaroleconfig {{ discovered_rosa_role_config_name }} -n {{ rosa_hcp_namespace }} 2>&1)
       RC=$?
       if [ $RC -ne 0 ]; then
         if echo "$OUTPUT" | grep -qi "not found\|NotFound\|no resources found"; then
@@ -429,7 +587,7 @@
         fi
         echo "WARNING: oc get failed unexpectedly (rc=$RC): $OUTPUT" | tee -a "$LOGFILE"
       fi
-      echo "FAILED - RETRYING: [localhost]: Wait for rosaroleconfig {{ rosa_role_config_name }} deletion to complete ($((RETRIES - i)) retries left)." | tee -a "$LOGFILE"
+      echo "FAILED - RETRYING: [localhost]: Wait for rosaroleconfig {{ discovered_rosa_role_config_name }} deletion to complete ($((RETRIES - i)) retries left)." | tee -a "$LOGFILE"
       sleep 10
     done
     echo "Timed out waiting for ROSARoleConfig deletion" | tee -a "$LOGFILE"
@@ -439,13 +597,13 @@
   when:
     - wait_for_deletion | bool
     - delete_roles | bool
-    - "'not-found' not in rrc_exists.stdout"
+    - discovered_rosa_role_config_name != 'not-found'
 
 - name: Final check - verify ROSARoleConfig is actually gone
   shell: |
     LOGFILE="{{ agent_monitor_log }}"
     for i in $(seq 1 18); do
-      OUTPUT=$(oc get rosaroleconfig {{ rosa_role_config_name }} -n {{ rosa_hcp_namespace }} 2>&1)
+      OUTPUT=$(oc get rosaroleconfig {{ discovered_rosa_role_config_name }} -n {{ rosa_hcp_namespace }} 2>&1)
       RC=$?
       if [ $RC -ne 0 ]; then
         if echo "$OUTPUT" | grep -qi "not found\|NotFound\|no resources found"; then
@@ -454,7 +612,7 @@
         fi
         echo "WARNING: oc get failed unexpectedly (rc=$RC): $OUTPUT" | tee -a "$LOGFILE"
       fi
-      echo "FAILED - RETRYING: [localhost]: Final check rosaroleconfig {{ rosa_role_config_name }} deletion ($((18 - i)) retries left)." | tee -a "$LOGFILE"
+      echo "FAILED - RETRYING: [localhost]: Final check rosaroleconfig {{ discovered_rosa_role_config_name }} deletion ($((18 - i)) retries left)." | tee -a "$LOGFILE"
       sleep 10
     done
     echo "ROSARoleConfig still exists after final check" | tee -a "$LOGFILE"
@@ -465,22 +623,22 @@
   when:
     - wait_for_deletion | bool
     - delete_roles | bool
-    - "'not-found' not in rrc_exists.stdout"
+    - discovered_rosa_role_config_name != 'not-found'
     - wait_rrc.rc != 0
 
 - name: Display ROSARoleConfig deletion result
   debug:
     msg: |
       {% if wait_rrc.rc == 0 or (final_rrc_check.rc | default(1)) == 0 %}
-      ✅ ROSARoleConfig successfully deleted: {{ rosa_role_config_name }}
+      ✅ ROSARoleConfig successfully deleted: {{ discovered_rosa_role_config_name }}
       {% else %}
       ⚠️  ROSARoleConfig still exists (IAM roles may still be deleting)
-      Check status: oc get rosaroleconfig {{ rosa_role_config_name }} -n {{ rosa_hcp_namespace }}
+      Check status: oc get rosaroleconfig {{ discovered_rosa_role_config_name }} -n {{ rosa_hcp_namespace }}
       {% endif %}
   when:
     - wait_for_deletion | bool
     - delete_roles | bool
-    - "'not-found' not in rrc_exists.stdout"
+    - discovered_rosa_role_config_name != 'not-found'
 
 - name: Set deletion summary
   set_fact:
@@ -494,10 +652,10 @@
       {% if 'not-found' not in rmp_exists.stdout %}
       • ROSAMachinePool: ✅ Auto-deleted (cascade)
       {% endif %}
-      {% if delete_network | bool and 'not-found' not in rn_exists.stdout %}
+      {% if delete_network | bool and discovered_rosa_network_name != 'not-found' %}
       • ROSANetwork: {{ '✅ Deleted' if (wait_for_deletion and (wait_rn.rc == 0 or (final_rn_check.rc | default(1)) == 0)) else '⏳ Deletion initiated' }}
       {% endif %}
-      {% if delete_roles | bool and 'not-found' not in rrc_exists.stdout %}
+      {% if delete_roles | bool and discovered_rosa_role_config_name != 'not-found' %}
       • ROSARoleConfig: {{ '✅ Deleted' if (wait_for_deletion and (wait_rrc.rc == 0 or (final_rrc_check.rc | default(1)) == 0)) else '⏳ Deletion initiated' }}
       {% endif %}
 

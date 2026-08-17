@@ -590,9 +590,9 @@ pipeline {
                     }
                     catch (ex) {
                         echo 'ROSA HCP Deletion Tests failed or timed out'
-                        echo 'WARNING: Cluster may still exist and require manual cleanup'
+                        echo 'WARNING: Cluster may still exist — Best-effort Cleanup will attempt recovery'
                         currentBuild.result = 'UNSTABLE'
-                        env.CLEANUP_DONE = 'true'
+                        // Do NOT set CLEANUP_DONE — let Best-effort Cleanup run
                     }
                 }
             }
