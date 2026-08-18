@@ -36,23 +36,27 @@
 
 - name: Discover ROSANetwork by label or name
   shell: |
-    COUNT=$(oc get rosanetwork -n {{ rosa_hcp_namespace | quote }} \
-      -l cluster.x-k8s.io/cluster-name={{ cluster_name | quote }} \
+    COUNT=$(oc get rosanetwork -n "$NAMESPACE" \
+      -l "cluster.x-k8s.io/cluster-name=$CLUSTER_NAME" \
       -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null \
       | grep -c . || echo "0")
     COUNT=${COUNT:-0}
     if [ "$COUNT" -gt 1 ]; then
-      echo "ERROR: Found $COUNT ROSANetwork resources with label cluster.x-k8s.io/cluster-name={{ cluster_name | quote }} — cannot safely determine target. Aborting." >&2
+      echo "ERROR: Found $COUNT ROSANetwork resources with label cluster.x-k8s.io/cluster-name=$CLUSTER_NAME — cannot safely determine target. Aborting." >&2
       exit 1
     fi
-    FOUND=$(oc get rosanetwork -n {{ rosa_hcp_namespace | quote }} \
-      -l cluster.x-k8s.io/cluster-name={{ cluster_name | quote }} \
+    FOUND=$(oc get rosanetwork -n "$NAMESPACE" \
+      -l "cluster.x-k8s.io/cluster-name=$CLUSTER_NAME" \
       -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
     if [ -z "$FOUND" ]; then
-      FOUND=$(oc get rosanetwork {{ rosa_network_name | quote }} -n {{ rosa_hcp_namespace | quote }} \
+      FOUND=$(oc get rosanetwork "$NETWORK_NAME" -n "$NAMESPACE" \
         -o jsonpath='{.metadata.name}' 2>/dev/null)
     fi
     echo "${FOUND:-not-found}"
+  environment:
+    NAMESPACE: "{{ rosa_hcp_namespace }}"
+    CLUSTER_NAME: "{{ cluster_name }}"
+    NETWORK_NAME: "{{ rosa_network_name }}"
   register: rn_exists
   changed_when: false
 
@@ -62,9 +66,12 @@
 
 - name: Get ROSANetwork stack name from resource spec
   shell: |
-    oc get rosanetwork {{ discovered_rosa_network_name | quote }} \
-      -n {{ rosa_hcp_namespace | quote }} \
+    oc get rosanetwork "$NETWORK_NAME" \
+      -n "$NAMESPACE" \
       -o jsonpath='{.spec.stackName}' 2>/dev/null || true
+  environment:
+    NETWORK_NAME: "{{ discovered_rosa_network_name }}"
+    NAMESPACE: "{{ rosa_hcp_namespace }}"
   register: rn_stack_name_raw
   changed_when: false
   when: discovered_rosa_network_name != 'not-found'
@@ -78,23 +85,27 @@
 
 - name: Discover ROSARoleConfig by label or name
   shell: |
-    COUNT=$(oc get rosaroleconfig -n {{ rosa_hcp_namespace | quote }} \
-      -l cluster.x-k8s.io/cluster-name={{ cluster_name | quote }} \
+    COUNT=$(oc get rosaroleconfig -n "$NAMESPACE" \
+      -l "cluster.x-k8s.io/cluster-name=$CLUSTER_NAME" \
       -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null \
       | grep -c . || echo "0")
     COUNT=${COUNT:-0}
     if [ "$COUNT" -gt 1 ]; then
-      echo "ERROR: Found $COUNT ROSARoleConfig resources with label cluster.x-k8s.io/cluster-name={{ cluster_name | quote }} — cannot safely determine target. Aborting." >&2
+      echo "ERROR: Found $COUNT ROSARoleConfig resources with label cluster.x-k8s.io/cluster-name=$CLUSTER_NAME — cannot safely determine target. Aborting." >&2
       exit 1
     fi
-    FOUND=$(oc get rosaroleconfig -n {{ rosa_hcp_namespace | quote }} \
-      -l cluster.x-k8s.io/cluster-name={{ cluster_name | quote }} \
+    FOUND=$(oc get rosaroleconfig -n "$NAMESPACE" \
+      -l "cluster.x-k8s.io/cluster-name=$CLUSTER_NAME" \
       -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
     if [ -z "$FOUND" ]; then
-      FOUND=$(oc get rosaroleconfig {{ rosa_role_config_name | quote }} -n {{ rosa_hcp_namespace | quote }} \
+      FOUND=$(oc get rosaroleconfig "$ROLE_CONFIG_NAME" -n "$NAMESPACE" \
         -o jsonpath='{.metadata.name}' 2>/dev/null)
     fi
     echo "${FOUND:-not-found}"
+  environment:
+    NAMESPACE: "{{ rosa_hcp_namespace }}"
+    CLUSTER_NAME: "{{ cluster_name }}"
+    ROLE_CONFIG_NAME: "{{ rosa_role_config_name }}"
   register: rrc_exists
   changed_when: false
 
@@ -135,7 +146,11 @@
 
 - name: Delete all ROSA resources with single oc delete command
   shell: |
-    oc delete -n {{ rosa_hcp_namespace }} {{ resources_to_delete | join(' ') }} --wait=false
+    # shellcheck disable=SC2086
+    oc delete -n "$NAMESPACE" $RESOURCES_TO_DELETE --wait=false
+  environment:
+    NAMESPACE: "{{ rosa_hcp_namespace }}"
+    RESOURCES_TO_DELETE: "{{ resources_to_delete | join(' ') }}"
   register: delete_all
   when: resources_to_delete | length > 0
 
