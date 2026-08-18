@@ -372,6 +372,58 @@
           3. Link to OCM via console.redhat.com or the OCM API
 
 # ================================================================
+# STEP 5b: Verify AWS account is authorized via clusters-mgmt API
+# ================================================================
+# The org-label check above (STEP 3) is necessary but not sufficient.
+# OCM's cluster creation endpoint does a separate authorization check
+# via clusters-mgmt that can fail with 403 even when the label exists,
+# if the account hasn't been registered there yet. We probe that here
+# so failures surface before a 42-minute provisioning timeout.
+- name: Verify AWS account authorization via OCM clusters-mgmt API
+  ansible.builtin.uri:
+    url: "{{ OCM_API_URL }}/api/clusters_mgmt/v1/aws/account_id_availability/{{ aws_account_id }}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ _ocm_bearer }}"
+      Accept: "application/json"
+    status_code: [200, 404]
+    return_content: true
+  register: _ocm_acct_availability
+  no_log: true
+  failed_when: false
+
+- name: Warn if clusters-mgmt account availability check failed unexpectedly
+  ansible.builtin.debug:
+    msg: |
+      WARNING: OCM clusters-mgmt account availability check returned HTTP {{ _ocm_acct_availability.status | default('N/A') }}.
+      This endpoint may not be available in all OCM environments.
+      Continuing — cluster creation will surface the error if the account is not authorized.
+  when: _ocm_acct_availability.status | default(0) | int not in [200, 404]
+
+- name: Fail if OCM clusters-mgmt reports account is not available
+  ansible.builtin.fail:
+    msg: |
+      OCM Pre-flight Check FAILED: AWS account is not authorized in OCM clusters-mgmt.
+
+      AWS Account: ****{{ aws_account_id[-4:] }}
+      Organization ID: ****{{ _ocm_org_id[-4:] }}
+      OCM clusters-mgmt status: {{ (_ocm_acct_availability.content | default('{}') | from_json).available | default('unknown') }}
+
+      The org-label check passed (ocm_role_arn label is present) but OCM's
+      clusters-mgmt API does not recognize this AWS account as authorized.
+      This would cause a 403 at cluster creation time after ~42 minutes.
+
+      Remediation:
+      1. Run: rosa create ocm-role --mode auto
+         (this registers the account in both the org labels AND clusters-mgmt)
+      2. Alternatively, verify the OCM role ARN in the org label matches the
+         account registered in console.redhat.com under Cloud > AWS Accounts
+      3. See: https://access.redhat.com/articles/7137057
+  when:
+    - _ocm_acct_availability.status | default(0) | int == 200
+    - not ((_ocm_acct_availability.content | default('{}') | from_json).available | default(true) | bool)
+
+# ================================================================
 # STEP 6: Verify linkage
 # ================================================================
 - name: Verify OCM role linkage (re-query)
