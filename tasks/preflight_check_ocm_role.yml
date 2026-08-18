@@ -386,7 +386,7 @@
     headers:
       Authorization: "Bearer {{ _ocm_bearer }}"
       Accept: "application/json"
-    status_code: [200, 404]
+    status_code: [200, 403, 404]
     return_content: true
   register: _ocm_acct_availability
   no_log: true
@@ -398,7 +398,36 @@
       WARNING: OCM clusters-mgmt account availability check returned HTTP {{ _ocm_acct_availability.status | default('N/A') }}.
       This endpoint may not be available in all OCM environments.
       Continuing — cluster creation will surface the error if the account is not authorized.
-  when: _ocm_acct_availability.status | default(0) | int not in [200, 404]
+  when: _ocm_acct_availability.status | default(0) | int not in [200, 403, 404]
+
+- name: Fail if AWS account not authorized in OCM clusters-mgmt (403)
+  ansible.builtin.fail:
+    msg: |
+      OCM Pre-flight Check FAILED: AWS account is not authorized in OCM clusters-mgmt (HTTP 403).
+
+      AWS Account: ****{{ aws_account_id[-4:] }}
+      Organization ID: ****{{ _ocm_org_id[-4:] }}
+
+      The org-label check passed but OCM clusters-mgmt returned 403 Forbidden.
+      This is the exact condition that causes a 42-minute provisioning timeout.
+
+      Remediation: rosa create ocm-role --mode auto
+      See: https://access.redhat.com/articles/7137057
+  when: _ocm_acct_availability.status | default(0) | int == 403
+
+- name: Fail if AWS account not found in OCM clusters-mgmt (404)
+  ansible.builtin.fail:
+    msg: |
+      OCM Pre-flight Check FAILED: AWS account not found in OCM clusters-mgmt (HTTP 404).
+
+      AWS Account: ****{{ aws_account_id[-4:] }}
+      Organization ID: ****{{ _ocm_org_id[-4:] }}
+
+      A 404 indicates the account has never been registered in clusters-mgmt.
+
+      Remediation: rosa create ocm-role --mode auto
+      See: https://access.redhat.com/articles/7137057
+  when: _ocm_acct_availability.status | default(0) | int == 404
 
 - name: Fail if OCM clusters-mgmt reports account is not available
   ansible.builtin.fail:
@@ -419,6 +448,7 @@
       2. Alternatively, verify the OCM role ARN in the org label matches the
          account registered in console.redhat.com under Cloud > AWS Accounts
       3. See: https://access.redhat.com/articles/7137057
+  no_log: true
   when:
     - _ocm_acct_availability.status | default(0) | int == 200
     - not ((_ocm_acct_availability.content | default('{}') | from_json).available | default(true) | bool)
