@@ -127,7 +127,7 @@
 # ================================================================
 # STEP 3: Query organization for linked OCM role
 # ================================================================
-- name: Query OCM organization labels for ocm_role_arn
+- name: Query OCM organization labels for sts_ocm_role
   ansible.builtin.uri:
     url: "{{ OCM_API_URL }}/api/accounts_mgmt/v1/organizations/{{ _ocm_org_id }}/labels"
     method: GET
@@ -158,14 +158,14 @@
     _ocm_role_linked: >-
       {{ (_ocm_org_labels.content | from_json)['items']
          | default([], true)
-         | selectattr('key', 'equalto', 'ocm_role_arn')
+         | selectattr('key', 'equalto', 'sts_ocm_role')
          | selectattr('value', 'search', 'arn:aws:iam::' ~ aws_account_id ~ ':role/')
          | list
          | length > 0 }}
     _ocm_existing_role_arn: >-
       {{ ((_ocm_org_labels.content | from_json)['items']
           | default([], true)
-          | selectattr('key', 'equalto', 'ocm_role_arn')
+          | selectattr('key', 'equalto', 'sts_ocm_role')
           | selectattr('value', 'search', 'arn:aws:iam::' ~ aws_account_id ~ ':role/')
           | map(attribute='value')
           | list
@@ -309,6 +309,55 @@
     # ================================================================
     # STEP 5: Link role to OCM organization
     # ================================================================
+    # sts_ocm_role is a comma-separated list of ARNs (one per linked AWS account).
+    # Re-fetch labels immediately before linking to avoid a stale snapshot from
+    # Step 3 (which ran before IAM creation and could miss concurrent updates).
+    # POST on this endpoint performs an upsert (confirmed: returns 200 on existing key).
+    - name: Re-fetch OCM org labels immediately before linking (avoid stale snapshot)
+      ansible.builtin.uri:
+        url: "{{ OCM_API_URL }}/api/accounts_mgmt/v1/organizations/{{ _ocm_org_id }}/labels"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ _ocm_bearer }}"
+          Accept: "application/json"
+        status_code: [200]
+        return_content: true
+      register: _ocm_org_labels_fresh
+      no_log: true
+      failed_when: false
+
+    - name: Fail if re-fetch of org labels failed before linking
+      ansible.builtin.fail:
+        msg: |
+          OCM Role Pre-flight Check FAILED: Unable to re-fetch OCM organization labels before linking.
+
+          Organization ID: ****{{ _ocm_org_id[-4:] }}
+          HTTP status: {{ _ocm_org_labels_fresh.status | default('N/A') }}
+
+          Remediation:
+          1. Verify the OCM API is reachable: curl {{ OCM_API_URL }}/api/accounts_mgmt/v1/organizations/{{ _ocm_org_id }}/labels
+          2. Check that the bearer token is still valid
+      when: _ocm_org_labels_fresh.status | default(0) | int != 200
+
+    - name: Read existing sts_ocm_role label value before linking
+      ansible.builtin.set_fact:
+        _ocm_existing_sts_value: >-
+          {{ (_ocm_org_labels_fresh.content | from_json)['items']
+             | default([], true)
+             | selectattr('key', 'equalto', 'sts_ocm_role')
+             | map(attribute='value')
+             | list
+             | join('') }}
+      no_log: true
+
+    - name: Build updated sts_ocm_role value (append new ARN)
+      ansible.builtin.set_fact:
+        _ocm_updated_sts_value: >-
+          {{ (_ocm_existing_sts_value ~ ',' ~ _ocm_role_arn)
+             if _ocm_existing_sts_value | length > 0
+             else _ocm_role_arn }}
+      no_log: true
+
     - name: Link OCM role ARN to organization
       ansible.builtin.uri:
         url: "{{ OCM_API_URL }}/api/accounts_mgmt/v1/organizations/{{ _ocm_org_id }}/labels"
@@ -319,8 +368,8 @@
           Accept: "application/json"
         body_format: json
         body:
-          key: "ocm_role_arn"
-          value: "{{ _ocm_role_arn }}"
+          key: "sts_ocm_role"
+          value: "{{ _ocm_updated_sts_value }}"
         status_code: [200, 201]
         return_content: true
       register: _ocm_link_result
@@ -338,12 +387,12 @@
 
           Remediation:
           1. Ensure the service account has permission to write organization labels
-          2. Check if the label 'ocm_role_arn' already exists with a different value
+          2. Check if the label 'sts_ocm_role' already exists with a different value
           3. Manual linkage via OCM API:
              curl -X POST '<OCM_API_URL>/api/accounts_mgmt/v1/organizations/<org_id>/labels' \
                -H 'Authorization: Bearer <token>' \
                -H 'Content-Type: application/json' \
-               -d '{"key":"ocm_role_arn","value":"<role_arn>"}'
+               -d '{"key":"sts_ocm_role","value":"<role_arn>"}'
       when: _ocm_link_result.status | default(0) | int not in [200, 201]
 
     - name: Display OCM role linkage result
@@ -399,7 +448,7 @@
         _ocm_role_verified: >-
           {{ (_ocm_verify_labels.content | from_json)['items']
              | default([], true)
-             | selectattr('key', 'equalto', 'ocm_role_arn')
+             | selectattr('key', 'equalto', 'sts_ocm_role')
              | selectattr('value', 'search', 'arn:aws:iam::' ~ aws_account_id ~ ':role/')
              | list
              | length > 0 }}
@@ -415,7 +464,7 @@
           Expected role ARN pattern: arn:aws:iam::****{{ aws_account_id[-4:] }}:role/OCMRole-****
 
           The role was created and the link API call succeeded, but re-querying
-          the organization labels did not find the expected ocm_role_arn label.
+          the organization labels did not find the expected sts_ocm_role label.
 
           Remediation:
           1. Check OCM organization labels manually:
