@@ -36,23 +36,27 @@
 
 - name: Discover ROSANetwork by label or name
   shell: |
-    COUNT=$(oc get rosanetwork -n {{ rosa_hcp_namespace | quote }} \
-      -l cluster.x-k8s.io/cluster-name={{ cluster_name | quote }} \
+    COUNT=$(oc get rosanetwork -n "$NAMESPACE" \
+      -l "cluster.x-k8s.io/cluster-name=$CLUSTER_NAME" \
       -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null \
       | grep -c . || echo "0")
     COUNT=${COUNT:-0}
     if [ "$COUNT" -gt 1 ]; then
-      echo "ERROR: Found $COUNT ROSANetwork resources with label cluster.x-k8s.io/cluster-name={{ cluster_name | quote }} — cannot safely determine target. Aborting." >&2
+      echo "ERROR: Found $COUNT ROSANetwork resources with label cluster.x-k8s.io/cluster-name=$CLUSTER_NAME — cannot safely determine target. Aborting." >&2
       exit 1
     fi
-    FOUND=$(oc get rosanetwork -n {{ rosa_hcp_namespace | quote }} \
-      -l cluster.x-k8s.io/cluster-name={{ cluster_name | quote }} \
+    FOUND=$(oc get rosanetwork -n "$NAMESPACE" \
+      -l "cluster.x-k8s.io/cluster-name=$CLUSTER_NAME" \
       -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
     if [ -z "$FOUND" ]; then
-      FOUND=$(oc get rosanetwork {{ rosa_network_name | quote }} -n {{ rosa_hcp_namespace | quote }} \
+      FOUND=$(oc get rosanetwork "$NETWORK_NAME" -n "$NAMESPACE" \
         -o jsonpath='{.metadata.name}' 2>/dev/null)
     fi
     echo "${FOUND:-not-found}"
+  environment:
+    NAMESPACE: "{{ rosa_hcp_namespace }}"
+    CLUSTER_NAME: "{{ cluster_name }}"
+    NETWORK_NAME: "{{ rosa_network_name }}"
   register: rn_exists
   changed_when: false
 
@@ -62,9 +66,12 @@
 
 - name: Get ROSANetwork stack name from resource spec
   shell: |
-    oc get rosanetwork {{ discovered_rosa_network_name | quote }} \
-      -n {{ rosa_hcp_namespace | quote }} \
+    oc get rosanetwork "$NETWORK_NAME" \
+      -n "$NAMESPACE" \
       -o jsonpath='{.spec.stackName}' 2>/dev/null || true
+  environment:
+    NETWORK_NAME: "{{ discovered_rosa_network_name }}"
+    NAMESPACE: "{{ rosa_hcp_namespace }}"
   register: rn_stack_name_raw
   changed_when: false
   when: discovered_rosa_network_name != 'not-found'
@@ -78,23 +85,27 @@
 
 - name: Discover ROSARoleConfig by label or name
   shell: |
-    COUNT=$(oc get rosaroleconfig -n {{ rosa_hcp_namespace | quote }} \
-      -l cluster.x-k8s.io/cluster-name={{ cluster_name | quote }} \
+    COUNT=$(oc get rosaroleconfig -n "$NAMESPACE" \
+      -l "cluster.x-k8s.io/cluster-name=$CLUSTER_NAME" \
       -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null \
       | grep -c . || echo "0")
     COUNT=${COUNT:-0}
     if [ "$COUNT" -gt 1 ]; then
-      echo "ERROR: Found $COUNT ROSARoleConfig resources with label cluster.x-k8s.io/cluster-name={{ cluster_name | quote }} — cannot safely determine target. Aborting." >&2
+      echo "ERROR: Found $COUNT ROSARoleConfig resources with label cluster.x-k8s.io/cluster-name=$CLUSTER_NAME — cannot safely determine target. Aborting." >&2
       exit 1
     fi
-    FOUND=$(oc get rosaroleconfig -n {{ rosa_hcp_namespace | quote }} \
-      -l cluster.x-k8s.io/cluster-name={{ cluster_name | quote }} \
+    FOUND=$(oc get rosaroleconfig -n "$NAMESPACE" \
+      -l "cluster.x-k8s.io/cluster-name=$CLUSTER_NAME" \
       -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
     if [ -z "$FOUND" ]; then
-      FOUND=$(oc get rosaroleconfig {{ rosa_role_config_name | quote }} -n {{ rosa_hcp_namespace | quote }} \
+      FOUND=$(oc get rosaroleconfig "$ROLE_CONFIG_NAME" -n "$NAMESPACE" \
         -o jsonpath='{.metadata.name}' 2>/dev/null)
     fi
     echo "${FOUND:-not-found}"
+  environment:
+    NAMESPACE: "{{ rosa_hcp_namespace }}"
+    CLUSTER_NAME: "{{ cluster_name }}"
+    ROLE_CONFIG_NAME: "{{ rosa_role_config_name }}"
   register: rrc_exists
   changed_when: false
 
@@ -135,7 +146,11 @@
 
 - name: Delete all ROSA resources with single oc delete command
   shell: |
-    oc delete -n {{ rosa_hcp_namespace }} {{ resources_to_delete | join(' ') }} --wait=false
+    # shellcheck disable=SC2086
+    oc delete -n "$NAMESPACE" $RESOURCES_TO_DELETE --wait=false
+  environment:
+    NAMESPACE: "{{ rosa_hcp_namespace }}"
+    RESOURCES_TO_DELETE: "{{ resources_to_delete | join(' ') }}"
   register: delete_all
   when: resources_to_delete | length > 0
 
@@ -153,7 +168,11 @@
 
 - name: Emit agent context for ROSAControlPlane deletion wait
   shell: |
-    echo "#AGENT_CONTEXT: resource_name={{ cluster_name }} namespace={{ rosa_hcp_namespace }} resource_type=rosacontrolplane" | tee -a "{{ agent_monitor_log }}"
+    echo "#AGENT_CONTEXT: resource_name=$CLUSTER_NAME namespace=$NAMESPACE resource_type=rosacontrolplane" | tee -a "$LOGFILE"
+  environment:
+    LOGFILE: "{{ agent_monitor_log }}"
+    CLUSTER_NAME: "{{ cluster_name }}"
+    NAMESPACE: "{{ rosa_hcp_namespace }}"
   changed_when: false
   when:
     - wait_for_deletion | bool
@@ -161,10 +180,8 @@
 
 - name: Wait for ROSAControlPlane deletion to complete
   shell: |
-    LOGFILE="{{ agent_monitor_log }}"
-    RETRIES={{ (rosacontrolplane_timeout | default(deletion_timeout) | int / 10) | int }}
     for i in $(seq 1 $RETRIES); do
-      OUTPUT=$(oc get rosacontrolplane {{ cluster_name }} -n {{ rosa_hcp_namespace }} 2>&1)
+      OUTPUT=$(oc get rosacontrolplane "$CLUSTER_NAME" -n "$NAMESPACE" 2>&1)
       RC=$?
       if [ $RC -ne 0 ]; then
         if echo "$OUTPUT" | grep -qi "not found\|NotFound\|no resources found"; then
@@ -173,11 +190,16 @@
         fi
         echo "WARNING: oc get failed unexpectedly (rc=$RC): $OUTPUT" | tee -a "$LOGFILE"
       fi
-      echo "FAILED - RETRYING: [localhost]: Wait for rosacontrolplane {{ cluster_name }} deletion to complete ($((RETRIES - i)) retries left)." | tee -a "$LOGFILE"
+      echo "FAILED - RETRYING: [localhost]: Wait for rosacontrolplane $CLUSTER_NAME deletion to complete ($((RETRIES - i)) retries left)." | tee -a "$LOGFILE"
       sleep 10
     done
     echo "Timed out waiting for ROSAControlPlane deletion" | tee -a "$LOGFILE"
     exit 1
+  environment:
+    LOGFILE: "{{ agent_monitor_log }}"
+    RETRIES: "{{ (rosacontrolplane_timeout | default(deletion_timeout) | int / 10) | int }}"
+    CLUSTER_NAME: "{{ cluster_name }}"
+    NAMESPACE: "{{ rosa_hcp_namespace }}"
   register: wait_rcp
   failed_when: false
   when:
@@ -186,9 +208,8 @@
 
 - name: Final check - verify ROSAControlPlane is actually gone
   shell: |
-    LOGFILE="{{ agent_monitor_log }}"
     for i in $(seq 1 18); do
-      OUTPUT=$(oc get rosacontrolplane {{ cluster_name }} -n {{ rosa_hcp_namespace }} 2>&1)
+      OUTPUT=$(oc get rosacontrolplane "$CLUSTER_NAME" -n "$NAMESPACE" 2>&1)
       RC=$?
       if [ $RC -ne 0 ]; then
         if echo "$OUTPUT" | grep -qi "not found\|NotFound\|no resources found"; then
@@ -197,11 +218,15 @@
         fi
         echo "WARNING: oc get failed unexpectedly (rc=$RC): $OUTPUT" | tee -a "$LOGFILE"
       fi
-      echo "FAILED - RETRYING: [localhost]: Final check rosacontrolplane {{ cluster_name }} deletion ($((18 - i)) retries left)." | tee -a "$LOGFILE"
+      echo "FAILED - RETRYING: [localhost]: Final check rosacontrolplane $CLUSTER_NAME deletion ($((18 - i)) retries left)." | tee -a "$LOGFILE"
       sleep 10
     done
     echo "ROSAControlPlane still exists after final check" | tee -a "$LOGFILE"
     exit 1
+  environment:
+    LOGFILE: "{{ agent_monitor_log }}"
+    CLUSTER_NAME: "{{ cluster_name }}"
+    NAMESPACE: "{{ rosa_hcp_namespace }}"
   register: final_rcp_check
   failed_when: false
   changed_when: false
@@ -265,7 +290,11 @@
 
 - name: Emit agent context for ROSANetwork deletion wait
   shell: |
-    echo "#AGENT_CONTEXT: resource_name={{ discovered_rosa_network_name }} namespace={{ rosa_hcp_namespace }} resource_type=rosanetwork" | tee -a "{{ agent_monitor_log }}"
+    echo "#AGENT_CONTEXT: resource_name=$NETWORK_NAME namespace=$NAMESPACE resource_type=rosanetwork" | tee -a "$LOGFILE"
+  environment:
+    LOGFILE: "{{ agent_monitor_log }}"
+    NETWORK_NAME: "{{ discovered_rosa_network_name }}"
+    NAMESPACE: "{{ rosa_hcp_namespace }}"
   changed_when: false
   when:
     - wait_for_deletion | bool
@@ -276,16 +305,18 @@
   environment:
     AWS_ACCESS_KEY_ID: "{{ AWS_ACCESS_KEY_ID | default(omit) }}"
     AWS_SECRET_ACCESS_KEY: "{{ AWS_SECRET_ACCESS_KEY | default(omit) }}"
+    LOGFILE: "{{ agent_monitor_log }}"
+    STACK_NAME: "{{ discovered_cf_stack_name | default(cluster_name + '-rosa-network-stack') }}"
+    REGION: "{{ aws_region | default('us-west-2') }}"
+    RETRIES: "{{ (rosanetwork_timeout | default(deletion_timeout) | int / 10) | int }}"
+    NETWORK_NAME: "{{ discovered_rosa_network_name }}"
+    NAMESPACE: "{{ rosa_hcp_namespace }}"
   shell: |
-    LOGFILE="{{ agent_monitor_log }}"
-    STACK_NAME="{{ discovered_cf_stack_name | default(cluster_name + '-rosa-network-stack') }}"
-    REGION="{{ aws_region | default('us-west-2') }}"
-    RETRIES={{ (rosanetwork_timeout | default(deletion_timeout) | int / 10) | int }}
     ITERATION_COUNT=0
     MAX_CF_RETRIES=3
     CF_RETRY_COUNT=0
     for i in $(seq 1 $RETRIES); do
-      OUTPUT=$(oc get rosanetwork {{ discovered_rosa_network_name }} -n {{ rosa_hcp_namespace }} 2>&1)
+      OUTPUT=$(oc get rosanetwork "$NETWORK_NAME" -n "$NAMESPACE" 2>&1)
       RC=$?
       if [ $RC -ne 0 ]; then
         if echo "$OUTPUT" | grep -qi "not found\|NotFound\|no resources found"; then
@@ -383,7 +414,7 @@
         fi
       fi
 
-      echo "FAILED - RETRYING: [localhost]: Wait for rosanetwork {{ discovered_rosa_network_name }} deletion to complete ($((RETRIES - i)) retries left)." | tee -a "$LOGFILE"
+      echo "FAILED - RETRYING: [localhost]: Wait for rosanetwork $NETWORK_NAME deletion to complete ($((RETRIES - i)) retries left)." | tee -a "$LOGFILE"
       sleep 10
     done
     echo "Timed out waiting for ROSANetwork deletion" | tee -a "$LOGFILE"
@@ -397,9 +428,8 @@
 
 - name: Final check - verify ROSANetwork is actually gone
   shell: |
-    LOGFILE="{{ agent_monitor_log }}"
     for i in $(seq 1 36); do
-      OUTPUT=$(oc get rosanetwork {{ discovered_rosa_network_name }} -n {{ rosa_hcp_namespace }} 2>&1)
+      OUTPUT=$(oc get rosanetwork "$NETWORK_NAME" -n "$NAMESPACE" 2>&1)
       RC=$?
       if [ $RC -ne 0 ]; then
         if echo "$OUTPUT" | grep -qi "not found\|NotFound\|no resources found"; then
@@ -408,11 +438,15 @@
         fi
         echo "WARNING: oc get failed unexpectedly (rc=$RC): $OUTPUT" | tee -a "$LOGFILE"
       fi
-      echo "FAILED - RETRYING: [localhost]: Final check rosanetwork {{ discovered_rosa_network_name }} deletion ($((36 - i)) retries left)." | tee -a "$LOGFILE"
+      echo "FAILED - RETRYING: [localhost]: Final check rosanetwork $NETWORK_NAME deletion ($((36 - i)) retries left)." | tee -a "$LOGFILE"
       sleep 10
     done
     echo "ROSANetwork still exists after final check" | tee -a "$LOGFILE"
     exit 1
+  environment:
+    LOGFILE: "{{ agent_monitor_log }}"
+    NETWORK_NAME: "{{ discovered_rosa_network_name }}"
+    NAMESPACE: "{{ rosa_hcp_namespace }}"
   register: final_rn_check
   failed_when: false
   changed_when: false
@@ -467,7 +501,11 @@
 
 - name: Emit agent context for CloudFormation verification
   shell: |
-    echo "#AGENT_CONTEXT: resource_name={{ discovered_rosa_network_name }} namespace={{ rosa_hcp_namespace }} resource_type=rosanetwork" | tee -a "{{ agent_monitor_log }}"
+    echo "#AGENT_CONTEXT: resource_name=$NETWORK_NAME namespace=$NAMESPACE resource_type=rosanetwork" | tee -a "$LOGFILE"
+  environment:
+    LOGFILE: "{{ agent_monitor_log }}"
+    NETWORK_NAME: "{{ discovered_rosa_network_name }}"
+    NAMESPACE: "{{ rosa_hcp_namespace }}"
   changed_when: false
   when:
     - wait_for_deletion | bool
@@ -484,12 +522,13 @@
   environment:
     AWS_ACCESS_KEY_ID: "{{ AWS_ACCESS_KEY_ID | default(omit) }}"
     AWS_SECRET_ACCESS_KEY: "{{ AWS_SECRET_ACCESS_KEY | default(omit) }}"
+    LOGFILE: "{{ agent_monitor_log }}"
+    STACK_NAME: "{{ discovered_cf_stack_name | default(cluster_name + '-rosa-network-stack') }}"
+    REGION: "{{ aws_region | default('us-west-2') }}"
+    NETWORK_NAME: "{{ discovered_rosa_network_name }}"
+    NAMESPACE: "{{ rosa_hcp_namespace }}"
+    CFN_SCRIPT: "{{ playbook_dir }}/../scripts/check_cfn_stack_status.py"
   shell: |
-    LOGFILE="{{ agent_monitor_log }}"
-    STACK_NAME="{{ discovered_cf_stack_name | default(cluster_name + '-rosa-network-stack') }}"
-    REGION="{{ aws_region | default('us-west-2') }}"
-    NETWORK_NAME="{{ discovered_rosa_network_name }}"
-    NAMESPACE="{{ rosa_hcp_namespace }}"
     RETRIES=36
     echo "Verifying CloudFormation stack $STACK_NAME cleanup..." | tee -a "$LOGFILE"
     for i in $(seq 1 $RETRIES); do
@@ -499,7 +538,7 @@
         STATUS="$K8S_STATUS"
       else
         # K8s resource gone — try boto3 as fallback
-        STATUS=$(python3 "{{ playbook_dir }}/../scripts/check_cfn_stack_status.py" "$STACK_NAME" "$REGION" 2>&1)
+        STATUS=$(python3 "$CFN_SCRIPT" "$STACK_NAME" "$REGION" 2>&1)
         RC=$?
         if [ $RC -eq 2 ]; then
           echo "WARNING: boto3 not available and K8s resource gone — cannot verify CloudFormation cleanup" | tee -a "$LOGFILE"
@@ -566,7 +605,11 @@
 
 - name: Emit agent context for ROSARoleConfig deletion wait
   shell: |
-    echo "#AGENT_CONTEXT: resource_name={{ discovered_rosa_role_config_name }} namespace={{ rosa_hcp_namespace }} resource_type=rosaroleconfig" | tee -a "{{ agent_monitor_log }}"
+    echo "#AGENT_CONTEXT: resource_name=$ROLE_CONFIG_NAME namespace=$NAMESPACE resource_type=rosaroleconfig" | tee -a "$LOGFILE"
+  environment:
+    LOGFILE: "{{ agent_monitor_log }}"
+    ROLE_CONFIG_NAME: "{{ discovered_rosa_role_config_name }}"
+    NAMESPACE: "{{ rosa_hcp_namespace }}"
   changed_when: false
   when:
     - wait_for_deletion | bool
@@ -575,10 +618,8 @@
 
 - name: Wait for ROSARoleConfig deletion to complete
   shell: |
-    LOGFILE="{{ agent_monitor_log }}"
-    RETRIES={{ (rosaroleconfig_timeout | default(deletion_timeout) | int / 10) | int }}
     for i in $(seq 1 $RETRIES); do
-      OUTPUT=$(oc get rosaroleconfig {{ discovered_rosa_role_config_name }} -n {{ rosa_hcp_namespace }} 2>&1)
+      OUTPUT=$(oc get rosaroleconfig "$ROLE_CONFIG_NAME" -n "$NAMESPACE" 2>&1)
       RC=$?
       if [ $RC -ne 0 ]; then
         if echo "$OUTPUT" | grep -qi "not found\|NotFound\|no resources found"; then
@@ -587,11 +628,16 @@
         fi
         echo "WARNING: oc get failed unexpectedly (rc=$RC): $OUTPUT" | tee -a "$LOGFILE"
       fi
-      echo "FAILED - RETRYING: [localhost]: Wait for rosaroleconfig {{ discovered_rosa_role_config_name }} deletion to complete ($((RETRIES - i)) retries left)." | tee -a "$LOGFILE"
+      echo "FAILED - RETRYING: [localhost]: Wait for rosaroleconfig $ROLE_CONFIG_NAME deletion to complete ($((RETRIES - i)) retries left)." | tee -a "$LOGFILE"
       sleep 10
     done
     echo "Timed out waiting for ROSARoleConfig deletion" | tee -a "$LOGFILE"
     exit 1
+  environment:
+    LOGFILE: "{{ agent_monitor_log }}"
+    RETRIES: "{{ (rosaroleconfig_timeout | default(deletion_timeout) | int / 10) | int }}"
+    ROLE_CONFIG_NAME: "{{ discovered_rosa_role_config_name }}"
+    NAMESPACE: "{{ rosa_hcp_namespace }}"
   register: wait_rrc
   failed_when: false
   when:
@@ -601,9 +647,8 @@
 
 - name: Final check - verify ROSARoleConfig is actually gone
   shell: |
-    LOGFILE="{{ agent_monitor_log }}"
     for i in $(seq 1 18); do
-      OUTPUT=$(oc get rosaroleconfig {{ discovered_rosa_role_config_name }} -n {{ rosa_hcp_namespace }} 2>&1)
+      OUTPUT=$(oc get rosaroleconfig "$ROLE_CONFIG_NAME" -n "$NAMESPACE" 2>&1)
       RC=$?
       if [ $RC -ne 0 ]; then
         if echo "$OUTPUT" | grep -qi "not found\|NotFound\|no resources found"; then
@@ -612,11 +657,15 @@
         fi
         echo "WARNING: oc get failed unexpectedly (rc=$RC): $OUTPUT" | tee -a "$LOGFILE"
       fi
-      echo "FAILED - RETRYING: [localhost]: Final check rosaroleconfig {{ discovered_rosa_role_config_name }} deletion ($((18 - i)) retries left)." | tee -a "$LOGFILE"
+      echo "FAILED - RETRYING: [localhost]: Final check rosaroleconfig $ROLE_CONFIG_NAME deletion ($((18 - i)) retries left)." | tee -a "$LOGFILE"
       sleep 10
     done
     echo "ROSARoleConfig still exists after final check" | tee -a "$LOGFILE"
     exit 1
+  environment:
+    LOGFILE: "{{ agent_monitor_log }}"
+    ROLE_CONFIG_NAME: "{{ discovered_rosa_role_config_name }}"
+    NAMESPACE: "{{ rosa_hcp_namespace }}"
   register: final_rrc_check
   failed_when: false
   changed_when: false
