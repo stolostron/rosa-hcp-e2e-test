@@ -237,9 +237,6 @@
         OCM_API_URL: "{{ lookup('env', 'OCM_API_URL') | default(OCM_API_URL, true) }}"
       no_log: true
 
-    - name: Pre-flight check OCM role linkage to AWS account
-      include_tasks: ../tasks/preflight_check_ocm_role.yml
-
     - name: Provision ROSA HCP cluster with automation
       include_tasks: ../tasks/provision_rosa_hcp_with_automation.yml
 
