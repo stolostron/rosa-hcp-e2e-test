@@ -311,114 +311,115 @@
     RETRIES: "{{ (rosanetwork_timeout | default(deletion_timeout) | int / 10) | int }}"
     NETWORK_NAME: "{{ discovered_rosa_network_name }}"
     NAMESPACE: "{{ rosa_hcp_namespace }}"
-  shell: |
-    ITERATION_COUNT=0
-    MAX_CF_RETRIES=3
-    CF_RETRY_COUNT=0
-    for i in $(seq 1 $RETRIES); do
-      OUTPUT=$(oc get rosanetwork "$NETWORK_NAME" -n "$NAMESPACE" 2>&1)
-      RC=$?
-      if [ $RC -ne 0 ]; then
-        if echo "$OUTPUT" | grep -qi "not found\|NotFound\|no resources found"; then
-          echo "ROSANetwork deleted successfully" | tee -a "$LOGFILE"
-          exit 0
+  ansible.builtin.shell:
+    cmd: |
+      ITERATION_COUNT=0
+      MAX_CF_RETRIES=3
+      CF_RETRY_COUNT=0
+      for i in $(seq 1 $RETRIES); do
+        OUTPUT=$(oc get rosanetwork "$NETWORK_NAME" -n "$NAMESPACE" 2>&1)
+        RC=$?
+        if [ $RC -ne 0 ]; then
+          if echo "$OUTPUT" | grep -qi "not found\|NotFound\|no resources found"; then
+            echo "ROSANetwork deleted successfully" | tee -a "$LOGFILE"
+            exit 0
+          fi
+          echo "WARNING: oc get failed unexpectedly (rc=$RC): $OUTPUT" | tee -a "$LOGFILE"
         fi
-        echo "WARNING: oc get failed unexpectedly (rc=$RC): $OUTPUT" | tee -a "$LOGFILE"
-      fi
 
-      ITERATION_COUNT=$((ITERATION_COUNT + 1))
+        ITERATION_COUNT=$((ITERATION_COUNT + 1))
 
-      # Only check CloudFormation after 3 consecutive failures (avoid API overhead on every iteration)
-      # and only up to MAX_CF_RETRIES times total (prevents infinite recovery loops)
-      if [ "$ITERATION_COUNT" -ge 3 ] && [ "$CF_RETRY_COUNT" -lt "$MAX_CF_RETRIES" ]; then
-        CF_STATUS=$(aws cloudformation describe-stacks \
-          --stack-name "$STACK_NAME" --region "$REGION" \
-          --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "GONE")
-        ITERATION_COUNT=0  # reset after every CF check so next check waits another 3 iterations
-
-        if [ "$CF_STATUS" = "DELETE_FAILED" ]; then
-          echo "#AGENT_CONTEXT: cf_status=DELETE_FAILED stack_name=$STACK_NAME resource_type=rosanetwork" | tee -a "$LOGFILE"
-          echo "CloudFormation stack $STACK_NAME is DELETE_FAILED — attempting force cleanup" | tee -a "$LOGFILE"
-
-          # Get VPC ID from stack
-          VPC_ID=$(aws cloudformation describe-stack-resource \
+        # Only check CloudFormation after 3 consecutive failures (avoid API overhead on every iteration)
+        # and only up to MAX_CF_RETRIES times total (prevents infinite recovery loops)
+        if [ "$ITERATION_COUNT" -ge 3 ] && [ "$CF_RETRY_COUNT" -lt "$MAX_CF_RETRIES" ]; then
+          CF_STATUS=$(aws cloudformation describe-stacks \
             --stack-name "$STACK_NAME" --region "$REGION" \
-            --logical-resource-id VPC \
-            --query 'StackResourceDetail.PhysicalResourceId' \
-            --output text 2>/dev/null)
+            --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "GONE")
+          ITERATION_COUNT=0  # reset after every CF check so next check waits another 3 iterations
 
-          if [ -n "$VPC_ID" ] && [ "$VPC_ID" != "None" ]; then
-            # Safety: VPC_ID comes from the CloudFormation stack's own VPC logical resource,
-            # so it is dedicated to this cluster. BYON-VPC clusters have no VPC logical resource
-            # in their stack, so describe-stack-resource fails and VPC_ID is empty — the
-            # [ -n "$VPC_ID" ] guard above prevents cleanup on shared VPCs.
-            #
-            # NOTE: This VPC cleanup logic is also implemented in agents/remediation_agent.py
-            # (_fix_retry_cloudformation_delete). Keep both in sync when adding new resource types.
-            # The agent additionally handles subnets and internet gateways (TODO: add those here).
-            # The agent path is a concurrent secondary recovery; see PR #135 for architecture notes.
-            echo "Cleaning up VPC $VPC_ID dependencies" | tee -a "$LOGFILE"
-            CLEANUP_ERRORS=0
+          if [ "$CF_STATUS" = "DELETE_FAILED" ]; then
+            echo "#AGENT_CONTEXT: cf_status=DELETE_FAILED stack_name=$STACK_NAME resource_type=rosanetwork" | tee -a "$LOGFILE"
+            echo "CloudFormation stack $STACK_NAME is DELETE_FAILED — attempting force cleanup" | tee -a "$LOGFILE"
 
-            # Delete VPC endpoints first (create ela-attach ENIs that block deletion)
-            VPCE_IDS=$(aws ec2 describe-vpc-endpoints \
-              --region "$REGION" \
-              --filters "Name=vpc-id,Values=$VPC_ID" "Name=vpc-endpoint-state,Values=available,pending,deleting" \
-              --query 'VpcEndpoints[*].VpcEndpointId' --output text 2>/dev/null)
-            VPCE_IDS=$(echo $VPCE_IDS)  # normalize tab-separated output to spaces
-            if [ -n "$VPCE_IDS" ]; then
-              echo "Deleting VPC endpoints: $VPCE_IDS" | tee -a "$LOGFILE"
-              aws ec2 delete-vpc-endpoints --region "$REGION" --vpc-endpoint-ids $VPCE_IDS 2>&1 | tee -a "$LOGFILE" || { CLEANUP_ERRORS=$((CLEANUP_ERRORS + 1)); true; }
-              sleep 20
+            # Get VPC ID from stack
+            VPC_ID=$(aws cloudformation describe-stack-resource \
+              --stack-name "$STACK_NAME" --region "$REGION" \
+              --logical-resource-id VPC \
+              --query 'StackResourceDetail.PhysicalResourceId' \
+              --output text 2>/dev/null)
+
+            if [ -n "$VPC_ID" ] && [ "$VPC_ID" != "None" ]; then
+              # Safety: VPC_ID comes from the CloudFormation stack's own VPC logical resource,
+              # so it is dedicated to this cluster. BYON-VPC clusters have no VPC logical resource
+              # in their stack, so describe-stack-resource fails and VPC_ID is empty — the
+              # [ -n "$VPC_ID" ] guard above prevents cleanup on shared VPCs.
+              #
+              # NOTE: This VPC cleanup logic is also implemented in agents/remediation_agent.py
+              # (_fix_retry_cloudformation_delete). Keep both in sync when adding new resource types.
+              # The agent additionally handles subnets and internet gateways (TODO: add those here).
+              # The agent path is a concurrent secondary recovery; see PR #135 for architecture notes.
+              echo "Cleaning up VPC $VPC_ID dependencies" | tee -a "$LOGFILE"
+              CLEANUP_ERRORS=0
+
+              # Delete VPC endpoints first (create ela-attach ENIs that block deletion)
+              VPCE_IDS=$(aws ec2 describe-vpc-endpoints \
+                --region "$REGION" \
+                --filters "Name=vpc-id,Values=$VPC_ID" "Name=vpc-endpoint-state,Values=available,pending,deleting" \
+                --query 'VpcEndpoints[*].VpcEndpointId' --output text 2>/dev/null)
+              VPCE_IDS=$(echo $VPCE_IDS)  # normalize tab-separated output to spaces
+              if [ -n "$VPCE_IDS" ]; then
+                echo "Deleting VPC endpoints: $VPCE_IDS" | tee -a "$LOGFILE"
+                aws ec2 delete-vpc-endpoints --region "$REGION" --vpc-endpoint-ids $VPCE_IDS 2>&1 | tee -a "$LOGFILE" || { CLEANUP_ERRORS=$((CLEANUP_ERRORS + 1)); true; }
+                sleep 20
+              fi
+
+              # Delete orphaned ENIs — detach first to handle attached interfaces
+              ENI_IDS=$(aws ec2 describe-network-interfaces \
+                --region "$REGION" \
+                --filters "Name=vpc-id,Values=$VPC_ID" \
+                --query 'NetworkInterfaces[*].NetworkInterfaceId' --output text 2>/dev/null)
+              for ENI_ID in $ENI_IDS; do
+                ATTACH_ID=$(aws ec2 describe-network-interfaces \
+                  --region "$REGION" \
+                  --network-interface-ids "$ENI_ID" \
+                  --query 'NetworkInterfaces[0].Attachment.AttachmentId' --output text 2>/dev/null)
+                if [ -n "$ATTACH_ID" ] && [ "$ATTACH_ID" != "None" ]; then
+                  aws ec2 detach-network-interface --region "$REGION" \
+                    --attachment-id "$ATTACH_ID" --force 2>&1 | tee -a "$LOGFILE" || { CLEANUP_ERRORS=$((CLEANUP_ERRORS + 1)); true; }
+                  sleep 5
+                fi
+                aws ec2 delete-network-interface --region "$REGION" --network-interface-id "$ENI_ID" 2>&1 | tee -a "$LOGFILE" || { CLEANUP_ERRORS=$((CLEANUP_ERRORS + 1)); true; }
+              done
+
+              # Delete non-default security groups
+              SG_IDS=$(aws ec2 describe-security-groups \
+                --region "$REGION" \
+                --filters "Name=vpc-id,Values=$VPC_ID" \
+                --query 'SecurityGroups[?GroupName!=`default`].GroupId' --output text 2>/dev/null)
+              for SG_ID in $SG_IDS; do
+                aws ec2 delete-security-group --region "$REGION" --group-id "$SG_ID" 2>&1 | tee -a "$LOGFILE" || { CLEANUP_ERRORS=$((CLEANUP_ERRORS + 1)); true; }
+              done
+
+              # Log summary of VPC cleanup results
+              echo "CF recovery VPC cleanup: $CLEANUP_ERRORS error(s) during resource deletion" | tee -a "$LOGFILE"
             fi
 
-            # Delete orphaned ENIs — detach first to handle attached interfaces
-            ENI_IDS=$(aws ec2 describe-network-interfaces \
-              --region "$REGION" \
-              --filters "Name=vpc-id,Values=$VPC_ID" \
-              --query 'NetworkInterfaces[*].NetworkInterfaceId' --output text 2>/dev/null)
-            for ENI_ID in $ENI_IDS; do
-              ATTACH_ID=$(aws ec2 describe-network-interfaces \
-                --region "$REGION" \
-                --network-interface-ids "$ENI_ID" \
-                --query 'NetworkInterfaces[0].Attachment.AttachmentId' --output text 2>/dev/null)
-              if [ -n "$ATTACH_ID" ] && [ "$ATTACH_ID" != "None" ]; then
-                aws ec2 detach-network-interface --region "$REGION" \
-                  --attachment-id "$ATTACH_ID" --force 2>&1 | tee -a "$LOGFILE" || { CLEANUP_ERRORS=$((CLEANUP_ERRORS + 1)); true; }
-                sleep 5
-              fi
-              aws ec2 delete-network-interface --region "$REGION" --network-interface-id "$ENI_ID" 2>&1 | tee -a "$LOGFILE" || { CLEANUP_ERRORS=$((CLEANUP_ERRORS + 1)); true; }
-            done
-
-            # Delete non-default security groups
-            SG_IDS=$(aws ec2 describe-security-groups \
-              --region "$REGION" \
-              --filters "Name=vpc-id,Values=$VPC_ID" \
-              --query 'SecurityGroups[?GroupName!=`default`].GroupId' --output text 2>/dev/null)
-            for SG_ID in $SG_IDS; do
-              aws ec2 delete-security-group --region "$REGION" --group-id "$SG_ID" 2>&1 | tee -a "$LOGFILE" || { CLEANUP_ERRORS=$((CLEANUP_ERRORS + 1)); true; }
-            done
-
-            # Log summary of VPC cleanup results
-            echo "CF recovery VPC cleanup: $CLEANUP_ERRORS error(s) during resource deletion" | tee -a "$LOGFILE"
+            # Retry the CloudFormation stack deletion
+            echo "Retrying CloudFormation stack deletion: $STACK_NAME" | tee -a "$LOGFILE"
+            aws cloudformation delete-stack --stack-name "$STACK_NAME" --region "$REGION" 2>&1 | tee -a "$LOGFILE" || true
+            CF_RETRY_COUNT=$((CF_RETRY_COUNT + 1))
+            if [ "$CF_RETRY_COUNT" -ge "$MAX_CF_RETRIES" ]; then
+              echo "WARNING: CF recovery attempted $CF_RETRY_COUNT/$MAX_CF_RETRIES times — further attempts suppressed" | tee -a "$LOGFILE"
+            fi
+            sleep 15
           fi
-
-          # Retry the CloudFormation stack deletion
-          echo "Retrying CloudFormation stack deletion: $STACK_NAME" | tee -a "$LOGFILE"
-          aws cloudformation delete-stack --stack-name "$STACK_NAME" --region "$REGION" 2>&1 | tee -a "$LOGFILE" || true
-          CF_RETRY_COUNT=$((CF_RETRY_COUNT + 1))
-          if [ "$CF_RETRY_COUNT" -ge "$MAX_CF_RETRIES" ]; then
-            echo "WARNING: CF recovery attempted $CF_RETRY_COUNT/$MAX_CF_RETRIES times — further attempts suppressed" | tee -a "$LOGFILE"
-          fi
-          sleep 15
         fi
-      fi
 
-      echo "FAILED - RETRYING: [localhost]: Wait for rosanetwork $NETWORK_NAME deletion to complete ($((RETRIES - i)) retries left)." | tee -a "$LOGFILE"
-      sleep 10
-    done
-    echo "Timed out waiting for ROSANetwork deletion" | tee -a "$LOGFILE"
-    exit 1
+        echo "FAILED - RETRYING: [localhost]: Wait for rosanetwork $NETWORK_NAME deletion to complete ($((RETRIES - i)) retries left)." | tee -a "$LOGFILE"
+        sleep 10
+      done
+      echo "Timed out waiting for ROSANetwork deletion" | tee -a "$LOGFILE"
+      exit 1
   register: wait_rn
   failed_when: false
   when:
