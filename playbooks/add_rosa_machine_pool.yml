@@ -207,19 +207,21 @@
           MachinePool: {{ mp_result.stdout }}
           ROSAMachinePool: {{ rmp_result.stdout }}
 
+    - name: Record pool creation start time
+      set_fact:
+        pool_start_epoch: "{{ now(utc=true).strftime('%s') }}"
+
     - name: Wait for ROSAMachinePool to become ready
       shell: |
         READY=$(oc get rosamachinepool {{ pool_name }} -n {{ rosa_hcp_namespace }} \
           -o jsonpath='{.status.ready}' 2>/dev/null || echo "false")
         REPLICAS=$(oc get rosamachinepool {{ pool_name }} -n {{ rosa_hcp_namespace }} \
           -o jsonpath='{.status.replicas}' 2>/dev/null || echo "0")
-        ELAPSED=$(( $(date +%s) - {{ start_epoch }} ))
+        ELAPSED=$(( $(date +%s) - {{ pool_start_epoch }} ))
         MINS=$((ELAPSED / 60))
         SECS=$((ELAPSED % 60))
         echo "[${MINS}m${SECS}s] Pool status: ready=${READY} replicas=${REPLICAS}" >&2
         echo "${READY}|${REPLICAS}"
-      vars:
-        start_epoch: "{{ now(utc=true).strftime('%s') }}"
       register: pool_status
       until: >
         pool_status.stdout is defined and
@@ -233,6 +235,7 @@
       set_fact:
         final_ready: "{{ pool_status.stdout.split('|')[0] | default('false') }}"
         final_replicas: "{{ pool_status.stdout.split('|')[1] | default('0') }}"
+        total_pool_seconds: "{{ now(utc=true).strftime('%s') | int - pool_start_epoch | int }}"
 
     - name: Verify pool is ready
       fail:
@@ -259,6 +262,7 @@
           Replicas: {{ final_replicas }}
           Version: {{ pool_version }}
           Status: Ready
+          Time to Ready: {{ (total_pool_seconds | int // 60) }}m {{ (total_pool_seconds | int % 60) }}s
 
           Verify:
             oc get rosamachinepool {{ pool_name }} -n {{ rosa_hcp_namespace }}
