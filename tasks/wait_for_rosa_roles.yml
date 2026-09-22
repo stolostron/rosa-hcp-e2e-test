@@ -168,6 +168,42 @@
         current_time: "{{ ansible_date_time.epoch | int }}"
         wait_duration: "{{ (ansible_date_time.epoch | int) - (start_time | int) }}"
 
+    - name: Save failure diagnostics to artifact directory
+      shell: |
+        ARTIFACT_BASE="{{ lookup('env', 'ARTIFACT_DIR') }}"
+        DIAG_DIR="${ARTIFACT_BASE:-{{ output_dir | default('/tmp') }}/diagnostics}"
+        mkdir -p "$DIAG_DIR"
+        DIAG_FILE="$DIAG_DIR/rosaroleconfig-wait-failure-$(date +%Y%m%dT%H%M%S).txt"
+        {
+          echo "===== ROSARoleConfig Wait Failure Diagnostics ====="
+          echo "Timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          echo "Resource: {{ rosa_role_config_name }}"
+          echo "Namespace: {{ rosa_hcp_namespace }}"
+          echo "Wait Duration: {{ wait_duration }} seconds"
+          echo ""
+          echo "===== oc describe rosaroleconfig ====="
+          oc describe rosaroleconfig -n {{ rosa_hcp_namespace }} 2>&1 || true
+          echo ""
+          echo "===== oc get rosaroleconfig -o yaml ====="
+          oc get rosaroleconfig -n {{ rosa_hcp_namespace }} -o yaml 2>&1 || true
+          echo ""
+          echo "===== CAPA controller logs (last 500 lines) ====="
+          oc logs -n {{ capa_namespace }} \
+            -l control-plane=controller-manager --tail=500 2>&1 || true
+          echo ""
+          echo "===== Namespace events (sorted by timestamp) ====="
+          oc get events -n {{ rosa_hcp_namespace }} \
+            --sort-by='.lastTimestamp' 2>&1 || true
+        } > "$DIAG_FILE" 2>&1
+        echo "Diagnostics saved to: $DIAG_FILE"
+      register: wait_diag_capture
+      failed_when: false
+      changed_when: false
+
+    - name: Display diagnostic file location
+      debug:
+        msg: "{{ wait_diag_capture.stdout | default('Diagnostics capture failed') }}"
+
     - name: Provide troubleshooting guidance
       debug:
         msg: |

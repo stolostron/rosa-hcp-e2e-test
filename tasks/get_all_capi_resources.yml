@@ -73,3 +73,25 @@
     - name: Display combined output
       debug:
         var: combined_resources_output
+
+    - name: Determine artifact output directory
+      set_fact:
+        gather_artifact_dir: >-
+          {{ lookup('env', 'ARTIFACT_DIR') |
+             default(lookup('env', 'HOME') + '/output/rosa-capa-resources', true) }}
+
+    - name: Ensure artifact directory exists
+      file:
+        path: "{{ gather_artifact_dir }}"
+        state: directory
+        mode: '0755'
+
+    - name: Write gathered resources to artifact file
+      copy:
+        content: "{{ combined_resources_output }}"
+        dest: "{{ gather_artifact_dir }}/inspect.txt"
+        mode: '0644'
+
+    - name: Display artifact file location
+      debug:
+        msg: "Gathered resources written to {{ gather_artifact_dir }}/inspect.txt"
