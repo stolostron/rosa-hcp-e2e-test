@@ -122,56 +122,23 @@
     - rosa_role_config_apply_result is defined
     - rosa_role_config_apply_result.result is defined
 
-- name: Wait for ROSARoleConfig to be ready with status logging
+- name: Wait for ROSARoleConfig to be ready
   when:
     - not (rosa_role_config_exists | default(false) | bool and rosa_role_config_is_ready | default(false) | bool)
   block:
-    - name: Set diagnostics directory
-      set_fact:
-        diag_dir: >-
-          {{ lookup('env', 'ARTIFACT_DIR') | default(output_dir + '/diagnostics', true) }}
-
-    - name: Ensure diagnostics directory exists
-      file:
-        path: "{{ diag_dir }}"
-        state: directory
-        mode: '0755'
-
-    - name: Poll ROSARoleConfig status until Ready
+    - name: Wait for ROSARoleConfig condition Ready
       shell: |
-        STATUS_JSON=$(oc get rosaroleconfig {{ rosa_role_config_name }} \
+        oc wait --for=condition=Ready \
+          rosaroleconfig/{{ rosa_role_config_name }} \
           -n {{ rosa_hcp_namespace }} \
-          -o jsonpath='{.status.conditions}' 2>/dev/null || echo '[]')
-        echo "conditions: $STATUS_JSON"
-        READY=$(echo "$STATUS_JSON" | python3 -c "
-        import json, sys
-        try:
-            conds = json.load(sys.stdin)
-            ready = [c for c in conds
-                     if c.get('type') == 'Ready'
-                     and c.get('status') == 'True']
-            print('true' if ready else 'false')
-        except Exception:
-            print('false')
-        " 2>/dev/null || echo 'false')
-        echo "ready=$READY"
-        [ "$READY" = "true" ]
-      register: rosa_role_config_poll
-      until: rosa_role_config_poll.rc == 0
-      retries: 5
-      delay: 180
-      changed_when: false
-
-    - name: Get final ROSARoleConfig status
-      shell: >-
-        oc get rosaroleconfig {{ rosa_role_config_name }}
-        -n {{ rosa_hcp_namespace }} -o json
-      register: rosa_role_config_ready_result_raw
+          --timeout=900s
 
   rescue:
     - name: Capture ROSARoleConfig failure diagnostics
       shell: |
-        DIAG_FILE="{{ diag_dir }}/rosaroleconfig-failure-$(date +%Y%m%dT%H%M%S).txt"
+        DIAG_DIR="{{ lookup('env', 'ARTIFACT_DIR') | default(output_dir + '/diagnostics', true) }}"
+        mkdir -p "$DIAG_DIR"
+        DIAG_FILE="$DIAG_DIR/rosaroleconfig-failure-$(date +%Y%m%dT%H%M%S).txt"
         {
           echo "===== ROSARoleConfig Failure Diagnostics ====="
           echo "Timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -203,27 +170,18 @@
           ROSARoleConfig provisioning failed. Diagnostics saved to
           {{ diag_capture.stdout_lines | default(['(unknown path)']) | last }}
 
-    - name: Display last poll status for visibility
-      debug:
-        msg: "{{ rosa_role_config_poll.results | default([]) | map(attribute='stdout_lines') | list }}"
-      when: rosa_role_config_poll is defined
-      failed_when: false
-
     - name: Fail with clear message after diagnostics captured
       fail:
         msg: >-
           ROSARoleConfig {{ rosa_role_config_name }} did not reach Ready
-          within 15 minutes (5 retries x 180s). Diagnostics have been
-          saved to the artifacts directory for post-mortem analysis.
+          within 15 minutes. Diagnostics have been saved to the artifacts
+          directory for post-mortem analysis.
 
-- name: Get final ROSARoleConfig status (fallback)
-  shell: >-
-    oc get rosaroleconfig {{ rosa_role_config_name }}
-    -n {{ rosa_hcp_namespace }} -o json
+- name: Get final ROSARoleConfig status
+  shell: oc get rosaroleconfig {{ rosa_role_config_name }} -n {{ rosa_hcp_namespace }} -o json
   register: rosa_role_config_ready_result_raw
   when:
     - not (rosa_role_config_exists | default(false) | bool and rosa_role_config_is_ready | default(false) | bool)
-    - rosa_role_config_ready_result_raw is not defined
 
 - name: Parse ready result
   set_fact:
