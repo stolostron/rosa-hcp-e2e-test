@@ -343,12 +343,12 @@
           • ROSANetwork reference: {{ rosa_network_name }}
           {% endif %}
 
-    - name: Determine which template to use
+    - name: Determine which template to use (auto-select unless overridden)
       set_fact:
         cluster_template_name: >-
-          {%- if (create_rosa_roles | bool) or (create_rosa_network | bool) -%}rosa-controlplane-only{%- else -%}rosa-control-plane{%- endif -%}
+          {%- if cluster_template_name is defined and cluster_template_name -%}{{ cluster_template_name }}{%- elif (create_rosa_roles | bool) or (create_rosa_network | bool) -%}rosa-controlplane-only{%- else -%}rosa-control-plane{%- endif -%}
         selected_template_category: >-
-          {%- if (create_rosa_roles | bool) or (create_rosa_network | bool) -%}features{%- else -%}cluster-configs{%- endif -%}
+          {%- if selected_template_category is defined and selected_template_category -%}{{ selected_template_category }}{%- elif (create_rosa_roles | bool) or (create_rosa_network | bool) -%}features{%- else -%}cluster-configs{%- endif -%}
 
     - name: Display selected template
       debug:
