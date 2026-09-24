@@ -213,13 +213,46 @@ class MonitoringAgent(BaseAgent):
         self.issue_callback(issue_type, context, issue)
         return True
 
-    def mark_issue_resolved(self, issue_type: str, resource_key: str = None):
-        """Mark an issue as resolved (called by remediation agent on success)."""
+    def mark_issue_resolved(self, issue_type: str, resource_key: str = None,
+                            verify_fn: Optional[Callable] = None):
+        """Mark an issue as resolved (called by remediation agent on success).
+
+        A fix returning True does not always mean the underlying resource is
+        actually gone — e.g., rosanetwork_stuck_deletion's CF-retry can report
+        success while the CloudFormation stack / VPC is still present (a leaked
+        load balancer holding ENIs). Callers may pass ``verify_fn`` — a
+        zero-arg callable returning True only when the resource is confirmed
+        gone. If it returns False we do NOT flip to RESOLVED, leaving the issue
+        in FAILED so the remaining attempts (up to max_attempts) still fire.
+
+        Issue types that don't need verification simply omit ``verify_fn`` and
+        behave exactly as before.
+        """
         if resource_key is None:
             resource_key = self._build_resource_key()
         tracking_key = f"{issue_type}:{resource_key}"
         tracked = self._tracked_issues.get(tracking_key)
         if tracked:
+            if verify_fn is not None:
+                try:
+                    confirmed_gone = verify_fn()
+                except Exception as e:
+                    # Verification errors are non-fatal — treat as "not
+                    # confirmed gone" and keep retrying rather than crashing.
+                    self.log(f"Resolution verification error for {issue_type}: {e}", "warning")
+                    confirmed_gone = False
+                if not confirmed_gone:
+                    # Fix reported success but the resource is still present.
+                    # Keep the issue non-terminal so remaining attempts fire.
+                    tracked.state = IssueState.FAILED
+                    tracked.last_updated = time.time()
+                    self.log(
+                        f"Fix reported success but {issue_type} for {resource_key} "
+                        f"is still present — not marking resolved "
+                        f"(attempt {tracked.attempts}/{tracked.max_attempts})",
+                        "warning",
+                    )
+                    return
             tracked.state = IssueState.RESOLVED
             tracked.last_updated = time.time()
             self.log(f"Issue resolved: {issue_type} for {resource_key}", "success")

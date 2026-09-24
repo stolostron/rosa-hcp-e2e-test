@@ -185,7 +185,16 @@ class TestSuiteRunner:
 
                     if success:
                         print(f"{Colors.GREEN}   Fix applied: {message}{Colors.ENDC}\n")
-                        self.monitor_agent.mark_issue_resolved(issue_type, resource_key)
+                        # For rosanetwork_stuck_deletion the CF-retry fix can
+                        # report success while the CloudFormation stack / VPC is
+                        # still present (e.g., a leaked load balancer). Verify the
+                        # stack is actually gone before marking resolved so the
+                        # remaining attempts still fire if it isn't. Other issue
+                        # types pass no verify_fn and behave as before.
+                        verify_fn = None
+                        if issue_type == "rosanetwork_stuck_deletion":
+                            verify_fn = self._make_rosanetwork_resolution_verifier(diagnosis)
+                        self.monitor_agent.mark_issue_resolved(issue_type, resource_key, verify_fn=verify_fn)
                     else:
                         print(f"{Colors.YELLOW}   Fix result: {message}{Colors.ENDC}\n")
                         self.monitor_agent.mark_issue_failed(issue_type, resource_key)
@@ -199,6 +208,47 @@ class TestSuiteRunner:
         except Exception as e:
             print(f"{Colors.YELLOW}   AI Agent error: {str(e)}{Colors.ENDC}\n")
             self.monitor_agent.mark_issue_failed(issue_type, resource_key)
+
+    def _make_rosanetwork_resolution_verifier(self, diagnosis: Dict):
+        """Build a verify_fn that confirms the ROSANetwork's CloudFormation
+        stack is actually gone before the issue is marked resolved.
+
+        The CF-retry fix can report success (delete re-issued) while the stack
+        is still DELETE_IN_PROGRESS/DELETE_FAILED — e.g., a leaked ingress load
+        balancer still holding ENIs + a subnet. We re-check stack status via the
+        diagnostic agent's AWS client and only confirm resolution when the stack
+        is GONE/DELETE_COMPLETE. Returning False keeps the issue non-terminal so
+        the remaining attempts fire.
+        """
+        fix_params = diagnosis.get("fix_parameters", {}) or {}
+        stack_name = fix_params.get("stack_name")
+        region = fix_params.get("region")
+
+        def _verify() -> bool:
+            # No stack name to check (e.g., finalizer-only path) — nothing to
+            # verify, trust the fix result.
+            if not stack_name or not self.diagnostic_agent:
+                return True
+            # Pass the region THROUGH _get_cloudformation_stack_status via a
+            # minimal resource_info carrying spec.region — the same shape real
+            # callers use (resource_info["spec"]["region"]). This preserves the
+            # K8s .status.stackStatus fast-path while ensuring the AWS fallback
+            # queries the correct region. Without this the helper defaults to
+            # us-west-2 and can report a stack in another region as GONE,
+            # producing a false-positive "resolved".
+            resource_info = {"spec": {"region": region}} if region else None
+            status = self.diagnostic_agent._get_cloudformation_stack_status(
+                stack_name, resource_info=resource_info
+            )
+            if status in ("GONE", "DELETE_COMPLETE"):
+                return True
+            print(
+                f"{Colors.YELLOW}   Verification: CloudFormation stack {stack_name} "
+                f"still present (status: {status}) — resource not yet gone{Colors.ENDC}"
+            )
+            return False
+
+        return _verify
 
     def load_test_suite(self, suite_id: str) -> Optional[Dict]:
         """Load test suite JSON from file."""
