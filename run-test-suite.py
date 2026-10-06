@@ -42,6 +42,12 @@ from typing import Dict, List, Optional, Tuple
 
 import yaml
 
+# Per-feature verification results. The playbook writes this at a fixed path
+# (it has no view of the runner's dated output layout); the runner reads it to
+# expand JUnit testcases and archives a dated copy alongside the other reports.
+FEATURE_VERIFICATION_FILE = "feature-verification.json"
+FEATURE_VERIFICATION_PLAYBOOK = "verify_feature_flags.yml"
+
 # AI Agent Framework (optional - only imported if --ai-agent flag is used)
 try:
     from agents import MonitoringAgent, DiagnosticAgent, RemediationAgent, LearningAgent
@@ -109,6 +115,17 @@ class TestSuiteRunner:
         self.dry_run = dry_run
         self.verbosity = verbosity
         self.suite_label = None  # For generating descriptive filenames
+        # Used to tell this run's feature-verification artifact from a stale one.
+        self._started_at = time.time()
+        # Ansible output preserved as <system-out> when a suite's testcases were
+        # expanded per feature and the playbook-level log would otherwise be lost.
+        self._suite_output: Dict[str, str] = {}
+        # save_results() runs once per --format (3x under the default "all");
+        # the artifact archive must happen once per run, not once per format.
+        self._artifact_archived = False
+        # Counts from the last JUnit build, so the console line and the XML are
+        # one derivation rather than two that can drift.
+        self._last_junit_counts: Optional[Dict[str, int]] = None
         self.results = {
             "start_time": None,
             "end_time": None,
@@ -240,6 +257,7 @@ class TestSuiteRunner:
         if not playbook_path.exists():
             return {
                 "name": playbook_name,
+                "file": playbook_file,
                 "success": False,
                 "error": f"Playbook not found: {playbook_path}",
                 "duration": 0
@@ -386,6 +404,7 @@ class TestSuiteRunner:
 
                 return {
                     "name": playbook_name,
+                    "file": playbook_file,
                     "description": playbook.get("description", ""),
                     "test_case_id": playbook.get("test_case_id", ""),
                     "success": True,
@@ -397,6 +416,7 @@ class TestSuiteRunner:
 
                 return {
                     "name": playbook_name,
+                    "file": playbook_file,
                     "description": playbook.get("description", ""),
                     "test_case_id": playbook.get("test_case_id", ""),
                     "success": False,
@@ -410,6 +430,7 @@ class TestSuiteRunner:
             print(f"{Colors.RED}✗ Timeout after {self._format_duration(duration)}{Colors.ENDC}")
             return {
                 "name": playbook_name,
+                "file": playbook_file,
                 "description": playbook.get("description", ""),
                 "test_case_id": playbook.get("test_case_id", ""),
                 "success": False,
@@ -422,6 +443,7 @@ class TestSuiteRunner:
             print(f"{Colors.RED}✗ Error: {str(e)}{Colors.ENDC}")
             return {
                 "name": playbook_name,
+                "file": playbook_file,
                 "description": playbook.get("description", ""),
                 "test_case_id": playbook.get("test_case_id", ""),
                 "success": False,
@@ -592,6 +614,17 @@ class TestSuiteRunner:
             latest_file = self.results_dir / f"latest{label_part}.xml"
             with open(latest_file, 'w') as f:
                 f.write(junit_content)
+
+        # Archive this run's per-feature results next to the report, in any
+        # format. The fixed-path copy is overwritten by the next run; the dated
+        # copy is what makes run-over-run comparison possible later.
+        if not self._artifact_archived:
+            feature_data = self.load_feature_verification()
+            if feature_data:
+                archived = results_date_dir / f"feature-verification{label_part}-{timestamp}.json"
+                with open(archived, 'w') as f:
+                    json.dump(feature_data, f, indent=2)
+                self._artifact_archived = True
 
         return output_file
 
@@ -827,91 +860,248 @@ class TestSuiteRunner:
 
         return html
 
+    def load_feature_verification(self) -> Optional[Dict]:
+        """Read the per-feature results stage 21 writes, if this run wrote them.
+
+        The artifact lives at a fixed path so the playbook does not need to know
+        the runner's dated output layout. That makes a stale file from an
+        earlier run possible, so only accept one modified since this run began.
+        """
+        path = self.results_dir / FEATURE_VERIFICATION_FILE
+        try:
+            if path.stat().st_mtime < self._started_at:
+                return None
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, ValueError):
+            return None
+        return data if isinstance(data, dict) else None
+
+    def _feature_testcases(self, playbook: Dict, feature_data: Optional[Dict]) -> Optional[List[Dict]]:
+        """Expand the feature-verification playbook into one testcase per feature.
+
+        Returns None when expansion does not apply (different playbook, no
+        artifact, or an artifact with no features) so the caller falls back to
+        the single playbook-level testcase. That fallback matters: if the
+        playbook died before writing the artifact — a login failure, a timeout —
+        there are no per-feature results to report and the raw error is what the
+        reader needs.
+        """
+        if not feature_data:
+            return None
+        if not str(playbook.get("file", "")).endswith(FEATURE_VERIFICATION_PLAYBOOK):
+            return None
+        # Shape-check rather than trust: a malformed artifact must not raise out
+        # of report generation and discard an otherwise-complete 75-minute run.
+        features = feature_data.get("features")
+        if not isinstance(features, list) or not features:
+            return None
+
+        cases = []
+
+        # A degraded run verified only the CRD side of every feature. Without a
+        # testcase of its own that fact lives in a debug line nobody reads, and
+        # the build goes green on half the evidence. Failed under CI (matching
+        # the playbook, which also fails there), skipped locally so offline runs
+        # stay usable while still showing up in the report.
+        env = feature_data.get("environment") or {}
+        # `is True`, not truthiness: the playbook templates this field, and a
+        # templated scalar only survives as a real bool because ansible-core
+        # special-cases "True"/"False". Under jinja2_native it becomes the
+        # string "False", which is truthy — every CI build would then grow a
+        # spurious ocm_reachability failure on a perfectly healthy run.
+        if env.get("degraded") is True:
+            reason = str(env.get("degraded_reason")
+                         or "Verification ran without OCM; CRD side only").strip()
+            cases.append({
+                "classname": "FeatureVerification",
+                "name": "ocm_reachability",
+                "time": 0.0,
+                "outcome": "failed" if _in_ci() else "skipped",
+                "message": reason,
+                "text": reason,
+            })
+
+        for index, feat in enumerate(features):
+            if not isinstance(feat, dict):
+                continue
+            status = feat.get("status", "passed")
+            detail = feat.get("detail", "")
+            if status == "failed":
+                outcome = "failed"
+                message = detail or "Feature was requested but not found in the cluster spec"
+            elif status == "warned":
+                # A warn means the installed CRD has no field for this feature —
+                # a platform limitation, not our bug. JUnit 'skipped' keeps the
+                # build green while still surfacing it per feature, which is
+                # exactly the distinction you need on a new OpenShift release.
+                outcome = "skipped"
+                message = detail or f"CRD has no field '{feat.get('field', '')}' — platform limitation"
+            elif status == "passed":
+                outcome, message = "passed", ""
+            else:
+                # Fail closed. An unrecognised status is exactly the case where
+                # a green testcase is the wrong answer — the producing playbook
+                # and this file are edited independently.
+                outcome = "error"
+                message = (f"Unrecognised feature status {status!r} in "
+                           f"{FEATURE_VERIFICATION_FILE}")
+
+            cases.append({
+                # Stable classname so CI can trend one feature across builds.
+                "classname": "FeatureVerification",
+                "name": str(feat.get("id") or f"feature-{index}"),
+                # Per-feature timing is not measured. The real elapsed time stays
+                # on the enclosing <testsuite>; splitting it evenly across
+                # features would be a fabricated number.
+                "time": 0.0,
+                "outcome": outcome,
+                "message": message,
+                "text": message,
+            })
+        return cases
+
+    def _junit_testcases(self, suite: Dict, feature_data: Optional[Dict]) -> List[Dict]:
+        """Normalize one suite's playbooks into JUnit testcase descriptors."""
+        cases: List[Dict] = []
+        for playbook in suite["playbooks"]:
+            expanded = self._feature_testcases(playbook, feature_data)
+            if expanded is not None:
+                cases.extend(expanded)
+
+                # The expansion replaces the playbook-level testcase, and with
+                # it the ansible log that was the only material for diagnosing
+                # a failure. Per-feature detail says *which* feature broke; the
+                # log says why. Keep both.
+                #
+                # If the playbook failed but no expanded case did, the failure
+                # happened outside the per-feature results entirely — today the
+                # artifact is written before both `fail:` tasks, so that means
+                # something after the write. Without this the suite would be
+                # reported all-green on a non-zero exit.
+                if not playbook["success"]:
+                    self._suite_output[suite["name"]] = playbook.get("output", "")
+                    if not any(c["outcome"] in ("failed", "error") for c in expanded):
+                        cases.append({
+                            "classname": f"{suite['name']} {playbook['name']}",
+                            "name": f"{playbook['name']} (playbook exit)",
+                            "time": round(playbook["duration"], 3),
+                            "outcome": "error" if playbook.get("is_error") else "failed",
+                            "message": playbook.get(
+                                "error", "Playbook failed after writing per-feature results"),
+                            "text": (f"Playbook: {playbook['name']}\n"
+                                     f"Error: {playbook.get('error', 'Unknown error')}\n"
+                                     f"\nOutput:\n{playbook.get('output', '')}"),
+                        })
+                continue
+
+            test_case_id = playbook.get("test_case_id", "")
+            description = playbook.get("description", playbook["name"])
+            name = f"{test_case_id}: {description}" if test_case_id else description
+
+            # A testcase is an ERROR (infrastructure/timeout) rather than a
+            # FAILURE (assertion) when it carries is_error.
+            if not playbook["success"]:
+                outcome = "error" if playbook.get("is_error") else "failed"
+                message = playbook.get("error", "Test failed")
+                text = f"Playbook: {playbook['name']}\n"
+                text += f"Error: {playbook.get('error', 'Unknown error')}\n"
+                if playbook.get("output"):
+                    text += f"\nOutput:\n{playbook['output']}"
+            elif playbook.get("skipped"):
+                outcome, message, text = "skipped", "", ""
+            else:
+                outcome, message, text = "passed", "", ""
+
+            cases.append({
+                "classname": f"{suite['name']} {name}",
+                "name": name,
+                "time": round(playbook["duration"], 3),
+                "outcome": outcome,
+                "message": message,
+                "text": text,
+            })
+        return cases
+
+    @property
+    def last_junit_counts(self) -> Optional[Dict[str, int]]:
+        """Counts from the most recent JUnit build, or None if none ran yet."""
+        return self._last_junit_counts
+
     def _generate_junit_xml(self) -> str:
-        """Generate JUnit XML test report for CI/CD integration."""
+        """Generate JUnit XML test report for CI/CD integration.
+
+        When stage 21 wrote per-feature results, its single playbook testcase is
+        replaced by one testcase per feature. Without that, a feature regression
+        shows up in CI only as 'Verify Feature Flags failed' plus a large stdout
+        blob, and no single feature can be tracked across builds.
+        """
         import xml.etree.ElementTree as ET
         from xml.dom import minidom
 
-        # A testcase is an ERROR (infrastructure/timeout) rather than a
-        # FAILURE (assertion) when it carries is_error. Compute the top-level
-        # totals from the actual playbook results so the XML never misreports
-        # (previously errors/skipped were hardcoded to 0, which masked timeouts
-        # and could confuse CI health reporting).
-        all_playbooks = [
-            p for suite in self.results.get('suites', [])
-            for p in suite['playbooks']
+        feature_data = self.load_feature_verification()
+        self._suite_output = {}
+
+        # Build every suite's testcases first so the counts and the elements are
+        # derived from the same list and cannot drift apart.
+        suite_cases = [
+            (suite, self._junit_testcases(suite, feature_data))
+            for suite in self.results.get("suites", [])
         ]
-        total_errors = sum(1 for p in all_playbooks if not p['success'] and p.get('is_error'))
-        total_failures = sum(1 for p in all_playbooks if not p['success'] and not p.get('is_error'))
-        total_skipped = sum(1 for p in all_playbooks if p.get('skipped'))
+        all_cases = [c for _, cases in suite_cases for c in cases]
 
-        # Derive the test count from the playbooks actually reported here, not
-        # from self.results['total_tests'] — that counter is overwritten per
-        # suite (run_test_suite sets it to len(playbooks) of the last suite),
-        # so on a multi-suite run it would disagree with the failures/errors
-        # totals summed across all suites and produce an inconsistent header.
-        total_tests = len(all_playbooks)
+        def _tally(cases, outcome):
+            return sum(1 for c in cases if c["outcome"] == outcome)
 
-        # Create root testsuites element
         testsuites = ET.Element('testsuites')
         testsuites.set('name', 'ROSA HCP Test Suite')
-        testsuites.set('tests', str(total_tests))
-        testsuites.set('failures', str(total_failures))
-        testsuites.set('errors', str(total_errors))
-        testsuites.set('skipped', str(total_skipped))
+        # Derive the test count from the testcases actually reported here, not
+        # from self.results['total_tests'] — that counter is overwritten per
+        # suite, so on a multi-suite run it would disagree with the totals.
+        testsuites.set('tests', str(len(all_cases)))
+        testsuites.set('failures', str(_tally(all_cases, 'failed')))
+        testsuites.set('errors', str(_tally(all_cases, 'error')))
+        testsuites.set('skipped', str(_tally(all_cases, 'skipped')))
         testsuites.set('time', str(round(self.results['duration'], 3)))
 
-        # Add each suite as a testsuite element
-        for suite in self.results.get('suites', []):
+        for suite, cases in suite_cases:
             testsuite = ET.SubElement(testsuites, 'testsuite')
             testsuite.set('name', suite['name'])
             testsuite.set('timestamp', suite['start_time'])
-            testsuite.set('tests', str(len(suite['playbooks'])))
+            testsuite.set('tests', str(len(cases)))
             testsuite.set('time', str(round(suite['duration'], 3)))
+            testsuite.set('failures', str(_tally(cases, 'failed')))
+            testsuite.set('errors', str(_tally(cases, 'error')))
+            testsuite.set('skipped', str(_tally(cases, 'skipped')))
 
-            # Count failures/errors/skipped in this suite from real results.
-            suite_errors = sum(1 for p in suite['playbooks'] if not p['success'] and p.get('is_error'))
-            suite_failures = sum(1 for p in suite['playbooks'] if not p['success'] and not p.get('is_error'))
-            suite_skipped = sum(1 for p in suite['playbooks'] if p.get('skipped'))
-            testsuite.set('failures', str(suite_failures))
-            testsuite.set('errors', str(suite_errors))
-            testsuite.set('skipped', str(suite_skipped))
-
-            # Add each playbook as a testcase
-            for playbook in suite['playbooks']:
+            for case in cases:
                 testcase = ET.SubElement(testsuite, 'testcase')
+                testcase.set('name', case['name'])
+                testcase.set('classname', case['classname'])
+                testcase.set('time', str(case['time']))
 
-                # Build testcase name with test_case_id if present
-                test_case_id = playbook.get('test_case_id', '')
-                description = playbook.get('description', playbook['name'])
-
-                if test_case_id:
-                    testcase_name = f"{test_case_id}: {description}"
-                else:
-                    testcase_name = description
-
-                testcase.set('name', testcase_name)
-
-                # Classname combines suite name + testcase name
-                testcase.set('classname', f"{suite['name']} {testcase_name}")
-                testcase.set('time', str(round(playbook['duration'], 3)))
-
-                # If failed, add a <failure> (assertion) or <error>
-                # (infrastructure/timeout) element with details.
-                if not playbook['success']:
-                    tag = 'error' if playbook.get('is_error') else 'failure'
+                if case['outcome'] in ('failed', 'error'):
+                    tag = 'error' if case['outcome'] == 'error' else 'failure'
                     elem = ET.SubElement(testcase, tag)
                     elem.set('type', 'TestError' if tag == 'error' else 'TestFailure')
-                    elem.set('message', playbook.get('error', 'Test failed'))
+                    elem.set('message', case['message'] or 'Test failed')
+                    elem.text = case['text']
+                elif case['outcome'] == 'skipped':
+                    skipped = ET.SubElement(testcase, 'skipped')
+                    if case['message']:
+                        skipped.set('message', case['message'])
 
-                    # Add full error details as text content
-                    error_text = f"Playbook: {playbook['name']}\n"
-                    error_text += f"Error: {playbook.get('error', 'Unknown error')}\n"
-                    if 'output' in playbook and playbook['output']:
-                        error_text += f"\nOutput:\n{playbook['output']}"
-                    elem.text = error_text
-                elif playbook.get('skipped'):
-                    ET.SubElement(testcase, 'skipped')
+            # Attach the ansible log once per suite rather than per feature.
+            captured = self._suite_output.get(suite['name'])
+            if captured:
+                ET.SubElement(testsuite, 'system-out').text = captured
+
+        self._last_junit_counts = {
+            "tests": len(all_cases),
+            "failures": _tally(all_cases, 'failed'),
+            "errors": _tally(all_cases, 'error'),
+            "skipped": _tally(all_cases, 'skipped'),
+        }
 
         # Pretty print XML
         xml_str = ET.tostring(testsuites, encoding='unicode')
@@ -1000,6 +1190,15 @@ class TestSuiteRunner:
             hours = int(seconds / 3600)
             minutes = int((seconds % 3600) / 60)
             return f"{hours}h {minutes}m"
+
+
+def _in_ci() -> bool:
+    """True when running under CI.
+
+    Presence alone is the wrong test: CI=false or CI=0 would otherwise mean
+    "yes, CI". Matches the `| bool` check in verify_feature_flags.yml.
+    """
+    return os.environ.get("CI", "").strip().lower() not in ("", "0", "false", "no")
 
 
 def main():
@@ -1255,7 +1454,7 @@ Examples:
         input_warnings = fm.check_required_inputs(resolved, extra_vars)
         for warn in input_warnings:
             print(f"{Colors.YELLOW}Warning: {warn}{Colors.ENDC}")
-        if input_warnings and os.environ.get('CI'):
+        if input_warnings and _in_ci():
             print(f"{Colors.RED}Error: Required feature inputs missing in CI mode{Colors.ENDC}")
             return 1
 
@@ -1344,15 +1543,14 @@ Examples:
             # UNSTABLE by the junit step can be traced back to the exact
             # failures/errors this run recorded (rather than stale XMLs the
             # Jenkins glob may also pick up).
-            _all = [
-                p for suite in runner.results.get('suites', [])
-                for p in suite['playbooks']
-            ]
-            _err = sum(1 for p in _all if not p['success'] and p.get('is_error'))
-            _fail = sum(1 for p in _all if not p['success'] and not p.get('is_error'))
+            # Read the counts the XML build already computed rather than
+            # deriving them a second time. Two independent derivations of the
+            # same thing is exactly the drift the refactor set out to remove.
+            _c = runner.last_junit_counts or {}
             print(
-                f"{Colors.CYAN}   ↳ Reports: {len(_all)} tests, "
-                f"{_fail} failures, {_err} errors{Colors.ENDC}"
+                f"{Colors.CYAN}   ↳ Reports: {_c.get('tests', 0)} tests, "
+                f"{_c.get('failures', 0)} failures, {_c.get('errors', 0)} errors, "
+                f"{_c.get('skipped', 0)} skipped{Colors.ENDC}"
             )
 
     # Return exit code for CI/CD

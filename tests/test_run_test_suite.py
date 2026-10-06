@@ -208,3 +208,421 @@ def test_runner_results_initialized():
     assert runner.results["total_tests"] == 0
     assert runner.results["passed"] == 0
     assert runner.results["failed"] == 0
+
+
+# ================================================================
+# Per-feature verification results
+# ================================================================
+
+
+
+def _stub_stages(runner, failing):
+    """Replace run_test_suite with a stub; record call order, fail named suites."""
+    called = []
+
+    def _fake(suite_id):
+        called.append(suite_id)
+        if suite_id in failing:
+            runner.results["failed"] += 1
+            return False
+        runner.results["passed"] += 1
+        return True
+
+    runner.run_test_suite = _fake
+    return called
+
+
+def _suite_with_verify(duration=120.0, success=True, **extra):
+    """A one-playbook suite result standing in for stage 21."""
+    playbook = {
+        "name": "Verify Feature Flags",
+        "file": "playbooks/verify_feature_flags.yml",
+        "description": "Checks each requested feature",
+        "success": success,
+        "duration": duration,
+    }
+    playbook.update(extra)
+    return {
+        "name": "Verify Feature Flags",
+        "start_time": "2026-10-05T16:52:17",
+        "duration": duration,
+        "playbooks": [playbook],
+    }
+
+
+
+def _feature_data(features):
+    return {"schema_version": 1, "features": features}
+
+
+
+def _runner_with_results(suites, duration=120.0):
+    runner = _make_runner()
+    runner.results["suites"] = suites
+    runner.results["duration"] = duration
+    return runner
+
+
+
+def _parse(xml_text):
+    import xml.etree.ElementTree as ET
+    return ET.fromstring(xml_text)
+
+
+
+def test_feature_testcases_expands_one_case_per_feature():
+    runner = _make_runner()
+    data = _feature_data([
+        {"id": "channel_group", "status": "passed"},
+        {"id": "fips", "status": "warned", "detail": "CRD has no field fips"},
+        {"id": "audit_logging", "status": "failed", "detail": "no destination"},
+    ])
+    cases = runner._feature_testcases(
+        {"file": "playbooks/verify_feature_flags.yml"}, data
+    )
+    assert [c["name"] for c in cases] == ["channel_group", "fips", "audit_logging"]
+    assert [c["outcome"] for c in cases] == ["passed", "skipped", "failed"]
+    # Stable classname is what lets CI trend a single feature across builds.
+    assert {c["classname"] for c in cases} == {"FeatureVerification"}
+
+
+
+def test_feature_testcases_ignores_other_playbooks():
+    runner = _make_runner()
+    data = _feature_data([{"id": "fips", "status": "passed"}])
+    assert runner._feature_testcases(
+        {"file": "playbooks/create_rosa_hcp_cluster.yml"}, data
+    ) is None
+
+
+
+def test_feature_testcases_without_artifact_falls_back():
+    runner = _make_runner()
+    pb = {"file": "playbooks/verify_feature_flags.yml"}
+    assert runner._feature_testcases(pb, None) is None
+    assert runner._feature_testcases(pb, _feature_data([])) is None
+
+
+
+def test_junit_expands_features_into_testcases():
+    runner = _runner_with_results([_suite_with_verify()])
+    runner.load_feature_verification = lambda: _feature_data([
+        {"id": "domain_prefix", "status": "passed"},
+        {"id": "channel_group", "status": "passed"},
+        {"id": "fips", "status": "warned", "detail": "CRD has no field fips"},
+    ])
+    root = _parse(runner._generate_junit_xml())
+
+    assert root.get("tests") == "3", "One testcase per feature, not per playbook"
+    assert root.get("skipped") == "1"
+    assert root.get("failures") == "0"
+
+    names = [tc.get("name") for tc in root.iter("testcase")]
+    assert names == ["domain_prefix", "channel_group", "fips"]
+
+    fips = [tc for tc in root.iter("testcase") if tc.get("name") == "fips"][0]
+    skipped = fips.find("skipped")
+    assert skipped is not None, "A CRD gap is a skip, not a failure"
+    assert "CRD has no field fips" in skipped.get("message", "")
+
+
+
+def test_junit_marks_failed_feature_as_failure():
+    runner = _runner_with_results([_suite_with_verify(success=False, error="boom")])
+    runner.load_feature_verification = lambda: _feature_data([
+        {"id": "audit_logging", "status": "failed", "detail": "no destination"},
+        {"id": "fips", "status": "passed"},
+    ])
+    root = _parse(runner._generate_junit_xml())
+
+    assert root.get("failures") == "1"
+    failure = root.find(".//testcase[@name='audit_logging']/failure")
+    assert failure is not None
+    assert "no destination" in failure.get("message", "")
+    # The passing feature is still reported, not masked by the failure.
+    assert root.find(".//testcase[@name='fips']") is not None
+
+
+
+def test_junit_falls_back_when_no_artifact():
+    """A playbook that died before writing results keeps its raw error."""
+    runner = _runner_with_results([
+        _suite_with_verify(success=False, error="login failed", output="trace")
+    ])
+    runner.load_feature_verification = lambda: None
+    root = _parse(runner._generate_junit_xml())
+
+    assert root.get("tests") == "1"
+    assert root.get("failures") == "1"
+    failure = root.find(".//testcase/failure")
+    assert "login failed" in failure.get("message", "")
+
+
+
+def test_junit_suite_and_root_totals_agree():
+    """Root totals must equal the sum over suites once features are expanded."""
+    runner = _runner_with_results([
+        _suite_with_verify(),
+        {
+            "name": "CAPA Cluster Provisioning",
+            "start_time": "2026-10-05T16:34:36",
+            "duration": 1060.5,
+            "playbooks": [{
+                "name": "Create CAPA Cluster",
+                "file": "playbooks/create_rosa_hcp_cluster.yml",
+                "description": "Provisions a cluster",
+                "success": True,
+                "duration": 1060.5,
+            }],
+        },
+    ])
+    runner.load_feature_verification = lambda: _feature_data([
+        {"id": "a", "status": "passed"},
+        {"id": "b", "status": "failed", "detail": "x"},
+    ])
+    root = _parse(runner._generate_junit_xml())
+
+    suites = list(root.iter("testsuite"))
+    assert int(root.get("tests")) == sum(int(s.get("tests")) for s in suites)
+    assert int(root.get("failures")) == sum(int(s.get("failures")) for s in suites)
+    assert int(root.get("tests")) == 3  # 2 features + 1 provisioning playbook
+
+
+
+def test_load_feature_verification_rejects_stale_artifact(tmp_path):
+    """A file left by an earlier run must not be attributed to this one."""
+    import json as _json
+    import time as _time
+
+    runner = _make_runner()
+    runner.results_dir = tmp_path
+    artifact = tmp_path / _module.FEATURE_VERIFICATION_FILE
+    artifact.write_text(_json.dumps({"features": [{"id": "fips", "status": "passed"}]}))
+
+    runner._started_at = _time.time() + 60  # pretend the run started later
+    assert runner.load_feature_verification() is None
+
+    runner._started_at = 0
+    assert runner.load_feature_verification() is not None
+
+
+def _degraded_data(features, degraded=True):
+    return {
+        "schema_version": 1,
+        "features": features,
+        "environment": {
+            "ocm_available": not degraded,
+            "degraded": degraded,
+            "degraded_reason": "OCM API unreachable — CRDs only",
+        },
+    }
+
+
+
+def test_degraded_run_adds_a_reachability_testcase(monkeypatch):
+    """The degradation needs a testcase of its own, or CI never sees it."""
+    monkeypatch.delenv("CI", raising=False)
+    runner = _make_runner()
+    cases = runner._feature_testcases(
+        {"file": "playbooks/verify_feature_flags.yml"},
+        _degraded_data([{"id": "fips", "status": "passed"}]),
+    )
+    assert [c["name"] for c in cases] == ["ocm_reachability", "fips"]
+    assert cases[0]["outcome"] == "skipped", "Local runs stay usable offline"
+    assert "OCM API unreachable" in cases[0]["message"]
+
+
+
+def test_degraded_run_fails_under_ci(monkeypatch):
+    monkeypatch.setenv("CI", "true")
+    runner = _make_runner()
+    cases = runner._feature_testcases(
+        {"file": "playbooks/verify_feature_flags.yml"},
+        _degraded_data([{"id": "fips", "status": "passed"}]),
+    )
+    assert cases[0]["outcome"] == "failed", "A half-verified build must not be green"
+
+
+
+def test_healthy_run_adds_no_reachability_testcase(monkeypatch):
+    monkeypatch.setenv("CI", "true")
+    runner = _make_runner()
+    cases = runner._feature_testcases(
+        {"file": "playbooks/verify_feature_flags.yml"},
+        _degraded_data([{"id": "fips", "status": "passed"}], degraded=False),
+    )
+    assert [c["name"] for c in cases] == ["fips"]
+
+
+
+def test_degraded_junit_counts_the_failure(monkeypatch):
+    monkeypatch.setenv("CI", "true")
+    runner = _runner_with_results([_suite_with_verify()])
+    runner.load_feature_verification = lambda: _degraded_data([
+        {"id": "a", "status": "passed"}, {"id": "b", "status": "passed"},
+    ])
+    root = _parse(runner._generate_junit_xml())
+    assert root.get("tests") == "3"
+    assert root.get("failures") == "1"
+    assert root.find(".//testcase[@name='ocm_reachability']/failure") is not None
+
+
+
+def test_artifact_without_environment_key_is_safe():
+    """Older artifacts predate the degraded field; expansion must not raise."""
+    runner = _make_runner()
+    cases = runner._feature_testcases(
+        {"file": "playbooks/verify_feature_flags.yml"},
+        {"features": [{"id": "fips", "status": "passed"}]},
+    )
+    assert [c["name"] for c in cases] == ["fips"]
+
+
+
+def test_unrecognised_feature_status_fails_closed(monkeypatch):
+    """An unknown status must not render as a green testcase."""
+    monkeypatch.delenv("CI", raising=False)
+    runner = _make_runner()
+    cases = runner._feature_testcases(
+        {"file": "playbooks/verify_feature_flags.yml"},
+        _feature_data([{"id": "x", "status": "bogus"}]),
+    )
+    assert cases[0]["outcome"] == "error"
+    assert "bogus" in cases[0]["message"]
+
+
+
+def test_malformed_features_does_not_raise(monkeypatch):
+    """A bad artifact must not crash report generation after a 75-minute run."""
+    runner = _make_runner()
+    pb = {"file": "playbooks/verify_feature_flags.yml"}
+    for bad in ({"fips": {}}, "fips", 5, None):
+        assert runner._feature_testcases(pb, {"features": bad}) is None
+    # A list whose elements are not dicts: elements are skipped, no raise.
+    assert runner._feature_testcases(pb, {"features": ["fips"]}) == []
+
+
+
+def test_degraded_string_false_is_not_treated_as_degraded(monkeypatch):
+    """Guards against a jinja2_native change turning the bool into "False"."""
+    monkeypatch.setenv("CI", "true")
+    runner = _make_runner()
+    data = {"features": [{"id": "a", "status": "passed"}],
+            "environment": {"degraded": "False"}}
+    cases = runner._feature_testcases({"file": "playbooks/verify_feature_flags.yml"}, data)
+    assert [c["name"] for c in cases] == ["a"], "string 'False' must not be truthy here"
+
+
+
+def test_features_without_ids_get_distinct_names():
+    runner = _make_runner()
+    cases = runner._feature_testcases(
+        {"file": "playbooks/verify_feature_flags.yml"},
+        _feature_data([{"status": "passed"}, {"status": "passed"}]),
+    )
+    assert len({c["name"] for c in cases}) == 2, "duplicate classname+name breaks CI trending"
+
+
+def test_failed_expansion_keeps_the_ansible_log():
+    """Per-feature detail says which feature broke; the log says why."""
+    runner = _runner_with_results([
+        _suite_with_verify(success=False, error="assertion failed",
+                           output="TASK [Assert fips] ***\nfatal: ...full log...")
+    ])
+    runner.load_feature_verification = lambda: _feature_data([
+        {"id": "fips", "status": "failed", "detail": "fips not enabled"},
+    ])
+    root = _parse(runner._generate_junit_xml())
+
+    assert root.find(".//testcase[@name='fips']/failure") is not None
+    sysout = root.find(".//system-out")
+    assert sysout is not None, "ansible log must survive the expansion"
+    assert "full log" in sysout.text
+
+
+
+def test_playbook_failure_outside_feature_results_is_not_green():
+    """A failure after the artifact write must not report an all-green suite."""
+    runner = _runner_with_results([
+        _suite_with_verify(success=False, error="died after writing results",
+                           output="trace")
+    ])
+    runner.load_feature_verification = lambda: _feature_data([
+        {"id": "a", "status": "passed"}, {"id": "b", "status": "passed"},
+    ])
+    root = _parse(runner._generate_junit_xml())
+
+    assert int(root.get("failures")) == 1, "non-zero exit must surface as a failure"
+    extra = root.find(".//testcase[@name='Verify Feature Flags (playbook exit)']")
+    assert extra is not None
+    assert "died after writing results" in extra.find("failure").get("message")
+
+
+
+def test_console_counts_come_from_the_xml_build():
+    runner = _runner_with_results([_suite_with_verify()])
+    runner.load_feature_verification = lambda: _feature_data([
+        {"id": "a", "status": "passed"},
+        {"id": "b", "status": "failed", "detail": "x"},
+        {"id": "c", "status": "warned", "detail": "y"},
+    ])
+    assert runner.last_junit_counts is None, "no counts before a build"
+    root = _parse(runner._generate_junit_xml())
+    counts = runner.last_junit_counts
+    assert counts == {"tests": int(root.get("tests")),
+                      "failures": int(root.get("failures")),
+                      "errors": int(root.get("errors")),
+                      "skipped": int(root.get("skipped"))}
+
+
+
+def test_ci_false_is_not_treated_as_ci(monkeypatch):
+    for value, expected in [("true", True), ("1", True), ("yes", True),
+                            ("false", False), ("0", False), ("no", False),
+                            ("", False), ("  ", False), ("TRUE", True)]:
+        monkeypatch.setenv("CI", value)
+        assert _module._in_ci() is expected, f"CI={value!r}"
+    monkeypatch.delenv("CI", raising=False)
+    assert _module._in_ci() is False
+
+
+
+def test_degraded_is_skipped_when_ci_is_false(monkeypatch):
+    monkeypatch.setenv("CI", "false")
+    runner = _make_runner()
+    cases = runner._feature_testcases(
+        {"file": "playbooks/verify_feature_flags.yml"},
+        _degraded_data([{"id": "fips", "status": "passed"}]),
+    )
+    assert cases[0]["outcome"] == "skipped", "CI=false must not fail the build"
+
+
+
+def test_artifact_archived_once_per_run(tmp_path, monkeypatch):
+    """save_results runs once per --format; the archive must not triple."""
+    import json as _json
+    runner = _make_runner()
+    runner.results_dir = tmp_path
+    runner.results["suites"] = []
+    runner.results["duration"] = 1.0
+    runner._started_at = 0
+    (tmp_path / _module.FEATURE_VERIFICATION_FILE).write_text(
+        _json.dumps({"features": [{"id": "fips", "status": "passed"}]}))
+
+    # Count the writes, not the files. The filename carries a %H%M%S timestamp,
+    # so three calls inside one second collide on one path and a file count
+    # passes even with the guard removed — verified by reverting it.
+    writes = []
+    real_dump = _module.json.dump
+    def counting_dump(obj, fp, **kw):
+        name = getattr(fp, "name", "")
+        if "feature-verification-" in str(name):
+            writes.append(name)
+        return real_dump(obj, fp, **kw)
+    monkeypatch.setattr(_module.json, "dump", counting_dump)
+
+    for fmt in ("json", "html", "junit"):
+        runner.save_results(format=fmt)
+
+    assert len(writes) == 1, f"archive written {len(writes)}x, expected once per run"
+    assert list(tmp_path.rglob("feature-verification-*.json"))

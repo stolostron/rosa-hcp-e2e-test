@@ -11,6 +11,8 @@
     - ../vars/vars.yml
   vars:
     rosa_hcp_namespace: "{{ rosa_hcp_namespace | default('ns-rosa-hcp') }}"
+    # Where the machine-readable results land. The runner archives a dated copy.
+    feature_verification_dir: "{{ playbook_dir }}/../test-results"
     features_passed: 0
     features_failed: 0
     features_warned: 0
@@ -1663,9 +1665,136 @@
         msg: "{{ results_warned | length }} feature(s) not supported by installed CRD version — platform limitation, not a test failure."
       when: results_warned | length > 0
 
+    # ================================================================
+    # MACHINE-READABLE RESULTS
+    # ================================================================
+    # Until now the pass/warn/fail detail lived only in Ansible facts and the
+    # summary above, so it died with the play: the JUnit XML recorded a single
+    # testcase for the whole playbook and CI could not say *which* feature
+    # broke, or track one feature's history across builds.
+    #
+    # These tasks run BEFORE the final fail below, so a run that fails
+    # verification still produces the artifact — that is the run you most need
+    # it for. run-test-suite.py expands it into one JUnit testcase per feature
+    - name: Ensure test-results directory exists
+      file:
+        path: "{{ feature_verification_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Build machine-readable per-feature results
+      set_fact:
+        feature_results: >-
+          {{ (feature_results | default([])) + [{
+               'id': item,
+               'status': ('failed' if item in failed_ids
+                          else ('warned' if item in warned_ids else 'passed')),
+               'detail': ((results_failed | select('search', '^' ~ item ~ ':') | list | first | default(''))
+                          if item in failed_ids
+                          else ((results_warned | select('search', '^' ~ item ~ ':') | list | first | default(''))
+                                if item in warned_ids else ''))
+                         | regex_replace('^[^:]+:\s*', ''),
+               'crd': (crd_field_map[item].crd if item in crd_field_map else ''),
+               'field': (crd_field_map[item].field if item in crd_field_map else '')
+             }] }}
+      loop: "{{ requested_features_list }}"
+      vars:
+        failed_ids: "{{ results_failed | map('regex_replace', ':.*', '') | list }}"
+        warned_ids: "{{ results_warned | map('regex_replace', ':.*', '') | list }}"
+
+    # Resource specs are captured here, at verification time, because stage 30
+    # deletes the cluster — afterwards these values cannot be recovered at all.
+    # The report resolves each feature's observed value by walking crd_field_map
+    # into these specs, so adding a feature needs no change to the report.
+    - name: Assemble feature verification artifact
+      set_fact:
+        feature_verification:
+          schema_version: 1
+          generated_at: "{{ lookup('pipe', 'date -u +%Y-%m-%dT%H:%M:%SZ') }}"
+          suite: 21-verify-feature-flags
+          # Empty when suite 21 is run directly rather than via --scenario.
+          scenario: "{{ scenario_name | default('') }}"
+          cluster:
+            name: "{{ cluster_name }}"
+            namespace: "{{ rosa_hcp_namespace }}"
+            version: "{{ rcp.spec.version | default('unknown') }}"
+            channel_group: "{{ rcp.spec.channelGroup | default('') }}"
+            domain_prefix: "{{ rcp.spec.domainPrefix | default('') }}"
+            region: "{{ rcp.spec.region | default('') }}"
+            endpoint_access: "{{ rcp.spec.endpointAccess | default('') }}"
+            ocm_id: "{{ rcp.status.id | default('') }}"
+            ready: "{{ rcp.status.ready | default(false) }}"
+            conditions: "{{ rcp.status.conditions | default([]) }}"
+          environment:
+            hub_ocp_version: "{{ hub_ocp_version | default('unknown') }}"
+            mce_version: "{{ mce_version | default('unknown') }}"
+            capa_image: "{{ capa_image | default('unknown') }}"
+            ocm_available: "{{ ocm_available | default(false) }}"
+            # Without OCM only the CRD side of each feature is checked, so the
+            # run proves the operator accepted a value but not that the service
+            # applied it. Recorded explicitly: a half-verified run that reports
+            # a plain PASS is false confidence.
+            degraded: "{{ not (ocm_available | default(false)) }}"
+            degraded_reason: >-
+              {{ 'OCM API unreachable — features were verified against cluster CRDs
+              only, without cross-checking the service'
+              if not (ocm_available | default(false)) else '' }}
+          # One dict expression, not four scalars: Ansible leaves a templated
+          # scalar as a string ("4"), but preserves native ints inside a
+          # structure, so `jq .totals.failed > 0` works on the artifact.
+          totals: "{{ {
+                    'requested': requested_features_list | length,
+                    'passed': results_passed | length,
+                    'warned': results_warned | length,
+                    'failed': results_failed | length
+                  } }}"
+          features: "{{ feature_results | default([]) }}"
+          crd_field_map: "{{ crd_field_map }}"
+          resources:
+            ROSAControlPlane: "{{ (rcp | default({})).spec | default({}) }}"
+            ROSAMachinePool: "{{ (rmp | default({})).spec | default({}) }}"
+            ROSANetwork:
+              spec: "{{ (rnet | default({})).spec | default({}) }}"
+              status: "{{ (rnet | default({})).status | default({}) }}"
+            # OCM returns a very large object; keep only what the checks read.
+            OCM: "{{ {
+                    'domain_prefix': ocm_cluster.domain_prefix | default(''),
+                    'state': ocm_cluster.state | default(''),
+                    'region': ocm_cluster.region | default({}),
+                    'version': ocm_cluster.version | default({}),
+                    'nodes': ocm_cluster.nodes | default({}),
+                    'aws_tags': (ocm_cluster.aws | default({})).tags | default({})
+                  } if (ocm_available | default(false)) else {} }}"
+
+    - name: Write feature verification artifact
+      copy:
+        content: "{{ feature_verification | to_nice_json }}"
+        dest: "{{ feature_verification_dir }}/feature-verification.json"
+        mode: "0644"
+
+    - name: Report artifact location
+      debug:
+        msg: "Feature verification results written to {{ feature_verification_dir }}/feature-verification.json"
+
     - name: Fail if any CRD-supported features are missing from spec
       fail:
         msg: >
           {{ results_failed | length }} requested feature(s) not found in cluster spec:
           {% for f in results_failed %}{{ f }}; {% endfor %}
       when: results_failed | length > 0
+
+    # Checked after the feature results so a genuine feature failure reports
+    # first — it is the more actionable message of the two.
+    - name: Fail in CI when verification ran degraded
+      fail:
+        msg: >
+          OCM API was unreachable, so {{ requested_features_list | length }} feature(s)
+          were verified against cluster CRDs only — the service side was never checked.
+          A green build here would be false confidence, so CI treats it as a failure.
+          Local runs record the degradation and continue; unset CI to do the same.
+      when:
+        - not (ocm_available | default(false))
+        # | bool, not length > 0: CI=false would otherwise mean "yes, CI".
+        # Matches _in_ci() in run-test-suite.py.
+        - lookup('env', 'CI') | default('', true) | bool
+
