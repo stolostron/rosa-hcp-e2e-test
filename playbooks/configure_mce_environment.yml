@@ -14,6 +14,10 @@
         - files:
             - ../vars/user_vars.yml
           skip: true
+      # user_vars.yml holds the OCM client secret and the hub kubeadmin
+      # password; without no_log the whole file is echoed into the captured
+      # output and archived in the JUnit XML whenever a play fails.
+      no_log: true
 
     - set_fact:
         ocp_user: "{{ lookup('env', 'OCP_HUB_CLUSTER_USER') | default(OCP_HUB_CLUSTER_USER, true) }}"
