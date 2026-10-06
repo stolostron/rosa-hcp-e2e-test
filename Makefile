@@ -5,10 +5,27 @@ export AWS_B64ENCODED_CREDENTIALS ?=
 DEFAULT_TEST_SUITE ?= --list
 PULL_SECRET_FILE ?=
 
-.PHONY: test crc-smoke crc-full crc-stop
+OCP_VERSION ?= 4.22.6
+
+.PHONY: test scenarios scenario crc-smoke crc-full crc-stop
 
 test:
 	./run-test-suite.py $(DEFAULT_TEST_SUITE) -vvv
+
+# List runnable scenarios and the OpenShift versions each supports
+scenarios:
+	./run-test-suite.py --list-scenarios
+
+# Run one scenario end to end, e.g.
+#   make scenario SCENARIO=day1-security OCP_VERSION=5.0 NAME_PREFIX=qe6
+scenario:
+	@test -n "$(SCENARIO)" || { \
+		echo "Error: set SCENARIO=<name> (see: make scenarios)"; exit 1; }
+	./run-test-suite.py --scenario $(SCENARIO) \
+		-e openshift_version=$(OCP_VERSION) \
+		$(if $(NAME_PREFIX),-e name_prefix=$(NAME_PREFIX),) \
+		$(if $(STAGES),--stages $(STAGES),) \
+		-vvv
 
 define crc-setup
 	@command -v crc >/dev/null 2>&1 || { echo "Error: crc is not installed"; exit 1; }

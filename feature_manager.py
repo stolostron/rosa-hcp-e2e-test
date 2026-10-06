@@ -1,10 +1,18 @@
 """Lightweight feature registry for CLI --feature flag resolution."""
 
 import json
+import os
+import re
 
 import yaml
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
+
+_ENV_REF = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+
+class ScenarioError(Exception):
+    """Raised when a scenario cannot be resolved into a runnable configuration."""
 
 
 def _version_tuple(ver: str) -> tuple:
@@ -29,6 +37,9 @@ class FeatureManager:
         self._feature_availability = self._compat.get("feature_availability", {})
 
         self._feature_groups = self._registry.get("feature_groups", {})
+        self._scenarios = self._registry.get("scenarios", {})
+        self._scenario_defaults = self._registry.get("scenario_defaults", {})
+        self._supported_versions = self._compat.get("supported_versions", [])
 
         self._features: Dict[str, dict] = {}
         for suite in self._registry.get("suites", []):
@@ -135,16 +146,39 @@ class FeatureManager:
         return extra_vars
 
     def check_required_inputs(self, feature_names: List[str], extra_vars: dict) -> List[str]:
+        """Report features whose user-supplied inputs are missing from extra_vars.
+
+        A feature declares what it needs in one of three ways, most specific first:
+          required_vars_any_of: list of groups; at least one group must be fully set
+          required_vars:        every listed var must be set
+          (neither)            falls back to the feature's var_map entry
+        """
         warnings = []
         for name in feature_names:
             feat = self._features.get(name, {})
-            if feat.get("requires_input", False):
-                var_name = self._var_map.get(name, name)
-                if var_name not in extra_vars:
+            if not feat.get("requires_input", False):
+                continue
+
+            any_of = feat.get("required_vars_any_of")
+            if any_of:
+                if not any(all(v in extra_vars for v in group) for group in any_of):
+                    options = " OR ".join(
+                        " and ".join(f"-e {v}=<value>" for v in group) for group in any_of
+                    )
                     warnings.append(
-                        f"Feature '{name}' requires a value via -e {var_name}=<value>. "
+                        f"Feature '{name}' requires {options}. "
                         f"No test default is available."
                     )
+                continue
+
+            required = feat.get("required_vars") or [self._var_map.get(name, name)]
+            missing = [v for v in required if v not in extra_vars]
+            if missing:
+                warnings.append(
+                    f"Feature '{name}' requires a value via "
+                    f"{' and '.join(f'-e {v}=<value>' for v in missing)}. "
+                    f"No test default is available."
+                )
         return warnings
 
     def resolve_group(self, group_name: str) -> Optional[List[str]]:
@@ -160,6 +194,186 @@ class FeatureManager:
                 "name": name,
                 "description": group.get("description", ""),
                 "features": group.get("features", []),
+            })
+        return results
+
+    # ------------------------------------------------------------------
+    # Scenarios
+    # ------------------------------------------------------------------
+
+    def _scenario_setting(self, name: str, key: str, default=None):
+        """Read a scenario key, falling back to scenario_defaults."""
+        scenario = self._scenarios.get(name, {})
+        if key in scenario:
+            return scenario[key]
+        return self._scenario_defaults.get(key, default)
+
+    def scenario_features(self, name: str) -> List[str]:
+        """Resolve a scenario's feature list: extends + feature_group + features."""
+        return self._scenario_features(name, set())
+
+    def _scenario_features(self, name: str, seen: set) -> List[str]:
+        if name in seen:
+            raise ScenarioError(f"Circular 'extends' chain involving scenario '{name}'")
+        seen.add(name)
+
+        scenario = self._scenarios.get(name)
+        if scenario is None:
+            raise ScenarioError(
+                f"Unknown scenario: '{name}'. Available: {', '.join(sorted(self._scenarios))}"
+            )
+
+        features: List[str] = []
+        parent = scenario.get("extends")
+        if parent:
+            features.extend(self._scenario_features(parent, seen))
+
+        group_name = scenario.get("feature_group")
+        if group_name:
+            group = self.resolve_group(group_name)
+            if group is None:
+                raise ScenarioError(
+                    f"Scenario '{name}' references unknown feature group '{group_name}'"
+                )
+            features.extend(group)
+
+        features.extend(scenario.get("features", []))
+        return list(dict.fromkeys(features))
+
+    def scenario_versions(self, name: str) -> List[str]:
+        """Supported versions this scenario can run on, computed from its features.
+
+        A scenario is valid on a version when every one of its features is
+        available there. Nothing is hand-maintained: adding a version to
+        supported_versions makes every compatible scenario runnable on it.
+        """
+        features = self.scenario_features(name)
+        valid = []
+        for version in self._supported_versions:
+            if not self._features_available_at(features, version):
+                continue
+            valid.append(version)
+        return valid
+
+    def _features_available_at(self, features: List[str], version: str) -> bool:
+        ocp_ver = _version_tuple(version)
+        for feat_id in features:
+            avail = self._feature_availability.get(feat_id, {})
+            min_ver = avail.get("min_version") or self._features.get(feat_id, {}).get("min_version")
+            max_ver = avail.get("max_version")
+            if min_ver and ocp_ver < _version_tuple(min_ver):
+                return False
+            if max_ver and ocp_ver > _version_tuple(max_ver):
+                return False
+        return True
+
+    @staticmethod
+    def _expand_env(value) -> Tuple[object, List[str]]:
+        """Substitute ${ENV_VAR} references. Returns (value, missing_env_names)."""
+        if not isinstance(value, str):
+            return value, []
+        missing = []
+
+        def _sub(match):
+            env_name = match.group(1)
+            env_value = os.environ.get(env_name)
+            if env_value is None or env_value == "":
+                missing.append(env_name)
+                return match.group(0)
+            return env_value
+
+        expanded = _ENV_REF.sub(_sub, value)
+        return expanded, missing
+
+    def resolve_scenario(self, name: str, version: Optional[str] = None) -> dict:
+        """Resolve a scenario into everything needed to run it.
+
+        Returns a dict with: name, description, features, extra_vars, stages,
+        version, estimated_minutes.
+
+        extra_vars precedence (lowest to highest):
+            feature defaults -> scenario extra_vars -> version_overrides
+        The caller layers CLI -e on top, which always wins.
+        """
+        if name not in self._scenarios:
+            raise ScenarioError(
+                f"Unknown scenario: '{name}'. Available: {', '.join(sorted(self._scenarios))}"
+            )
+
+        features = self.scenario_features(name)
+
+        if version:
+            applicable = self.scenario_versions(name)
+            if version not in applicable:
+                blockers = [
+                    f"{f} (needs >= {self._feature_availability.get(f, {}).get('min_version')})"
+                    for f in features
+                    if not self._features_available_at([f], version)
+                ]
+                raise ScenarioError(
+                    f"Scenario '{name}' is not available on OpenShift {version}: "
+                    f"{'; '.join(blockers)}. "
+                    f"Runnable on: {', '.join(applicable) or '(no supported version)'}"
+                )
+
+        extra_vars: Dict[str, object] = {}
+        missing_env: Dict[str, List[str]] = {}
+
+        for var_name, raw in (self._scenario_setting(name, "extra_vars", {}) or {}).items():
+            expanded, missing = self._expand_env(raw)
+            if missing:
+                missing_env[var_name] = missing
+            else:
+                extra_vars[var_name] = expanded
+
+        if missing_env:
+            lines = [
+                f"  {var} needs ${{{'}, ${'.join(envs)}}}"
+                for var, envs in sorted(missing_env.items())
+            ]
+            raise ScenarioError(
+                f"Scenario '{name}' needs environment values that are not set:\n"
+                + "\n".join(lines)
+                + "\nExport them (or configure them as Jenkins credentials) and re-run."
+            )
+
+        if version:
+            overrides = self._scenario_setting(name, "version_overrides", {}) or {}
+            extra_vars.update(overrides.get(version, {}))
+
+        return {
+            "name": name,
+            "description": self._scenarios[name].get("description", ""),
+            "features": features,
+            "extra_vars": extra_vars,
+            "stages": self.scenario_stages(name),
+            "version": version,
+            "estimated_minutes": self._scenarios[name].get("estimated_minutes"),
+        }
+
+    def scenario_stages(self, name: str) -> List[dict]:
+        """Normalize a scenario's stage list to [{suite, always}, ...]."""
+        stages = []
+        for entry in self._scenario_setting(name, "stages", []) or []:
+            if isinstance(entry, str):
+                stages.append({"suite": entry, "always": False})
+            else:
+                stages.append({
+                    "suite": entry["suite"],
+                    "always": bool(entry.get("always", False)),
+                })
+        return stages
+
+    def list_scenarios(self) -> List[dict]:
+        results = []
+        for name in sorted(self._scenarios):
+            results.append({
+                "name": name,
+                "description": self._scenarios[name].get("description", ""),
+                "features": self.scenario_features(name),
+                "versions": self.scenario_versions(name),
+                "stages": [s["suite"] for s in self.scenario_stages(name)],
+                "estimated_minutes": self._scenarios[name].get("estimated_minutes"),
             })
         return results
 

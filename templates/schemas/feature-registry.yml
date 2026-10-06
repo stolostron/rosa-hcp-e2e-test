@@ -117,7 +117,7 @@ feature_groups:
       - default_autoscaling
 
   day1-combo:
-    description: "Non-default Day1 features (includes day1-basic defaults)"
+    description: "Non-default Day1 features (does NOT include day1-basic; combine with --feature-group day1-basic if you want both)"
     features:
       - cluster_autoscaler_expander
       - image_registry
@@ -138,6 +138,86 @@ feature_groups:
       - private_network
       - external_oidc
       - audit_logging
+
+# Scenarios: self-contained, runnable feature tests for --scenario.
+#
+# A scenario bundles everything a run needs so nothing has to be typed by hand:
+#   which features      (feature_group / features / extends)
+#   their inputs        (extra_vars, with ${ENV_VAR} pulled from the environment)
+#   which suites to run (stages)
+#   version quirks      (version_overrides)
+#
+# Applicable OpenShift versions are COMPUTED, not listed: a scenario is valid on
+# every supported_version that satisfies the min/max_version of all its features
+# (see version-compatibility.yml). Adding a version to supported_versions makes
+# every compatible scenario runnable there with no edits here.
+#
+# Usage:
+#   ./run-test-suite.py --list-scenarios
+#   ./run-test-suite.py --scenario day1-basic -e openshift_version=5.0
+#   ./run-test-suite.py --scenario day1-security --validate-only
+
+# Applied to every scenario unless the scenario overrides the key.
+scenario_defaults:
+  # Ordered suite IDs. A bare string runs only if all prior stages passed.
+  # {suite: X, always: true} runs even after a failure (cleanup/restore).
+  stages:
+    - 10-configure-mce-environment
+    - 20-rosa-hcp-provision
+    - 21-verify-feature-flags
+    - {suite: 30-rosa-hcp-delete, always: true}
+    # 41-disable-capi-enable-hypershift is deliberately NOT a default stage.
+    # It switches MCE from CAPI back to HyperShift, which is hub-wide state. On
+    # a shared hub that disrupts anyone else relying on CAPI mode, and a test
+    # run should not reconfigure the hub out from under them. Add it explicitly
+    # when you do want the hub restored:
+    #   ./run-test-suite.py --scenario <name> --stages 10,20,21,30,41
+
+  # Per-version extra_vars applied when that version is selected.
+  # Override feature defaults and scenario extra_vars; CLI -e still wins.
+  version_overrides:
+    # 5.0 ships only as early-candidate builds, so OCM cannot resolve it on
+    # the stable channel (see deprecation_warnings in version-compatibility.yml).
+    #
+    # openshift_version pins the exact build. Without it, `-e openshift_version=5.0`
+    # reaches OCM as a bare family; its search= query cannot see EC builds, so it
+    # silently falls back to a fabricated 5.0.0 and provisions a cluster that is
+    # doomed from the start — ~40 wasted minutes and real AWS spend. A pin only
+    # applies when the caller named a family; an exact build is always honoured.
+    "5.0":
+      channel_group: candidate
+      openshift_version: 5.0.0-rc.0
+
+scenarios:
+  day1-basic:
+    description: "Baseline provisioning: domain prefix, AZs, tags, channel group, default autoscaling"
+    feature_group: day1-basic
+    estimated_minutes: 75
+
+  day1-combo:
+    description: "Non-default Day1 features: autoscaler expander, image registry, parallel upgrade, disk size"
+    feature_group: day1-combo
+    estimated_minutes: 75
+
+  day1-security:
+    description: "Security features: etcd KMS encryption, FIPS, additional security groups"
+    feature_group: day1-security
+    # Account-specific values stay out of git. Set these in the environment
+    # (Jenkins credentials, or export locally) — the scenario wires them through.
+    extra_vars:
+      etcd_encryption_kms_arn: "${ETCD_KMS_ARN}"
+      # additional_security_groups is deliberately absent. tasks/create_security_group.yml
+      # reads the VPC from the ROSANetwork status and creates <cluster>-test-sg during
+      # provisioning, then appends it. The group cannot exist before the VPC does, so
+      # demanding it as an input here is unsatisfiable.
+    estimated_minutes: 80
+
+  day1-networking:
+    description: "Network/auth features: no-CNI, private endpoint, external OIDC, audit log forwarding"
+    feature_group: day1-networking
+    extra_vars:
+      log_forward_s3_bucket: "${CAPI_TEST_LOG_S3_BUCKET}"
+    estimated_minutes: 85
 
 suites:
   - id: cluster-config
@@ -164,6 +244,11 @@ suites:
         applies_to: [create]
         default: false
         requires_input: true
+        # var_map maps byon -> byon_vpc, but that is only the enable flag.
+        # The actual user-supplied inputs are the subnet IDs and AZs.
+        required_vars:
+          - byon_subnet_ids
+          - byon_availability_zones
         k8s_field: ".spec.subnets"
         resource: ROSAControlPlane
 
@@ -248,7 +333,8 @@ suites:
         mutable: true
         applies_to: [create, apply]
         default: []
-        requires_input: true
+        # Created during provisioning, not supplied by the caller — see above.
+        requires_input: false
         k8s_field: ".spec.additionalSecurityGroups"
         resource: ROSAMachinePool
 
@@ -503,5 +589,13 @@ suites:
         mutable: true
         applies_to: [create, apply]
         default: false
+        requires_input: true
+        # Without one of these groups the templates emit no cloudWatchlogForwarder
+        # block at all, so the cluster provisions without log forwarding and only
+        # fails ~40 minutes later during suite 21 verification.
+        # Mirrors the check in playbooks/verify_feature_flags.yml.
+        required_vars_any_of:
+          - [log_forward_cloudwatch_role_arn, log_forward_cloudwatch_log_group]
+          - [log_forward_s3_bucket]
         k8s_field: ".spec.cloudWatchlogForwarder"
         resource: ROSAControlPlane
