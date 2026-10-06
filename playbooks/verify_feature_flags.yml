@@ -95,22 +95,67 @@
       set_fact:
         rcp: "{{ rcp_raw.stdout | from_json }}"
 
-    - name: Get ROSAMachinePool spec
+    # Select by label, not by name. The old lookup assumed the pool CR is always
+    # named after the cluster; a cluster whose pools are named workers-N would
+    # hard-fail verification here even though its pools are perfectly
+    # discoverable. The namespace is shared between clusters, so the label is
+    # the only reliable owner. upgrade_rosa_machine_pool.yml already selects
+    # this way — this makes the two consistent.
+    - name: Discover ROSAMachinePools belonging to this cluster
       shell: >
-        oc get rosamachinepool "{{ cluster_name }}" -n "{{ rosa_hcp_namespace }}"
-        -o json
+        oc get rosamachinepool -n "{{ rosa_hcp_namespace }}"
+        -l cluster.x-k8s.io/cluster-name="{{ cluster_name }}" -o json
       register: rmp_raw
       failed_when: false
       changed_when: false
 
-    - name: Fail if ROSAMachinePool not found
-      fail:
-        msg: "ROSAMachinePool not found in the specified namespace. Verify cluster_name and rosa_hcp_namespace."
-      when: rmp_raw.rc != 0
-
-    - name: Parse ROSAMachinePool
+    - name: Parse ROSAMachinePool list
       set_fact:
-        rmp: "{{ rmp_raw.stdout | from_json }}"
+        rmp_items: "{{ (rmp_raw.stdout | default('{}') | from_json).get('items', []) }}"
+      when: rmp_raw.rc == 0
+
+    - name: Fail if no ROSAMachinePool belongs to this cluster
+      fail:
+        msg: >
+          No ROSAMachinePool in namespace {{ rosa_hcp_namespace }} carries the label
+          cluster.x-k8s.io/cluster-name={{ cluster_name }}.
+          Verify cluster_name and rosa_hcp_namespace.
+      when: rmp_raw.rc != 0 or (rmp_items | default([]) | length) == 0
+
+    # The suite's templates always name this pool after the cluster, and CAPA
+    # adopts the ROSA-side default pools alongside it as workers-N, so a healthy
+    # cluster has several pools carrying this label.
+    - name: Find the cluster's own ROSAMachinePool
+      set_fact:
+        rmp_named: "{{ rmp_items | selectattr('metadata.name', 'equalto', cluster_name) | list }}"
+
+    # Deliberately no fallback to "first labelled pool". disk_size,
+    # parallel_upgrade and security_groups all assert against this one object,
+    # and the security_groups check in its no-expected-list form asserts only
+    # that *some* additionalSecurityGroups exist — so verifying an arbitrary
+    # pool could report a security control as applied when the pool under test
+    # has none. Jenkins escalates a security_groups failure to FAILURE rather
+    # than UNSTABLE, which is exactly the signal a wrong-pool pass would hide.
+    - name: Fail rather than guess when the cluster's pool is absent
+      fail:
+        msg: >
+          No ROSAMachinePool named '{{ cluster_name }}' in namespace
+          {{ rosa_hcp_namespace }}, but {{ rmp_items | length }} pool(s) carry the
+          label cluster.x-k8s.io/cluster-name={{ cluster_name }}:
+          {{ rmp_items | map(attribute='metadata.name') | join(', ') }}.
+          Refusing to verify an arbitrary pool — pass -e cluster_name=<name>
+          matching the intended ROSAMachinePool.
+      when: rmp_named | length == 0
+
+    - name: Select the ROSAMachinePool to verify
+      set_fact:
+        rmp: "{{ rmp_named | first }}"
+
+    - name: Report which machine pool is under verification
+      debug:
+        msg: >-
+          Verifying ROSAMachinePool '{{ rmp.metadata.name }}'
+          ({{ rmp_items | length }} pool(s) labelled for {{ cluster_name }})
 
     - name: Get ROSANetwork spec
       shell: >
@@ -1141,6 +1186,68 @@
               - rcp.spec.defaultMachinePoolSpec.autoscaling.maxReplicas | int >= rcp.spec.defaultMachinePoolSpec.autoscaling.minReplicas | int
             fail_msg: "FAIL: CRD defaultMachinePoolSpec.autoscaling does not match expected (min={{ expected_min }}, max={{ expected_max }})"
             success_msg: "PASS: CRD autoscaling matches expected (min={{ expected_min }}, max={{ expected_max }})"
+
+        # The OCM check above reads cluster.nodes.autoscale_compute, which is a
+        # cluster-wide aggregate over every node pool — including fixed-replica
+        # pools added by other tests. It therefore cannot tell whether the
+        # *default* pool was configured correctly: an unrelated pool keeping the
+        # aggregate above the floor is enough to pass it.
+        #
+        # CAPA spreads defaultMachinePoolSpec.autoscaling across the AZs, one
+        # pool per zone, so the autoscaling pools must sum back to exactly what
+        # the CRD asked for. That is the assertion that actually has teeth.
+        - name: Query OCM node pools for default pool autoscaling
+          uri:
+            url: "{{ ocm_api_url }}/api/clusters_mgmt/v1/clusters/{{ ocm_cluster.id }}/node_pools"
+            method: GET
+            headers:
+              Authorization: "Bearer {{ ocm_token_result.json.access_token }}"
+              Accept: application/json
+            status_code: 200
+            timeout: 15
+          register: ocm_autoscale_node_pools
+          failed_when: false
+          changed_when: false
+          no_log: true
+          when: ocm_available and ocm_cluster.id is defined
+
+        - name: Assert default pool autoscaling sums to the requested range
+          vars:
+            # Fixed-replica pools carry no autoscaling block and are excluded.
+            # .get(), not ['items']: when OCM returns an error body such as
+            # {"kind":"Error","id":"404",...}, obj['items'] falls through to
+            # getattr and resolves to the dict.items *method*, which `is
+            # defined`, so `| default([])` never fires and selectattr dies with
+            # "'builtin_function_or_method' object is not iterable". The rescue
+            # then records that as a default_autoscaling product failure.
+            autoscaling_pools: >-
+              {{ (ocm_autoscale_node_pools.json | default({})).get('items', [])
+                 | selectattr('autoscaling', 'defined')
+                 | rejectattr('autoscaling', 'none')
+                 | list }}
+            pool_min_total: "{{ autoscaling_pools | map(attribute='autoscaling.min_replica') | map('int') | sum }}"
+            pool_max_total: "{{ autoscaling_pools | map(attribute='autoscaling.max_replica') | map('int') | sum }}"
+          assert:
+            that:
+              # Status belongs here, not in `when:`. As a when-gate a 404/401
+              # skipped the assert while features_passed was still incremented
+              # below, so an expired OCM token produced a green PASS on the one
+              # check that can actually see the default pool. Tokens expire in
+              # ~15 min and this play runs 20+.
+              - ocm_autoscale_node_pools.status | default(0) == 200
+              - autoscaling_pools | length > 0
+              - pool_min_total | int == expected_min | int
+              - pool_max_total | int == expected_max | int
+            fail_msg: >-
+              FAIL: OCM node_pools returned
+              HTTP {{ ocm_autoscale_node_pools.status | default('none') }};
+              {{ autoscaling_pools | length }} autoscaling node pool(s) sum to
+              min={{ pool_min_total }}, max={{ pool_max_total }} but the default pool
+              requested min={{ expected_min }}, max={{ expected_max }}
+            success_msg: >-
+              PASS: {{ autoscaling_pools | length }} autoscaling node pool(s) sum to the
+              requested min={{ expected_min }}, max={{ expected_max }}
+          when: ocm_available
 
         - set_fact:
             features_passed: "{{ features_passed | int + 1 }}"

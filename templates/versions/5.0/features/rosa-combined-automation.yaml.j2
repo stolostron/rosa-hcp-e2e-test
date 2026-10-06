@@ -136,8 +136,14 @@ spec:
       minReplicas: {{ mp_min_replicas | default(2) }}
       maxReplicas: {{ mp_max_replicas | default(4) }}
 {% else %}
-      minReplicas: {{ machine_pool.min_replicas | default(availability_zones_list | default(['us-west-2a']) | length) }}
-      maxReplicas: {{ machine_pool.max_replicas | default(availability_zones_list | default(['us-west-2a']) | length * 2) }}
+{#  Fixed-size pool: min == max. defaultMachinePoolSpec has no replicas field,
+    so "not autoscaling" can only be expressed as an equal floor and ceiling.
+    Previously this branch derived max from the AZ count (length * 2), which at
+    the default 2 AZs produced exactly the same 2/4 as the enabled branch — the
+    feature was unverifiable, and it disagreed with verify_feature_flags.yml,
+    which expects max == 2 when disabled. Matches rosa-controlplane-only.yaml.j2. #}
+      minReplicas: {{ machine_pool.min_replicas | default(2) }}
+      maxReplicas: {{ machine_pool.max_replicas | default(2) }}
 {% endif %}
 
   additionalTags:
