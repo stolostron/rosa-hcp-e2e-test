@@ -387,11 +387,20 @@ class TestScenarios:
         assert stages[0]["always"] is False
 
     def test_cleanup_stages_marked_always(self, fm):
-        """Delete and restore must run even after an earlier stage fails."""
+        """Delete must run even after an earlier stage fails, so a failed
+        provision cannot leak a billing cluster."""
         stages = {s["suite"]: s["always"] for s in fm.scenario_stages("day1-basic")}
         assert stages["30-rosa-hcp-delete"] is True
-        assert stages["41-disable-capi-enable-hypershift"] is True
         assert stages["20-rosa-hcp-provision"] is False
+
+    def test_hub_state_is_not_restored_by_default(self, fm):
+        """41-disable-capi-enable-hypershift is hub-wide state.
+
+        Flipping MCE back to HyperShift disrupts anyone else using CAPI on a
+        shared hub, so a scenario must not do it unless asked explicitly.
+        """
+        stages = [s["suite"] for s in fm.scenario_stages("day1-basic")]
+        assert "41-disable-capi-enable-hypershift" not in stages
 
 
 class TestScenarioVersions:

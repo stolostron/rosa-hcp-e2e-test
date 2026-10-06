@@ -166,7 +166,12 @@ scenario_defaults:
     - 20-rosa-hcp-provision
     - 21-verify-feature-flags
     - {suite: 30-rosa-hcp-delete, always: true}
-    - {suite: 41-disable-capi-enable-hypershift, always: true}
+    # 41-disable-capi-enable-hypershift is deliberately NOT a default stage.
+    # It switches MCE from CAPI back to HyperShift, which is hub-wide state. On
+    # a shared hub that disrupts anyone else relying on CAPI mode, and a test
+    # run should not reconfigure the hub out from under them. Add it explicitly
+    # when you do want the hub restored:
+    #   ./run-test-suite.py --scenario <name> --stages 10,20,21,30,41
 
   # Per-version extra_vars applied when that version is selected.
   # Override feature defaults and scenario extra_vars; CLI -e still wins.
