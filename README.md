@@ -122,6 +122,49 @@ make crc-stop
 - Removes the `--watch-filter=multicluster-engine` flag so the CAPI controller watches all resources
 - Skips MCE-specific configuration (OCP login, MCE namespace setup)
 
+### Running a Scenario (recommended)
+
+A **scenario** is a named, self-contained feature test. It carries its own
+features, their required inputs, the suites to run, and any per-version quirks,
+so running one takes a name and a version and nothing else:
+
+```bash
+# See what's available and which versions each supports
+./run-test-suite.py --list-scenarios
+
+# Run one end to end (configure hub → provision → verify → delete → restore)
+./run-test-suite.py --scenario day1-basic -e openshift_version=5.0 -e name_prefix=qe6
+
+# Check everything resolves before spending an hour on AWS
+./run-test-suite.py --scenario day1-security -e openshift_version=5.0 --validate-only
+
+# Hub already has CAPI/CAPA enabled? Run just the cluster stages
+./run-test-suite.py --scenario day1-combo -e openshift_version=4.22 --stages 20,21,30
+```
+
+Scenarios are defined under `scenarios:` in
+`templates/schemas/feature-registry.yml`. The versions a scenario supports are
+**computed** from its features' `min_version`/`max_version` in
+`templates/schemas/version-compatibility.yml` — adding a version to
+`supported_versions` makes every compatible scenario runnable on it with no
+further edits.
+
+Account-specific inputs stay out of git. Scenarios reference them as `${ENV_VAR}`
+and fail fast, naming exactly what's missing, if they aren't set:
+
+```bash
+export ETCD_KMS_ARN="arn:aws:kms:us-west-2:123456789012:key/..."
+export CAPI_TEST_SECURITY_GROUP_IDS='["sg-0abc1234"]'   # JSON array
+export CAPI_TEST_LOG_S3_BUCKET="my-audit-bucket"
+```
+
+`extra_vars` precedence, lowest to highest:
+feature defaults → scenario `extra_vars` → `version_overrides` → CLI `-e`.
+
+Stages marked `always: true` (delete, restore HyperShift) still run after an
+earlier stage fails, so a failed provision doesn't leak an AWS cluster or leave
+the hub with HyperShift disabled.
+
 ### Running Tests
 
 ```bash
@@ -165,6 +208,11 @@ Test Selection:
   --all                       Run all test suites
   --tag TAG                   Filter test suites by tag
   --list                      List all available test suites
+
+Scenarios:
+  --scenario NAME             Run a named scenario end to end
+  --stages A,B,C              Run only these stages of the scenario
+  --list-scenarios            List scenarios and the versions each supports
 
 Feature Flags:
   --feature NAME              Enable a cluster feature (repeatable)

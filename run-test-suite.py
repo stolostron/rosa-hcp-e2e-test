@@ -537,6 +537,50 @@ class TestSuiteRunner:
 
         return self.results["failed"] == 0
 
+    def run_scenario(self, scenario: Dict) -> bool:
+        """Execute a scenario's stages in order.
+
+        Stages marked `always` (cleanup/restore) still run after a failure, so a
+        failed provision does not leak an AWS cluster or leave the hub with
+        HyperShift disabled.
+        """
+        self.suite_label = f"scenario-{scenario['name']}"
+
+        stages = scenario["stages"]
+        print(f"\n{Colors.BOLD}{'=' * 70}{Colors.ENDC}")
+        print(f"{Colors.BOLD}Scenario: {scenario['name']}{Colors.ENDC}")
+        print(f"  {scenario['description']}")
+        if scenario.get("version"):
+            print(f"  OpenShift version: {scenario['version']}")
+        print(f"  Features: {', '.join(scenario['features'])}")
+        print(f"  Stages:   {' → '.join(s['suite'] for s in stages)}")
+        if scenario.get("estimated_minutes"):
+            print(f"  Estimated runtime: ~{scenario['estimated_minutes']} minutes")
+        print(f"{Colors.BOLD}{'=' * 70}{Colors.ENDC}")
+
+        all_passed = True
+        for stage in stages:
+            suite_id = stage["suite"]
+
+            if not all_passed and not stage["always"]:
+                print(f"\n{Colors.YELLOW}⊘ Skipping {suite_id} (earlier stage failed){Colors.ENDC}")
+                continue
+
+            if not all_passed and stage["always"]:
+                print(f"\n{Colors.YELLOW}↻ Running {suite_id} anyway (cleanup stage){Colors.ENDC}")
+
+            # run_test_suite() returns a cumulative pass flag, so compare the
+            # failure count before and after to see if *this* stage failed.
+            failures_before = self.results["failed"]
+            saved_label = self.suite_label
+            self.run_test_suite(suite_id)
+            self.suite_label = saved_label
+
+            if self.results["failed"] > failures_before:
+                all_passed = False
+
+        return all_passed
+
     def run_all_suites(self, tag_filter: Optional[str] = None) -> bool:
         """Run all test suites, optionally filtered by tag."""
         suites = self.list_test_suites()
@@ -1201,6 +1245,24 @@ def _in_ci() -> bool:
     return os.environ.get("CI", "").strip().lower() not in ("", "0", "false", "no")
 
 
+def _major_minor(version: str) -> str:
+    """'4.22.6' -> '4.22'. Scenario/feature availability is keyed on major.minor."""
+    parts = str(version).split(".")
+    return ".".join(parts[:2])
+
+
+def _default_openshift_version(fallback: Optional[str] = None) -> Optional[str]:
+    """Read openshift_version from vars/vars.yml, or return fallback."""
+    try:
+        vars_path = Path.cwd() / "vars" / "vars.yml"
+        if vars_path.exists():
+            with open(vars_path, encoding="utf-8") as vf:
+                return (yaml.safe_load(vf) or {}).get("openshift_version", fallback)
+    except (OSError, yaml.YAMLError):
+        pass
+    return fallback
+
+
 def main():
     """Main entry point."""
     sys.stdout = _BlockingStream(sys.stdout)
@@ -1318,6 +1380,26 @@ Examples:
     )
 
     parser.add_argument(
+        "--scenario",
+        type=str,
+        help="Run a named scenario end-to-end (features, inputs and stages all "
+             "come from the registry, e.g. --scenario day1-security)"
+    )
+
+    parser.add_argument(
+        "--stages",
+        type=str,
+        help="Comma-separated subset of a scenario's stages to run "
+             "(e.g. --stages 20,21 to skip hub setup/teardown)"
+    )
+
+    parser.add_argument(
+        "--list-scenarios",
+        action="store_true",
+        help="List all available scenarios and the versions each can run on"
+    )
+
+    parser.add_argument(
         "--list-features",
         action="store_true",
         help="List all available cluster features"
@@ -1398,6 +1480,115 @@ Examples:
             print()
         return 0
 
+    # Handle --list-scenarios
+    if args.list_scenarios:
+        from feature_manager import FeatureManager
+        try:
+            fm = FeatureManager(Path.cwd())
+        except FileNotFoundError as e:
+            print(f"{Colors.RED}Error: {e}{Colors.ENDC}")
+            return 1
+        print(f"\n{Colors.BOLD}Available Scenarios:{Colors.ENDC}\n")
+        for s in fm.list_scenarios():
+            print(f"  {Colors.CYAN}{s['name']}{Colors.ENDC}")
+            print(f"    {s['description']}")
+            print(f"    Features: {', '.join(s['features'])}")
+            print(f"    Versions: {', '.join(s['versions']) or '(none supported)'}")
+            print(f"    Stages:   {' → '.join(s['stages'])}")
+            if s.get("estimated_minutes"):
+                print(f"    Runtime:  ~{s['estimated_minutes']} minutes")
+            print()
+        print("  Run one with: ./run-test-suite.py --scenario <name> "
+              "-e openshift_version=<version>\n")
+        return 0
+
+    if args.stages and not args.scenario:
+        print(f"{Colors.RED}Error: --stages only applies to --scenario runs{Colors.ENDC}")
+        return 1
+
+    # Expand --scenario into features, extra vars and a stage list
+    scenario = None
+    scenario_extra_vars = {}
+    if args.scenario:
+        from feature_manager import FeatureManager, ScenarioError
+        try:
+            fm = FeatureManager(Path.cwd())
+        except FileNotFoundError as e:
+            print(f"{Colors.RED}Error: {e}{Colors.ENDC}")
+            return 1
+
+        # Version comes from -e, then --ocp-version, then vars.yml.
+        version = (extra_vars.get("openshift_version")
+                   or args.ocp_version
+                   or _default_openshift_version())
+        if not version:
+            print(f"{Colors.RED}Error: could not determine an OpenShift version. "
+                  f"Pass -e openshift_version=<version>{Colors.ENDC}")
+            return 1
+
+        try:
+            scenario = fm.resolve_scenario(args.scenario, _major_minor(version))
+        except ScenarioError as e:
+            print(f"{Colors.RED}Scenario error: {e}{Colors.ENDC}")
+            return 1
+
+        scenario_extra_vars = dict(scenario["extra_vars"])
+
+        # A version_overrides entry may pin an exact build for a release family.
+        # This has to be applied here rather than left to the normal precedence
+        # chain: the assignment below and the later CLI merge would both
+        # overwrite it, so a pin in the registry would silently do nothing.
+        #
+        # Only a family is substituted. Asking for "5.0" means "the 5.0 release",
+        # and the registry knows 5.0 exists solely as an EC build; asking for an
+        # exact build is an explicit choice and is always honoured.
+        pinned = scenario_extra_vars.get("openshift_version")
+        if pinned and version == _major_minor(version):
+            print(f"{Colors.CYAN}Scenario pins OpenShift {version} → {pinned} "
+                  f"(OCM cannot resolve a bare {version}){Colors.ENDC}")
+            version = pinned
+            if "openshift_version" in extra_vars:
+                extra_vars["openshift_version"] = pinned
+
+        # Suite 20 no longer pins a version, so pass it through explicitly.
+        scenario_extra_vars["openshift_version"] = version
+        # Recorded in the verification artifact so the report can say which
+        # scenario produced it; suite 21 run on its own simply omits it.
+        scenario_extra_vars["scenario_name"] = args.scenario
+
+        # Stages after provisioning (verify, delete) address the cluster by
+        # name; suite 20 derives it from name_prefix, so mirror that here.
+        name_prefix = extra_vars.get("name_prefix")
+        if name_prefix and "cluster_name" not in extra_vars:
+            scenario_extra_vars["cluster_name"] = f"{name_prefix}-rosa-hcp"
+
+        if args.features is None:
+            args.features = []
+        args.features.extend(scenario["features"])
+        args.features = list(dict.fromkeys(args.features))
+
+        if args.stages:
+            wanted = [s.strip() for s in args.stages.split(",") if s.strip()]
+            selected = [
+                st for st in scenario["stages"]
+                if any(st["suite"] == w or st["suite"].startswith(f"{w}-") for w in wanted)
+            ]
+            unmatched = [
+                w for w in wanted
+                if not any(st["suite"] == w or st["suite"].startswith(f"{w}-")
+                           for st in scenario["stages"])
+            ]
+            if unmatched:
+                available = ", ".join(st["suite"] for st in scenario["stages"])
+                print(f"{Colors.RED}Error: --stages entries not in scenario "
+                      f"'{args.scenario}': {', '.join(unmatched)}. "
+                      f"Available: {available}{Colors.ENDC}")
+                return 1
+            scenario["stages"] = selected
+
+        print(f"\n{Colors.CYAN}Scenario '{args.scenario}' on OpenShift {version}: "
+              f"{', '.join(scenario['features'])}{Colors.ENDC}")
+
     # Expand --feature-group into --feature flags
     if args.feature_group:
         from feature_manager import FeatureManager
@@ -1433,16 +1624,9 @@ Examples:
         resolved = fm.auto_resolve_deps(resolved)
 
         # Read default version from vars.yml if not specified via -e
-        default_version = "4.21"
-        try:
-            vars_path = Path.cwd() / "vars" / "vars.yml"
-            if vars_path.exists():
-                with open(vars_path) as vf:
-                    vars_data = yaml.safe_load(vf)
-                    default_version = vars_data.get("openshift_version", default_version)
-        except Exception:
-            pass
-        version = extra_vars.get("openshift_version", default_version)
+        version = (extra_vars.get("openshift_version")
+                   or scenario_extra_vars.get("openshift_version")
+                   or _default_openshift_version("4.21"))
         errors = fm.validate_features(resolved, version)
         if errors:
             for error_msg in errors:
@@ -1451,15 +1635,18 @@ Examples:
 
         feature_vars = fm.resolve_to_extra_vars(resolved)
 
-        input_warnings = fm.check_required_inputs(resolved, extra_vars)
+        # A scenario supplies the inputs its features require, so they count as
+        # provided here even though they never appeared on the command line.
+        supplied = {**scenario_extra_vars, **extra_vars}
+        input_warnings = fm.check_required_inputs(resolved, supplied)
         for warn in input_warnings:
             print(f"{Colors.YELLOW}Warning: {warn}{Colors.ENDC}")
         if input_warnings and _in_ci():
             print(f"{Colors.RED}Error: Required feature inputs missing in CI mode{Colors.ENDC}")
             return 1
 
-        merged = {**feature_vars, **extra_vars}
-        extra_vars = merged
+        # Precedence: feature defaults < scenario (incl. version overrides) < CLI -e
+        extra_vars = {**feature_vars, **scenario_extra_vars, **extra_vars}
 
         print(f"\n{Colors.CYAN}Features enabled: {', '.join(args.features)}{Colors.ENDC}")
         if set(resolved) != set(fm.resolve_alias(f) for f in args.features):
@@ -1467,9 +1654,19 @@ Examples:
             print(f"{Colors.CYAN}Auto-added dependencies: {', '.join(auto_added)}{Colors.ENDC}")
         print()
 
+    # A featureless scenario skips the merge above, so apply its vars here.
+    if scenario and not args.features:
+        extra_vars = {**scenario_extra_vars, **extra_vars}
+
     # --validate-only: exit after feature validation without running ansible
     if args.validate_only:
-        if not args.features and not args.feature_group:
+        if scenario:
+            print(f"{Colors.GREEN}Scenario '{scenario['name']}' validation PASSED{Colors.ENDC}")
+            print(f"  Stages: {' → '.join(s['suite'] for s in scenario['stages'])}")
+            print("  Resolved extra vars:")
+            for key in sorted(extra_vars):
+                print(f"    {key}={extra_vars[key]}")
+        elif not args.features and not args.feature_group:
             print(f"{Colors.GREEN}No features to validate — input OK{Colors.ENDC}")
         else:
             print(f"{Colors.GREEN}Feature validation PASSED{Colors.ENDC}")
@@ -1497,9 +1694,10 @@ Examples:
         return 0
 
     # Validate arguments
-    if not args.suite_id and not args.all and not args.tag:
+    if not args.suite_id and not args.all and not args.tag and not scenario:
         parser.print_help()
-        print(f"\n{Colors.RED}Error: Please specify a suite ID, --all, or --tag <tag>{Colors.ENDC}")
+        print(f"\n{Colors.RED}Error: Please specify a suite ID, --scenario <name>, "
+              f"--all, or --tag <tag>{Colors.ENDC}")
         return 1
 
     # Track overall execution time
@@ -1509,7 +1707,9 @@ Examples:
     # Execute tests
     success = False
     try:
-        if args.all or args.tag:
+        if scenario:
+            success = runner.run_scenario(scenario)
+        elif args.all or args.tag:
             success = runner.run_all_suites(tag_filter=args.tag)
         else:
             success = runner.run_test_suite(args.suite_id)

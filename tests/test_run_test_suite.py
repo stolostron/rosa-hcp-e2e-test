@@ -211,9 +211,18 @@ def test_runner_results_initialized():
 
 
 # ================================================================
-# Per-feature verification results
+# Scenario Stage Execution
 # ================================================================
 
+def _scenario(stages, name="test-scenario"):
+    return {
+        "name": name,
+        "description": "fixture scenario",
+        "features": ["feat_a"],
+        "stages": stages,
+        "version": "4.22",
+        "estimated_minutes": None,
+    }
 
 
 def _stub_stages(runner, failing):
@@ -231,6 +240,84 @@ def _stub_stages(runner, failing):
     runner.run_test_suite = _fake
     return called
 
+
+def test_scenario_runs_all_stages_when_passing():
+    runner = _make_runner()
+    stages = [
+        {"suite": "10-configure-mce-environment", "always": False},
+        {"suite": "20-rosa-hcp-provision", "always": False},
+        {"suite": "30-rosa-hcp-delete", "always": True},
+    ]
+    called = _stub_stages(runner, failing=set())
+    assert runner.run_scenario(_scenario(stages)) is True
+    assert called == [
+        "10-configure-mce-environment",
+        "20-rosa-hcp-provision",
+        "30-rosa-hcp-delete",
+    ]
+
+
+def test_scenario_skips_normal_stages_after_failure():
+    runner = _make_runner()
+    stages = [
+        {"suite": "20-rosa-hcp-provision", "always": False},
+        {"suite": "21-verify-feature-flags", "always": False},
+    ]
+    called = _stub_stages(runner, failing={"20-rosa-hcp-provision"})
+    assert runner.run_scenario(_scenario(stages)) is False
+    assert called == ["20-rosa-hcp-provision"]
+
+
+def test_scenario_still_runs_cleanup_after_failure():
+    """A failed provision must not leak the cluster or leave CAPA enabled."""
+    runner = _make_runner()
+    stages = [
+        {"suite": "20-rosa-hcp-provision", "always": False},
+        {"suite": "21-verify-feature-flags", "always": False},
+        {"suite": "30-rosa-hcp-delete", "always": True},
+        {"suite": "41-disable-capi-enable-hypershift", "always": True},
+    ]
+    called = _stub_stages(runner, failing={"20-rosa-hcp-provision"})
+    assert runner.run_scenario(_scenario(stages)) is False
+    assert "21-verify-feature-flags" not in called
+    assert called == [
+        "20-rosa-hcp-provision",
+        "30-rosa-hcp-delete",
+        "41-disable-capi-enable-hypershift",
+    ]
+
+
+def test_scenario_passing_cleanup_does_not_mask_earlier_failure():
+    runner = _make_runner()
+    stages = [
+        {"suite": "20-rosa-hcp-provision", "always": False},
+        {"suite": "30-rosa-hcp-delete", "always": True},
+    ]
+    _stub_stages(runner, failing={"20-rosa-hcp-provision"})
+    assert runner.run_scenario(_scenario(stages)) is False
+
+
+def test_scenario_reports_failure_when_only_cleanup_fails():
+    runner = _make_runner()
+    stages = [
+        {"suite": "20-rosa-hcp-provision", "always": False},
+        {"suite": "30-rosa-hcp-delete", "always": True},
+    ]
+    _stub_stages(runner, failing={"30-rosa-hcp-delete"})
+    assert runner.run_scenario(_scenario(stages)) is False
+
+
+def test_scenario_sets_suite_label():
+    runner = _make_runner()
+    stages = [{"suite": "20-rosa-hcp-provision", "always": False}]
+    _stub_stages(runner, failing=set())
+    runner.run_scenario(_scenario(stages, name="day1-security"))
+    assert runner.suite_label == "scenario-day1-security"
+
+
+# ================================================================
+# Per-feature JUnit expansion
+# ================================================================
 
 def _suite_with_verify(duration=120.0, success=True, **extra):
     """A one-playbook suite result standing in for stage 21."""
@@ -250,10 +337,8 @@ def _suite_with_verify(duration=120.0, success=True, **extra):
     }
 
 
-
 def _feature_data(features):
     return {"schema_version": 1, "features": features}
-
 
 
 def _runner_with_results(suites, duration=120.0):
@@ -263,11 +348,9 @@ def _runner_with_results(suites, duration=120.0):
     return runner
 
 
-
 def _parse(xml_text):
     import xml.etree.ElementTree as ET
     return ET.fromstring(xml_text)
-
 
 
 def test_feature_testcases_expands_one_case_per_feature():
@@ -286,7 +369,6 @@ def test_feature_testcases_expands_one_case_per_feature():
     assert {c["classname"] for c in cases} == {"FeatureVerification"}
 
 
-
 def test_feature_testcases_ignores_other_playbooks():
     runner = _make_runner()
     data = _feature_data([{"id": "fips", "status": "passed"}])
@@ -295,13 +377,11 @@ def test_feature_testcases_ignores_other_playbooks():
     ) is None
 
 
-
 def test_feature_testcases_without_artifact_falls_back():
     runner = _make_runner()
     pb = {"file": "playbooks/verify_feature_flags.yml"}
     assert runner._feature_testcases(pb, None) is None
     assert runner._feature_testcases(pb, _feature_data([])) is None
-
 
 
 def test_junit_expands_features_into_testcases():
@@ -326,7 +406,6 @@ def test_junit_expands_features_into_testcases():
     assert "CRD has no field fips" in skipped.get("message", "")
 
 
-
 def test_junit_marks_failed_feature_as_failure():
     runner = _runner_with_results([_suite_with_verify(success=False, error="boom")])
     runner.load_feature_verification = lambda: _feature_data([
@@ -343,7 +422,6 @@ def test_junit_marks_failed_feature_as_failure():
     assert root.find(".//testcase[@name='fips']") is not None
 
 
-
 def test_junit_falls_back_when_no_artifact():
     """A playbook that died before writing results keeps its raw error."""
     runner = _runner_with_results([
@@ -356,7 +434,6 @@ def test_junit_falls_back_when_no_artifact():
     assert root.get("failures") == "1"
     failure = root.find(".//testcase/failure")
     assert "login failed" in failure.get("message", "")
-
 
 
 def test_junit_suite_and_root_totals_agree():
@@ -388,7 +465,6 @@ def test_junit_suite_and_root_totals_agree():
     assert int(root.get("tests")) == 3  # 2 features + 1 provisioning playbook
 
 
-
 def test_load_feature_verification_rejects_stale_artifact(tmp_path):
     """A file left by an earlier run must not be attributed to this one."""
     import json as _json
@@ -406,6 +482,83 @@ def test_load_feature_verification_rejects_stale_artifact(tmp_path):
     assert runner.load_feature_verification() is not None
 
 
+# ================================================================
+# version_overrides build pinning
+# ================================================================
+
+def _validate_only(version):
+    """Run the CLI in --validate-only (offline, no ansible) and return stdout."""
+    import subprocess
+    result = subprocess.run(
+        [str(BASE_DIR / "run-test-suite.py"), "--scenario", "day1-basic",
+         "--stages", "21", "--validate-only",
+         "-e", f"openshift_version={version}", "-e", "name_prefix=tf1"],
+        capture_output=True, text=True, cwd=BASE_DIR,
+    )
+    # Without this, a crashed script returns empty stdout and every negative
+    # assertion ("pins OpenShift" not in out) passes vacuously.
+    assert result.returncode == 0, f"exit {result.returncode}\n{result.stderr}"
+    return result.stdout
+
+
+def _registry_pin(family="5.0"):
+    """The pinned build for a release family, read from the registry.
+
+    Read rather than hardcoded: when the EC build rolls to rc.1, one legitimate
+    registry edit should not break two tests.
+    """
+    import yaml
+    registry = yaml.safe_load(
+        (BASE_DIR / "templates" / "schemas" / "feature-registry.yml").read_text()
+    )
+    return registry["scenario_defaults"]["version_overrides"][family]["openshift_version"]
+
+
+def test_bare_five_zero_is_pinned_to_the_ec_build():
+    """A bare 5.0 reaches OCM as a family it cannot resolve, so it must be pinned.
+
+    Left unpinned, OCM's search= query invents a 5.0.0 that does not exist and
+    the run provisions a doomed cluster for ~40 minutes of real AWS spend.
+    """
+    out = _validate_only("5.0")
+    assert f"openshift_version={_registry_pin()}" in out
+    assert "pins OpenShift 5.0" in out, "The substitution should be announced"
+
+
+def test_exact_build_is_never_rewritten():
+    """Naming an exact build is an explicit choice; the pin must not clobber it."""
+    out = _validate_only("5.0.0-rc.1")
+    assert "openshift_version=5.0.0-rc.1" in out
+    assert "pins OpenShift" not in out
+    # The family's other overrides still apply.
+    assert "channel_group=candidate" in out
+
+
+def test_unpinned_family_passes_through():
+    out = _validate_only("4.22")
+    assert "openshift_version=4.22" in out
+    assert "pins OpenShift" not in out
+
+
+def test_registry_pins_both_version_and_channel_for_five_zero():
+    """Guard the registry entry itself, not just the runner behaviour."""
+    import yaml
+    registry = yaml.safe_load(
+        (BASE_DIR / "templates" / "schemas" / "feature-registry.yml").read_text()
+    )
+    override = registry["scenario_defaults"]["version_overrides"]["5.0"]
+    assert override["channel_group"] == "candidate"
+    # Shape, not an exact string: this guards against the pin being deleted or
+    # pointed at the wrong release family, without breaking on an rc bump.
+    pinned = override["openshift_version"]
+    assert pinned.startswith("5.0."), f"pin {pinned!r} is not a 5.0 build"
+    assert pinned != "5.0", "the pin must name an exact build, not the family"
+
+
+# ================================================================
+# Degraded (OCM-less) verification
+# ================================================================
+
 def _degraded_data(features, degraded=True):
     return {
         "schema_version": 1,
@@ -416,7 +569,6 @@ def _degraded_data(features, degraded=True):
             "degraded_reason": "OCM API unreachable — CRDs only",
         },
     }
-
 
 
 def test_degraded_run_adds_a_reachability_testcase(monkeypatch):
@@ -432,7 +584,6 @@ def test_degraded_run_adds_a_reachability_testcase(monkeypatch):
     assert "OCM API unreachable" in cases[0]["message"]
 
 
-
 def test_degraded_run_fails_under_ci(monkeypatch):
     monkeypatch.setenv("CI", "true")
     runner = _make_runner()
@@ -443,7 +594,6 @@ def test_degraded_run_fails_under_ci(monkeypatch):
     assert cases[0]["outcome"] == "failed", "A half-verified build must not be green"
 
 
-
 def test_healthy_run_adds_no_reachability_testcase(monkeypatch):
     monkeypatch.setenv("CI", "true")
     runner = _make_runner()
@@ -452,7 +602,6 @@ def test_healthy_run_adds_no_reachability_testcase(monkeypatch):
         _degraded_data([{"id": "fips", "status": "passed"}], degraded=False),
     )
     assert [c["name"] for c in cases] == ["fips"]
-
 
 
 def test_degraded_junit_counts_the_failure(monkeypatch):
@@ -467,7 +616,6 @@ def test_degraded_junit_counts_the_failure(monkeypatch):
     assert root.find(".//testcase[@name='ocm_reachability']/failure") is not None
 
 
-
 def test_artifact_without_environment_key_is_safe():
     """Older artifacts predate the degraded field; expansion must not raise."""
     runner = _make_runner()
@@ -476,7 +624,6 @@ def test_artifact_without_environment_key_is_safe():
         {"features": [{"id": "fips", "status": "passed"}]},
     )
     assert [c["name"] for c in cases] == ["fips"]
-
 
 
 def test_unrecognised_feature_status_fails_closed(monkeypatch):
@@ -491,7 +638,6 @@ def test_unrecognised_feature_status_fails_closed(monkeypatch):
     assert "bogus" in cases[0]["message"]
 
 
-
 def test_malformed_features_does_not_raise(monkeypatch):
     """A bad artifact must not crash report generation after a 75-minute run."""
     runner = _make_runner()
@@ -500,7 +646,6 @@ def test_malformed_features_does_not_raise(monkeypatch):
         assert runner._feature_testcases(pb, {"features": bad}) is None
     # A list whose elements are not dicts: elements are skipped, no raise.
     assert runner._feature_testcases(pb, {"features": ["fips"]}) == []
-
 
 
 def test_degraded_string_false_is_not_treated_as_degraded(monkeypatch):
@@ -513,7 +658,6 @@ def test_degraded_string_false_is_not_treated_as_degraded(monkeypatch):
     assert [c["name"] for c in cases] == ["a"], "string 'False' must not be truthy here"
 
 
-
 def test_features_without_ids_get_distinct_names():
     runner = _make_runner()
     cases = runner._feature_testcases(
@@ -522,6 +666,10 @@ def test_features_without_ids_get_distinct_names():
     )
     assert len({c["name"] for c in cases}) == 2, "duplicate classname+name breaks CI trending"
 
+
+# ================================================================
+# Output preservation and counting consistency
+# ================================================================
 
 def test_failed_expansion_keeps_the_ansible_log():
     """Per-feature detail says which feature broke; the log says why."""
@@ -538,7 +686,6 @@ def test_failed_expansion_keeps_the_ansible_log():
     sysout = root.find(".//system-out")
     assert sysout is not None, "ansible log must survive the expansion"
     assert "full log" in sysout.text
-
 
 
 def test_playbook_failure_outside_feature_results_is_not_green():
@@ -558,7 +705,6 @@ def test_playbook_failure_outside_feature_results_is_not_green():
     assert "died after writing results" in extra.find("failure").get("message")
 
 
-
 def test_console_counts_come_from_the_xml_build():
     runner = _runner_with_results([_suite_with_verify()])
     runner.load_feature_verification = lambda: _feature_data([
@@ -575,7 +721,6 @@ def test_console_counts_come_from_the_xml_build():
                       "skipped": int(root.get("skipped"))}
 
 
-
 def test_ci_false_is_not_treated_as_ci(monkeypatch):
     for value, expected in [("true", True), ("1", True), ("yes", True),
                             ("false", False), ("0", False), ("no", False),
@@ -586,7 +731,6 @@ def test_ci_false_is_not_treated_as_ci(monkeypatch):
     assert _module._in_ci() is False
 
 
-
 def test_degraded_is_skipped_when_ci_is_false(monkeypatch):
     monkeypatch.setenv("CI", "false")
     runner = _make_runner()
@@ -595,7 +739,6 @@ def test_degraded_is_skipped_when_ci_is_false(monkeypatch):
         _degraded_data([{"id": "fips", "status": "passed"}]),
     )
     assert cases[0]["outcome"] == "skipped", "CI=false must not fail the build"
-
 
 
 def test_artifact_archived_once_per_run(tmp_path, monkeypatch):
