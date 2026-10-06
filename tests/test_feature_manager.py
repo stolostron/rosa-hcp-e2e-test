@@ -166,9 +166,13 @@ class TestRequiredInputs:
         )
         assert warnings == []
 
-    def test_security_groups_requires_input(self, fm):
-        warnings = fm.check_required_inputs(["security_groups"], {})
-        assert len(warnings) == 1
+    def test_security_groups_does_not_require_input(self, fm):
+        """Provisioning creates the group, so demanding it up front is wrong.
+
+        With requires_input: true the scenario emitted a warning that _in_ci()
+        escalates to a hard failure, so day1-security could never run in Jenkins.
+        """
+        assert fm.check_required_inputs(["security_groups"], {}) == []
 
     def test_boolean_feature_no_warning(self, fm):
         warnings = fm.check_required_inputs(["no_cni"], {})
@@ -443,18 +447,17 @@ class TestScenarioVersionOverrides:
 class TestScenarioEnvInterpolation:
     def test_missing_env_raises_naming_the_vars(self, fm, monkeypatch):
         monkeypatch.delenv("ETCD_KMS_ARN", raising=False)
-        monkeypatch.delenv("CAPI_TEST_SECURITY_GROUP_IDS", raising=False)
         with pytest.raises(ScenarioError) as exc:
             fm.resolve_scenario("day1-security", "4.22")
         assert "ETCD_KMS_ARN" in str(exc.value)
-        assert "CAPI_TEST_SECURITY_GROUP_IDS" in str(exc.value)
+        # Security group ids are no longer demanded: provisioning creates them.
+        assert "CAPI_TEST_SECURITY_GROUP_IDS" not in str(exc.value)
 
     def test_env_values_substituted(self, fm, monkeypatch):
         monkeypatch.setenv("ETCD_KMS_ARN", "arn:aws:kms:us-west-2:1:key/k")
-        monkeypatch.setenv("CAPI_TEST_SECURITY_GROUP_IDS", '["sg-0abc1234"]')
         resolved = fm.resolve_scenario("day1-security", "4.22")
         assert resolved["extra_vars"]["etcd_encryption_kms_arn"] == "arn:aws:kms:us-west-2:1:key/k"
-        assert resolved["extra_vars"]["additional_security_groups"] == '["sg-0abc1234"]'
+        assert "additional_security_groups" not in resolved["extra_vars"]
 
     def test_empty_env_treated_as_missing(self, fm, monkeypatch):
         monkeypatch.setenv("CAPI_TEST_LOG_S3_BUCKET", "")
@@ -1482,12 +1485,18 @@ def _coerce_like_runner(extra_vars):
     return out
 
 
-def _render_scenario(fm, scenario_name, version, template_name):
-    """Resolve a scenario and render it through a real template."""
+def _render_scenario(fm, scenario_name, version, template_name, extra=None):
+    """Resolve a scenario and render it through a real template.
+
+    `extra` simulates values that provisioning supplies at run time rather than
+    the scenario declaring them up front — e.g. the security group id that
+    tasks/create_security_group.yml creates once the VPC exists.
+    """
     scenario = fm.resolve_scenario(scenario_name, version)
     extra_vars = _coerce_like_runner({
         **fm.resolve_to_extra_vars(scenario["features"]),
         **scenario["extra_vars"],
+        **(extra or {}),
     })
     docs = _render_template(template_name, version, extra_vars)
     return {d["kind"]: d.get("spec", {}) for d in docs if "kind" in d}
@@ -1519,9 +1528,12 @@ SCENARIO_RENDER_EXPECTATIONS = {
         ("audit_logging", "ROSAControlPlane", "s3LogForwarder"),
     ],
     "day1-security": [
+        # security_groups is deliberately absent. Its value cannot come from the
+        # scenario: the groups must live in a VPC the run itself creates, so
+        # provisioning step 2.5 creates them and appends the id. The template
+        # side is covered by test_security_groups_render_when_provisioning_sets_them.
         ("etcd_kms", "ROSAControlPlane", "etcdEncryptionKMSARN"),
         ("fips", "ROSAControlPlane", "fips"),
-        ("security_groups", "ROSAMachinePool", "additionalSecurityGroups"),
     ],
 }
 
@@ -1570,6 +1582,18 @@ class TestScenarioRendersThroughTemplates:
         specs = _render_scenario(fm, "day1-security", "5.0", "rosa-controlplane-only.yaml.j2")
         assert specs["ROSAControlPlane"]["etcdEncryptionKMSARN"] == \
             "arn:aws:kms:us-west-2:111122223333:key/test"
+
+    def test_security_groups_render_when_provisioning_sets_them(self, fm, scenario_env):
+        """The scenario cannot supply these, but the template must still use them.
+
+        tasks/create_security_group.yml appends the created id to
+        additional_security_groups during provisioning, so simulate that rather
+        than asserting the scenario produced it.
+        """
+        specs = _render_scenario(
+            fm, "day1-security", "5.0", "rosa-controlplane-only.yaml.j2",
+            extra={"additional_security_groups": ["sg-0abc1234"]},
+        )
         assert specs["ROSAMachinePool"]["additionalSecurityGroups"] == ["sg-0abc1234"]
 
     def test_50_version_override_reaches_the_manifest(self, fm, scenario_env):
