@@ -206,8 +206,10 @@ scenarios:
     # (Jenkins credentials, or export locally) — the scenario wires them through.
     extra_vars:
       etcd_encryption_kms_arn: "${ETCD_KMS_ARN}"
-      # JSON array, e.g. export CAPI_TEST_SECURITY_GROUP_IDS='["sg-0abc1234"]'
-      additional_security_groups: "${CAPI_TEST_SECURITY_GROUP_IDS}"
+      # additional_security_groups is deliberately absent. tasks/create_security_group.yml
+      # reads the VPC from the ROSANetwork status and creates <cluster>-test-sg during
+      # provisioning, then appends it. The group cannot exist before the VPC does, so
+      # demanding it as an input here is unsatisfiable.
     estimated_minutes: 80
 
   day1-networking:
@@ -331,7 +333,8 @@ suites:
         mutable: true
         applies_to: [create, apply]
         default: []
-        requires_input: true
+        # Created during provisioning, not supplied by the caller — see above.
+        requires_input: false
         k8s_field: ".spec.additionalSecurityGroups"
         resource: ROSAMachinePool
 
