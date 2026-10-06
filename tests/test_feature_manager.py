@@ -1,11 +1,12 @@
 """Tests for the FeatureManager class."""
 
+import json
 import re
 import pytest
 import yaml
 from jinja2 import Environment, FileSystemLoader, Undefined
 from pathlib import Path
-from feature_manager import FeatureManager
+from feature_manager import FeatureManager, ScenarioError
 
 
 @pytest.fixture
@@ -177,6 +178,68 @@ class TestRequiredInputs:
         warnings = fm.check_required_inputs(["disk_size"], {})
         assert warnings == []
 
+    def test_byon_names_real_inputs_not_enable_flag(self, fm):
+        """byon maps to byon_vpc, but the inputs users must supply are the subnets/AZs."""
+        warnings = fm.check_required_inputs(["byon"], {})
+        assert len(warnings) == 1
+        assert "byon_subnet_ids" in warnings[0]
+        assert "byon_availability_zones" in warnings[0]
+        assert "byon_vpc" not in warnings[0]
+
+    def test_byon_partially_satisfied_still_warns(self, fm):
+        warnings = fm.check_required_inputs(
+            ["byon"], {"byon_subnet_ids": '["subnet-0abc1234"]'}
+        )
+        assert len(warnings) == 1
+        assert "byon_availability_zones" in warnings[0]
+        assert "byon_subnet_ids" not in warnings[0]
+
+    def test_byon_satisfied(self, fm):
+        warnings = fm.check_required_inputs(
+            ["byon"],
+            {
+                "byon_subnet_ids": '["subnet-0abc1234"]',
+                "byon_availability_zones": '["us-west-2a"]',
+            },
+        )
+        assert warnings == []
+
+    def test_audit_logging_requires_a_destination(self, fm):
+        warnings = fm.check_required_inputs(["audit_logging"], {})
+        assert len(warnings) == 1
+        assert "log_forward_cloudwatch_role_arn" in warnings[0]
+        assert "log_forward_s3_bucket" in warnings[0]
+
+    def test_audit_logging_satisfied_by_s3(self, fm):
+        warnings = fm.check_required_inputs(
+            ["audit_logging"], {"log_forward_s3_bucket": "my-audit-bucket"}
+        )
+        assert warnings == []
+
+    def test_audit_logging_satisfied_by_full_cloudwatch_pair(self, fm):
+        warnings = fm.check_required_inputs(
+            ["audit_logging"],
+            {
+                "log_forward_cloudwatch_role_arn": "arn:aws:iam::123:role/logs",
+                "log_forward_cloudwatch_log_group": "/rosa/audit",
+            },
+        )
+        assert warnings == []
+
+    def test_audit_logging_partial_cloudwatch_pair_warns(self, fm):
+        """Role ARN without a log group renders no forwarder block — must not pass."""
+        warnings = fm.check_required_inputs(
+            ["audit_logging"],
+            {"log_forward_cloudwatch_role_arn": "arn:aws:iam::123:role/logs"},
+        )
+        assert len(warnings) == 1
+
+    def test_day1_networking_group_flags_missing_log_destination(self, fm):
+        """The whole point: day1-networking must fail fast, not 40 minutes in."""
+        features = fm.resolve_group("day1-networking")
+        warnings = fm.check_required_inputs(features, {})
+        assert any("audit_logging" in w for w in warnings)
+
 
 class TestListFeatures:
     def test_lists_all(self, fm):
@@ -302,6 +365,174 @@ class TestFeatureGroups:
             for feat in group["features"]:
                 assert feat in fm._cli_features, \
                     f"Group '{group['name']}' contains '{feat}' which is not in cli_features"
+
+
+class TestScenarios:
+    def test_list_scenarios(self, fm):
+        names = [s["name"] for s in fm.list_scenarios()]
+        assert "day1-basic" in names
+        assert "day1-security" in names
+
+    def test_scenario_features_come_from_group(self, fm):
+        assert fm.scenario_features("day1-security") == fm.resolve_group("day1-security")
+
+    def test_unknown_scenario_raises(self, fm):
+        with pytest.raises(ScenarioError, match="Unknown scenario"):
+            fm.resolve_scenario("nonexistent")
+
+    def test_stages_normalized_to_dicts(self, fm):
+        stages = fm.scenario_stages("day1-basic")
+        assert all(set(s) == {"suite", "always"} for s in stages)
+        assert stages[0]["suite"] == "10-configure-mce-environment"
+        assert stages[0]["always"] is False
+
+    def test_cleanup_stages_marked_always(self, fm):
+        """Delete and restore must run even after an earlier stage fails."""
+        stages = {s["suite"]: s["always"] for s in fm.scenario_stages("day1-basic")}
+        assert stages["30-rosa-hcp-delete"] is True
+        assert stages["41-disable-capi-enable-hypershift"] is True
+        assert stages["20-rosa-hcp-provision"] is False
+
+
+class TestScenarioVersions:
+    def test_basic_runs_on_every_supported_version(self, fm):
+        assert fm.scenario_versions("day1-basic") == fm._supported_versions
+
+    def test_security_gated_by_fips_min_version(self, fm):
+        assert fm.scenario_versions("day1-security") == ["4.21", "4.22", "5.0"]
+
+    def test_networking_gated_by_audit_logging(self, fm):
+        assert fm.scenario_versions("day1-networking") == ["4.20", "4.21", "4.22", "5.0"]
+
+    def test_combo_gated_at_419(self, fm):
+        assert fm.scenario_versions("day1-combo") == ["4.19", "4.20", "4.21", "4.22", "5.0"]
+
+    def test_resolve_rejects_unavailable_version(self, fm):
+        with pytest.raises(ScenarioError, match="not available on OpenShift 4.20"):
+            fm.resolve_scenario("day1-security", "4.20")
+
+    def test_rejection_names_the_blocking_feature(self, fm):
+        with pytest.raises(ScenarioError, match="fips"):
+            fm.resolve_scenario("day1-security", "4.20")
+
+    def test_all_scenarios_runnable_on_50(self, fm):
+        """5.0 is the version this work was motivated by — every scenario must reach it."""
+        for s in fm.list_scenarios():
+            assert "5.0" in s["versions"], f"{s['name']} cannot run on 5.0"
+
+
+class TestScenarioVersionOverrides:
+    def test_50_forces_candidate_channel(self, fm):
+        resolved = fm.resolve_scenario("day1-basic", "5.0")
+        assert resolved["extra_vars"]["channel_group"] == "candidate"
+
+    def test_no_channel_override_on_422(self, fm):
+        resolved = fm.resolve_scenario("day1-basic", "4.22")
+        assert "channel_group" not in resolved["extra_vars"]
+
+
+class TestScenarioEnvInterpolation:
+    def test_missing_env_raises_naming_the_vars(self, fm, monkeypatch):
+        monkeypatch.delenv("ETCD_KMS_ARN", raising=False)
+        monkeypatch.delenv("CAPI_TEST_SECURITY_GROUP_IDS", raising=False)
+        with pytest.raises(ScenarioError) as exc:
+            fm.resolve_scenario("day1-security", "4.22")
+        assert "ETCD_KMS_ARN" in str(exc.value)
+        assert "CAPI_TEST_SECURITY_GROUP_IDS" in str(exc.value)
+
+    def test_env_values_substituted(self, fm, monkeypatch):
+        monkeypatch.setenv("ETCD_KMS_ARN", "arn:aws:kms:us-west-2:1:key/k")
+        monkeypatch.setenv("CAPI_TEST_SECURITY_GROUP_IDS", '["sg-0abc1234"]')
+        resolved = fm.resolve_scenario("day1-security", "4.22")
+        assert resolved["extra_vars"]["etcd_encryption_kms_arn"] == "arn:aws:kms:us-west-2:1:key/k"
+        assert resolved["extra_vars"]["additional_security_groups"] == '["sg-0abc1234"]'
+
+    def test_empty_env_treated_as_missing(self, fm, monkeypatch):
+        monkeypatch.setenv("CAPI_TEST_LOG_S3_BUCKET", "")
+        with pytest.raises(ScenarioError, match="CAPI_TEST_LOG_S3_BUCKET"):
+            fm.resolve_scenario("day1-networking", "4.22")
+
+    def test_scenario_inputs_satisfy_required_input_check(self, fm, monkeypatch):
+        """day1-security's env-supplied vars must count as provided."""
+        monkeypatch.setenv("ETCD_KMS_ARN", "arn:aws:kms:us-west-2:1:key/k")
+        monkeypatch.setenv("CAPI_TEST_SECURITY_GROUP_IDS", '["sg-0abc1234"]')
+        resolved = fm.resolve_scenario("day1-security", "4.22")
+        warnings = fm.check_required_inputs(resolved["features"], resolved["extra_vars"])
+        assert warnings == []
+
+
+class TestScenarioExtends:
+    def test_extends_prepends_parent_features(self, tmp_path):
+        schemas_dir = tmp_path / "templates" / "schemas"
+        schemas_dir.mkdir(parents=True)
+        registry = {
+            "version": "1.0",
+            "var_map": {"feat_a": "a", "feat_b": "b"},
+            "cli_aliases": {},
+            "cli_features": ["feat_a", "feat_b"],
+            "dependencies": {},
+            "mutual_exclusions": [],
+            "feature_groups": {
+                "grp_a": {"features": ["feat_a"]},
+                "grp_b": {"features": ["feat_b"]},
+            },
+            "scenario_defaults": {"stages": ["20-provision"]},
+            "scenarios": {
+                "base": {"feature_group": "grp_a"},
+                "child": {"extends": "base", "feature_group": "grp_b"},
+            },
+            "suites": [{
+                "id": "test", "name": "Test", "phase": "Day1",
+                "features": [
+                    {"id": "feat_a", "name": "A", "description": "A", "type": "boolean", "default": False},
+                    {"id": "feat_b", "name": "B", "description": "B", "type": "boolean", "default": False},
+                ],
+            }],
+        }
+        compat = {"supported_versions": ["4.22"], "feature_availability": {}}
+        (schemas_dir / "feature-registry.yml").write_text(yaml.dump(registry))
+        (schemas_dir / "version-compatibility.yml").write_text(yaml.dump(compat))
+
+        fm = FeatureManager(tmp_path)
+        assert fm.scenario_features("child") == ["feat_a", "feat_b"]
+
+    def test_circular_extends_raises(self, tmp_path):
+        schemas_dir = tmp_path / "templates" / "schemas"
+        schemas_dir.mkdir(parents=True)
+        registry = {
+            "version": "1.0",
+            "var_map": {}, "cli_aliases": {}, "cli_features": [],
+            "dependencies": {}, "mutual_exclusions": [],
+            "scenarios": {
+                "a": {"extends": "b"},
+                "b": {"extends": "a"},
+            },
+            "suites": [],
+        }
+        compat = {"supported_versions": ["4.22"], "feature_availability": {}}
+        (schemas_dir / "feature-registry.yml").write_text(yaml.dump(registry))
+        (schemas_dir / "version-compatibility.yml").write_text(yaml.dump(compat))
+
+        fm = FeatureManager(tmp_path)
+        with pytest.raises(ScenarioError, match="Circular"):
+            fm.scenario_features("a")
+
+
+class TestScenarioRegistryIntegrity:
+    def test_every_scenario_references_a_real_group(self, fm):
+        for name in fm._scenarios:
+            fm.scenario_features(name)  # raises on unknown group
+
+    def test_every_scenario_stage_has_a_suite_file(self, fm):
+        suites_dir = Path(__file__).parent.parent / "test-suites"
+        for s in fm.list_scenarios():
+            for suite_id in s["stages"]:
+                assert (suites_dir / f"{suite_id}.json").exists(), \
+                    f"Scenario '{s['name']}' references missing suite {suite_id}.json"
+
+    def test_every_scenario_has_at_least_one_version(self, fm):
+        for s in fm.list_scenarios():
+            assert s["versions"], f"Scenario '{s['name']}' cannot run on any supported version"
 
 
 class TestLoadErrors:
@@ -1220,3 +1451,136 @@ class TestBreakGlassCredentials:
         features = fm.list_features(version="4.19")
         ids = [f["id"] for f in features]
         assert "break_glass_credentials" in ids
+
+
+def _coerce_like_runner(extra_vars):
+    """Mimic run_playbook(): JSON-decode values that look like dicts/lists.
+
+    The runner passes those as a JSON blob so Ansible receives real types,
+    while everything else goes through as a string. Tests must do the same or
+    they are not exercising what actually reaches the templates.
+    """
+    out = {}
+    for key, value in extra_vars.items():
+        text = str(value)
+        if text[:1] in "{[":
+            try:
+                out[key] = json.loads(text)
+                continue
+            except json.JSONDecodeError:
+                pass
+        out[key] = value
+    return out
+
+
+def _render_scenario(fm, scenario_name, version, template_name):
+    """Resolve a scenario and render it through a real template."""
+    scenario = fm.resolve_scenario(scenario_name, version)
+    extra_vars = _coerce_like_runner({
+        **fm.resolve_to_extra_vars(scenario["features"]),
+        **scenario["extra_vars"],
+    })
+    docs = _render_template(template_name, version, extra_vars)
+    return {d["kind"]: d.get("spec", {}) for d in docs if "kind" in d}
+
+
+# Each scenario feature -> (resource kind, top-level spec key it must produce).
+# Written out explicitly rather than derived from the registry's `k8s_field`:
+# that field is documentation only (nothing reads it), and for audit_logging it
+# names just one of two possible forwarder shapes. Same for the playbook's
+# `crd_field_map`, which is defined at verify_feature_flags.yml:20 and never
+# referenced. An explicit table is the only trustworthy expectation here.
+SCENARIO_RENDER_EXPECTATIONS = {
+    "day1-basic": [
+        ("domain_prefix", "ROSAControlPlane", "domainPrefix"),
+        ("additional_tags", "ROSAControlPlane", "additionalTags"),
+        ("channel_group", "ROSAControlPlane", "channelGroup"),
+        ("default_autoscaling", "ROSAControlPlane", "defaultMachinePoolSpec"),
+    ],
+    "day1-combo": [
+        ("cluster_autoscaler_expander", "ROSAControlPlane", "autoscaler"),
+        ("image_registry", "ROSAControlPlane", "clusterRegistryConfig"),
+        ("parallel_upgrade", "ROSAMachinePool", "updateConfig"),
+        ("disk_size", "ROSAMachinePool", "volumeSize"),
+    ],
+    "day1-networking": [
+        ("no_cni", "ROSAControlPlane", "network"),
+        ("private_network", "ROSAControlPlane", "endpointAccess"),
+        ("external_oidc", "ROSAControlPlane", "enableExternalAuthProviders"),
+        ("audit_logging", "ROSAControlPlane", "s3LogForwarder"),
+    ],
+    "day1-security": [
+        ("etcd_kms", "ROSAControlPlane", "etcdEncryptionKMSARN"),
+        ("fips", "ROSAControlPlane", "fips"),
+        ("security_groups", "ROSAMachinePool", "additionalSecurityGroups"),
+    ],
+}
+
+
+@pytest.fixture
+def scenario_env(monkeypatch):
+    """The environment inputs the scenarios declare via ${ENV_VAR}."""
+    monkeypatch.setenv("ETCD_KMS_ARN", "arn:aws:kms:us-west-2:111122223333:key/test")
+    monkeypatch.setenv("CAPI_TEST_SECURITY_GROUP_IDS", '["sg-0abc1234"]')
+    monkeypatch.setenv("CAPI_TEST_LOG_S3_BUCKET", "test-audit-bucket")
+
+
+class TestScenarioRendersThroughTemplates:
+    """Close the registry -> template seam.
+
+    Other tests check that the registry emits the right dict, or that a
+    template renders given hand-written vars. Nothing checked that the var
+    names the registry emits are the var names the templates consume — which
+    is exactly where the byon (byon_vpc vs byon_subnet_ids) and audit_logging
+    input bugs lived. Scenarios make this seam load-bearing, because nobody
+    types these vars by hand any more.
+    """
+
+    @pytest.mark.parametrize("scenario_name", sorted(SCENARIO_RENDER_EXPECTATIONS))
+    @pytest.mark.parametrize("version", ["4.22", "5.0"])
+    def test_every_feature_reaches_the_manifest(self, fm, scenario_env, scenario_name, version):
+        applicable = fm.scenario_versions(scenario_name)
+        if version not in applicable:
+            pytest.skip(f"{scenario_name} not available on {version}")
+
+        specs = _render_scenario(fm, scenario_name, version, "rosa-controlplane-only.yaml.j2")
+
+        for feature, kind, field in SCENARIO_RENDER_EXPECTATIONS[scenario_name]:
+            assert kind in specs, f"{scenario_name}@{version}: no {kind} document rendered"
+            assert field in specs[kind], (
+                f"{scenario_name}@{version}: feature '{feature}' did not reach "
+                f"{kind}.spec.{field} — registry var name and template likely disagree"
+            )
+
+    @pytest.mark.parametrize("scenario_name", sorted(SCENARIO_RENDER_EXPECTATIONS))
+    def test_renders_valid_yaml_in_combined_template(self, fm, scenario_env, scenario_name):
+        specs = _render_scenario(fm, scenario_name, "5.0", "rosa-combined-automation.yaml.j2")
+        assert "ROSAControlPlane" in specs
+
+    def test_security_values_are_carried_through_not_just_present(self, fm, scenario_env):
+        specs = _render_scenario(fm, "day1-security", "5.0", "rosa-controlplane-only.yaml.j2")
+        assert specs["ROSAControlPlane"]["etcdEncryptionKMSARN"] == \
+            "arn:aws:kms:us-west-2:111122223333:key/test"
+        assert specs["ROSAMachinePool"]["additionalSecurityGroups"] == ["sg-0abc1234"]
+
+    def test_50_version_override_reaches_the_manifest(self, fm, scenario_env):
+        """channel_group=candidate is what makes 5.0 resolvable via OCM."""
+        specs = _render_scenario(fm, "day1-basic", "5.0", "rosa-controlplane-only.yaml.j2")
+        assert specs["ROSAControlPlane"]["channelGroup"] == "candidate"
+
+    def test_422_keeps_stable_channel(self, fm, scenario_env):
+        specs = _render_scenario(fm, "day1-basic", "4.22", "rosa-controlplane-only.yaml.j2")
+        assert specs["ROSAControlPlane"]["channelGroup"] == "stable"
+
+
+class TestVersionTemplateParity:
+    def test_50_templates_match_422(self):
+        """5.0 is currently a verbatim copy of 4.22. If that stops being true,
+        this test should be updated deliberately rather than drifting silently."""
+        import filecmp
+        base = Path(__file__).parent.parent / "templates" / "versions"
+        a, b = base / "4.22" / "features", base / "5.0" / "features"
+        names = sorted(p.name for p in a.iterdir())
+        assert names == sorted(p.name for p in b.iterdir())
+        match, mismatch, errors = filecmp.cmpfiles(a, b, names, shallow=False)
+        assert not mismatch and not errors, f"5.0 diverged from 4.22: {mismatch + errors}"

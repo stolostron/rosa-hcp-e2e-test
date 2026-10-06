@@ -11,7 +11,6 @@
       "description": "Provisions a ROSA HCP cluster using CAPA with optional ROSANetwork and ROSARoleConfig automation",
       "test_case_id": "RHACM4K-61815",
       "extra_vars": {
-        "openshift_version": "4.22.6",
         "create_rosa_network": true,
         "create_rosa_role_config": true,
         "vpc_cidr_block": "10.0.0.0/16",
@@ -54,7 +53,7 @@
       "name_prefix": "Simple prefix to name all resources consistently (e.g., 'qe6' creates 'qe6-rosa-hcp' cluster). Automatically sets cluster_name and domain_prefix. RECOMMENDED for easy naming.",
       "cluster_name": "Name of the cluster (auto-generated random name by default, or derived from name_prefix)",
       "domain_prefix": "Domain prefix for cluster API URL (required, max 15 chars, or derived from name_prefix)",
-      "openshift_version": "OpenShift version to deploy (default: 4.22, resolved to latest available via OCM)",
+      "openshift_version": "OpenShift version to deploy. Not pinned by this suite — defaults to openshift_version in vars/vars.yml, override with -e openshift_version=<version>. Resolved to the latest available build via OCM.",
       "aws_region": "AWS region for deployment (default: us-west-2)",
       "channel_group": "Update channel: stable, fast, or candidate (default: stable)"
     },
