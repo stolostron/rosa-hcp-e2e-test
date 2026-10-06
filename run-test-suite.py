@@ -1561,6 +1561,15 @@ Examples:
         name_prefix = extra_vars.get("name_prefix")
         if name_prefix and "cluster_name" not in extra_vars:
             scenario_extra_vars["cluster_name"] = f"{name_prefix}-rosa-hcp"
+        # Same reasoning for the machine pool, and it is not optional. Both
+        # machinepool playbooks default pool_name to the literal "extra-pool",
+        # and every cluster shares the namespace ns-rosa-hcp, so two unscoped
+        # runs collide: the second add fails on "already exists", and stage 28
+        # deletes whichever cluster's pool got there first. The nightly already
+        # avoids this by passing -e pool_name="${NAME_PREFIX}-mp"; match it so a
+        # scenario run and a Jenkins run name pools the same way.
+        if name_prefix and "pool_name" not in extra_vars:
+            scenario_extra_vars["pool_name"] = f"{name_prefix}-mp"
 
         if args.features is None:
             args.features = []

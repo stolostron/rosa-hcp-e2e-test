@@ -199,6 +199,35 @@ scenarios:
     feature_group: day1-combo
     estimated_minutes: 75
 
+  day2-machinepool:
+    description: "Day-2 machine pool lifecycle: provision, add a pool, delete it, tear down"
+    # The add/delete playbooks and suites 27/28 already exist, and the nightly
+    # Jenkins job runs them (Jenkinsfile:438,468). This scenario is not new
+    # coverage — it is the same lifecycle runnable from a laptop with one
+    # command, without a Jenkins build.
+    #
+    # Reuses the day1-basic features deliberately. This is about the day-2
+    # stages, not new feature flags: node_labels, node_taints and
+    # machine_pool_autoscaling are registry entries that add_rosa_machine_pool.yml
+    # does not implement (it handles instance_type and replicas only), and the
+    # day-2 ids are absent from cli_features because suites configure them via
+    # extra_vars rather than --feature. Verifying a known baseline at 21 first
+    # means a day-2 failure is attributable to the pool operation rather than to
+    # a cluster that was never right to begin with.
+    feature_group: day1-basic
+    # Overrides scenario_defaults.stages — the only scenario that continues past
+    # verification. 28 is always so a failed add still removes whatever pool it
+    # managed to create; 30 is always so the cluster is torn down after that.
+    # 41 stays out, same hub-wide reason as the defaults above.
+    stages:
+      - 10-configure-mce-environment
+      - 20-rosa-hcp-provision
+      - 21-verify-feature-flags
+      - 27-rosa-hcp-add-machinepool
+      - {suite: 28-rosa-hcp-delete-machinepool, always: true}
+      - {suite: 30-rosa-hcp-delete, always: true}
+    estimated_minutes: 90
+
   day1-security:
     description: "Security features: etcd KMS encryption, FIPS, additional security groups"
     feature_group: day1-security

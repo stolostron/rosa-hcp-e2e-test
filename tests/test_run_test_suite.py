@@ -540,6 +540,52 @@ def test_unpinned_family_passes_through():
     assert "pins OpenShift" not in out
 
 
+def _validate_scenario(scenario, prefix="tf1", extra=()):
+    """--validate-only for an arbitrary scenario; returns stdout."""
+    import subprocess
+    cmd = [str(BASE_DIR / "run-test-suite.py"), "--scenario", scenario,
+           "--validate-only", "-e", "openshift_version=5.0",
+           "-e", f"name_prefix={prefix}"]
+    for pair in extra:
+        cmd += ["-e", pair]
+    result = subprocess.run(cmd, capture_output=True, text=True, cwd=BASE_DIR)
+    assert result.returncode == 0, f"exit {result.returncode}\n{result.stderr}"
+    return result.stdout
+
+
+def test_pool_name_is_scoped_to_the_name_prefix():
+    """Unscoped pool names collide across clusters in the shared namespace.
+
+    Both machinepool playbooks default pool_name to the literal "extra-pool"
+    and every cluster lives in ns-rosa-hcp, so without this the second
+    concurrent run fails on "already exists" and stage 28 deletes the other
+    cluster's pool. Mirrors the nightly's -e pool_name="${NAME_PREFIX}-mp".
+    """
+    out = _validate_scenario("day2-machinepool", prefix="mp1")
+    assert "pool_name=mp1-mp" in out
+    assert "pool_name=extra-pool" not in out
+
+
+def test_explicit_pool_name_is_not_overridden():
+    """Deriving a default must not clobber a caller who named the pool."""
+    out = _validate_scenario("day2-machinepool", prefix="mp1",
+                             extra=["pool_name=custom-pool"])
+    assert "pool_name=custom-pool" in out
+    assert "pool_name=mp1-mp" not in out
+
+
+def test_derived_pool_name_fits_the_fifteen_char_limit():
+    """add_rosa_machine_pool.yml rejects pool_name over 15 chars (nodePoolName).
+
+    The derived form is <prefix>-mp, so prefixes up to 12 chars are safe; the
+    4-char prefixes in use leave plenty of room.
+    """
+    out = _validate_scenario("day2-machinepool", prefix="mp1")
+    pool = [ln.split("pool_name=")[1].strip()
+            for ln in out.splitlines() if "pool_name=" in ln][0]
+    assert len(pool) <= 15, f"{pool!r} is {len(pool)} chars"
+
+
 def test_registry_pins_both_version_and_channel_for_five_zero():
     """Guard the registry entry itself, not just the runner behaviour."""
     import yaml

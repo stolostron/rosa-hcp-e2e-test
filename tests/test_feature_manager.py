@@ -406,6 +406,32 @@ class TestScenarios:
         stages = [s["suite"] for s in fm.scenario_stages("day1-basic")]
         assert "41-disable-capi-enable-hypershift" not in stages
 
+    def test_day2_machinepool_continues_past_verification(self, fm):
+        """The one scenario that runs day-2 suites, in order, after 21.
+
+        The add/delete machine pool playbooks and suites already existed and the
+        nightly runs them; this scenario is what makes the same lifecycle
+        runnable without Jenkins. Drop 27 or 28 and it silently degrades into a
+        slower day1-basic that still reports success.
+        """
+        stages = [s["suite"] for s in fm.scenario_stages("day2-machinepool")]
+        assert stages.index("21-verify-feature-flags") \
+            < stages.index("27-rosa-hcp-add-machinepool") \
+            < stages.index("28-rosa-hcp-delete-machinepool") \
+            < stages.index("30-rosa-hcp-delete")
+
+    def test_day2_machinepool_cleans_up_after_a_failed_add(self, fm):
+        """A pool that fails partway still bills, and so does its cluster.
+
+        28 and 30 must be always:true or a failed 27 skips both and leaks the
+        pool and the cluster. 27 itself must not be always — there is nothing to
+        add once provisioning has failed.
+        """
+        stages = {s["suite"]: s["always"] for s in fm.scenario_stages("day2-machinepool")}
+        assert stages["28-rosa-hcp-delete-machinepool"] is True
+        assert stages["30-rosa-hcp-delete"] is True
+        assert stages["27-rosa-hcp-add-machinepool"] is False
+
 
 class TestScenarioVersions:
     def test_basic_runs_on_every_supported_version(self, fm):
