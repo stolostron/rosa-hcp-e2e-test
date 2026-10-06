@@ -129,8 +129,17 @@ spec:
   defaultMachinePoolSpec:
     instanceType: {{ machine_pool.instance_type | default('m5.xlarge') }}
     autoscaling:
-      maxReplicas: {{ machine_pool.max_replicas | default(2) }}
+{#  This block previously ignored default_autoscaling entirely and always
+    rendered a fixed 2/2, so on 4.21 enabling the feature changed nothing while
+    verify_feature_flags.yml expected max == 4. Brought in line with
+    rosa-controlplane-only.yaml.j2 and the 4.22 / 5.0 templates. #}
+{% if default_autoscaling is defined and default_autoscaling | bool %}
+      minReplicas: {{ mp_min_replicas | default(2) }}
+      maxReplicas: {{ mp_max_replicas | default(4) }}
+{% else %}
       minReplicas: {{ machine_pool.min_replicas | default(2) }}
+      maxReplicas: {{ machine_pool.max_replicas | default(2) }}
+{% endif %}
 
   additionalTags:
     env: {{ environment_tag | default('test') }}
