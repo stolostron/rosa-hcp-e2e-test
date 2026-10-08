@@ -11,6 +11,7 @@ Created: April 23, 2026
 """
 
 import logging
+import time
 from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger("agent.aws_client")
@@ -275,6 +276,99 @@ class AWSClient:
             return True, f"Deleted {len(vpce_ids)} VPC endpoint(s)"
         except Exception as e:
             return False, f"Failed to delete VPC endpoints: {e}"
+
+    # ================================================================
+    # ELBv2 — Load Balancers
+    # ================================================================
+
+    def describe_load_balancers_in_vpc(self, vpc_id: str) -> List[Dict]:
+        """List ELBv2 load balancers (NLB/ALB) attached to a VPC.
+
+        The describe-load-balancers API has no VpcId filter, so we page
+        through all LBs and filter by VpcId in Python.
+
+        Returns list of dicts with keys: arn, name, type
+        """
+        if not self.available:
+            return []
+
+        try:
+            elbv2 = self._client("elbv2")
+            results = []
+            paginator = elbv2.get_paginator("describe_load_balancers")
+            for page in paginator.paginate():
+                for lb in page.get("LoadBalancers", []):
+                    if lb.get("VpcId") != vpc_id:
+                        continue
+                    results.append({
+                        "arn": lb["LoadBalancerArn"],
+                        "name": lb.get("LoadBalancerName", ""),
+                        "type": lb.get("Type", "unknown"),
+                    })
+            return results
+        except Exception as e:
+            self._log(f"describe-load-balancers error: {e}", "debug")
+
+        return []
+
+    def delete_load_balancer(self, lb_arn: str) -> Tuple[bool, str]:
+        """Delete an ELBv2 load balancer and its target groups.
+
+        Correct ELBv2 delete order: the load balancer must go FIRST. A target
+        group still referenced by an active listener raises ResourceInUse, so
+        deleting target groups before the LB just soft-fails and orphans them.
+        Deleting the LB removes its listeners, freeing the target groups so
+        they can then be deleted cleanly. We capture the target-group ARNs
+        BEFORE deleting the LB, because describe_target_groups(LoadBalancerArn=)
+        no longer resolves once the LB is gone. DependencyViolation/
+        ResourceInUse are treated as soft (logged, non-fatal) so teardown
+        continues.
+        """
+        if not self.available:
+            return False, "No AWS access available"
+
+        try:
+            elbv2 = self._client("elbv2")
+
+            # 1. Capture the target-group ARNs while the LB still exists —
+            #    after the LB is deleted this lookup by LoadBalancerArn fails.
+            tg_arns = []
+            try:
+                resp = elbv2.describe_target_groups(LoadBalancerArn=lb_arn)
+                tg_arns = [tg["TargetGroupArn"] for tg in resp.get("TargetGroups", [])]
+            except Exception as e:
+                self._log(f"describe-target-groups error: {e}", "debug")
+
+            # 2. Delete the load balancer first — this removes its listeners,
+            #    releasing any target groups still referenced by them.
+            elbv2.delete_load_balancer(LoadBalancerArn=lb_arn)
+
+            # 3. Give the LB a moment to release its listeners before deleting
+            #    the now-orphaned target groups.
+            if tg_arns:
+                time.sleep(2)
+
+            # 4. Delete the now-orphaned target groups.
+            for tg_arn in tg_arns:
+                try:
+                    elbv2.delete_target_group(TargetGroupArn=tg_arn)
+                except ClientError as e:
+                    code = e.response.get("Error", {}).get("Code", "")
+                    if code in ("ResourceInUse", "DependencyViolation"):
+                        self._log(f"target group {tg_arn} in use — skipping", "debug")
+                    else:
+                        self._log(f"delete-target-group error: {e}", "debug")
+                except Exception as e:
+                    self._log(f"delete-target-group error: {e}", "debug")
+
+            return True, f"Deleted load balancer {lb_arn}"
+        except ClientError as e:
+            code = e.response.get("Error", {}).get("Code", "")
+            if code in ("ResourceInUse", "DependencyViolation"):
+                return False, f"{code}: {lb_arn} still in use"
+            return False, f"Failed to delete load balancer {lb_arn}: {e}"
+        except Exception as e:
+            return False, f"Failed to delete load balancer {lb_arn}: {e}"
 
     # ================================================================
     # EC2 — Subnets

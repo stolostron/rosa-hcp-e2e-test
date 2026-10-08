@@ -311,6 +311,29 @@ class RemediationAgent(BaseAgent):
                     self.log("Waiting 20s for ENIs to release after VPC endpoint deletion", "info")
                     time.sleep(20)
 
+                # Delete ELBv2 load balancers BEFORE ENIs/subnets — an ingress
+                # NLB/ELB owns managed ENIs that would be recreated if we deleted
+                # the ENI while the LB still exists, and it also pins a subnet.
+                lbs = aws.describe_load_balancers_in_vpc(vpc_id)
+                if lbs:
+                    self.log(f"Deleting {len(lbs)} load balancer(s)", "info")
+                    for lb in lbs:
+                        ok, msg = aws.delete_load_balancer(lb["arn"])
+                        if ok:
+                            cleanup_details.append(f"Deleted load balancer {lb['name']} ({lb['type']})")
+                            self.log(f"Deleted load balancer {lb['name']} ({lb['arn']})", "info")
+                        else:
+                            cleanup_errors.append(f"Failed to delete LB {lb['name']}: {msg}")
+                    # Wait for the LB to finish deleting so its managed ENIs
+                    # release before we try to clean up the remaining ENIs.
+                    # NOTE: NLB managed-ENI (ela-attach) release can lag beyond
+                    # this fixed 20s window. We intentionally do not poll LB
+                    # state here (no cheap LB-state helper exists on the AWS
+                    # client) — the verified-resolution loop re-fires this
+                    # remediation, so a slow ENI release is covered on retry.
+                    self.log("Waiting 20s for ENIs to release after load balancer deletion", "info")
+                    time.sleep(20)
+
                 # Delete any remaining ENIs
                 enis = aws.describe_network_interfaces(vpc_id)
                 for eni in enis:
