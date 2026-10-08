@@ -41,6 +41,21 @@
     # ================================================================
     # SETUP: Login and get cluster resources
     # ================================================================
+    # Every other playbook loads this; without it the next task dereferences
+    # OCP_HUB_CLUSTER_USER as a bare variable and the play dies at task 1 with
+    # the reason censored by no_log. Jenkins hides the gap by passing the values
+    # with -e, so the failure only ever shows up locally.
+    - name: Load user variables
+      ansible.builtin.include_vars: "{{ item }}"
+      with_first_found:
+        - files:
+            - ../vars/user_vars.yml
+          skip: true
+      # user_vars.yml holds the OCM client secret and the hub kubeadmin
+      # password; without no_log the whole file is echoed into the captured
+      # output and archived in the JUnit XML whenever a play fails.
+      no_log: true
+
     - name: Set cluster credentials
       set_fact:
         ocp_user: "{{ lookup('env', 'OCP_HUB_CLUSTER_USER') | default(OCP_HUB_CLUSTER_USER, true) }}"
