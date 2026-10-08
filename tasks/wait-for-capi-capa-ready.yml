@@ -130,9 +130,38 @@
       delay: 10
       changed_when: false
 
+    - name: Wait for CAPA webhook serving cert to be issued by service-ca
+      shell: |
+        oc --context='{{ ocp_context }}' get secret capa-webhook-service-cert \
+          -n {{ capa_namespace }} -o jsonpath='{.data.tls\.crt}' 2>/dev/null || echo ""
+      register: capa_webhook_cert_check
+      until: capa_webhook_cert_check.stdout | trim | length > 0
+      retries: 30
+      delay: 10
+      changed_when: false
+
+    - name: Wait for CAPA webhook caBundle to be injected by service-ca
+      shell: |
+        check_cabundle() {
+          json=$(oc --context='{{ ocp_context }}' get "$1" "$2" -o json 2>/dev/null) || return 1
+          printf '%s\n' "$json" |
+            jq -e '(.webhooks | length) > 0 and all(.webhooks[]; (.clientConfig.caBundle // "") != "")' >/dev/null
+        }
+        if check_cabundle mutatingwebhookconfiguration capa-mutating-webhook-configuration &&
+           check_cabundle validatingwebhookconfiguration capa-validating-webhook-configuration; then
+          echo "ready"
+        else
+          echo ""
+        fi
+      register: capa_webhook_cabundle_check
+      until: capa_webhook_cabundle_check.stdout | trim == "ready"
+      retries: 30
+      delay: 10
+      changed_when: false
+
     - name: Display CAPA webhook ready status
       debug:
-        msg: "✅ CAPA webhook service endpoint registered: {{ capa_webhook_check.stdout | trim }}"
+        msg: "✅ CAPA webhook ready: endpoint {{ capa_webhook_check.stdout | trim }}, serving cert issued, caBundle injected"
 
   rescue:
     - name: Gather CAPA webhook diagnostics
@@ -145,6 +174,16 @@
         echo ""
         echo "=== CAPA Pod Details ==="
         oc --context='{{ ocp_context }}' describe pods -n {{ capa_namespace }} | grep -E -A 20 'Events:|State:|Reason:|Message:' | head -100 || true
+        echo ""
+        echo "=== serving cert secret (service-ca) ==="
+        oc --context='{{ ocp_context }}' get secret capa-webhook-service-cert -n {{ capa_namespace }} || true
+        echo ""
+        echo "=== webhook caBundle present per entry (mutating + validating)? ==="
+        for cfg in mutatingwebhookconfiguration/capa-mutating-webhook-configuration validatingwebhookconfiguration/capa-validating-webhook-configuration; do
+          echo "--- $cfg"
+          oc --context='{{ ocp_context }}' get "$cfg" \
+            -o jsonpath='{range .webhooks[*]}{.name}{" caBundle_len="}{.clientConfig.caBundle}{"\n"}{end}' | sed 's/caBundle_len=.\{1,\}/caBundle_len=PRESENT/' || true
+        done
       register: capa_webhook_diagnostics
       changed_when: false
       failed_when: false
@@ -152,8 +191,9 @@
     - name: Fail with CAPA webhook diagnostics
       fail:
         msg: |
-          ❌ CAPA webhook service never got endpoints in {{ capa_namespace }}.
-          The CAPA pod may be crash-looping or the webhook server failed to start.
+          ❌ CAPA webhook not ready in {{ capa_namespace }} (endpoints, service-ca serving cert,
+          or injected caBundle missing). Applying webhook-validated resources (e.g.
+          AWSClusterControllerIdentity) would fail with 'x509: certificate signed by unknown authority'.
 
           {{ capa_webhook_diagnostics.stdout | default('(no diagnostic output collected)') }}
 
