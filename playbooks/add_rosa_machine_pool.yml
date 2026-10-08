@@ -213,10 +213,15 @@
 
     - name: Wait for ROSAMachinePool to become ready
       shell: |
+        # `oc` exits 0 and prints an empty string when a status field is absent,
+        # so the `|| echo` fallback never fires. Normalise the empty case after
+        # the fact, otherwise REPLICAS reads as "" instead of "0".
         READY=$(oc get rosamachinepool {{ pool_name }} -n {{ rosa_hcp_namespace }} \
-          -o jsonpath='{.status.ready}' 2>/dev/null || echo "false")
+          -o jsonpath='{.status.ready}' 2>/dev/null)
         REPLICAS=$(oc get rosamachinepool {{ pool_name }} -n {{ rosa_hcp_namespace }} \
-          -o jsonpath='{.status.replicas}' 2>/dev/null || echo "0")
+          -o jsonpath='{.status.replicas}' 2>/dev/null)
+        READY=${READY:-false}
+        REPLICAS=${REPLICAS:-0}
         ELAPSED=$(( $(date +%s) - {{ pool_start_epoch }} ))
         MINS=$((ELAPSED / 60))
         SECS=$((ELAPSED % 60))
@@ -233,9 +238,33 @@
 
     - name: Parse final status
       set_fact:
-        final_ready: "{{ pool_status.stdout.split('|')[0] | default('false') }}"
-        final_replicas: "{{ pool_status.stdout.split('|')[1] | default('0') }}"
+        final_ready: "{{ pool_status.stdout.split('|')[0] | default('false', true) }}"
+        final_replicas: "{{ pool_status.stdout.split('|')[1] | default('0', true) }}"
         total_pool_seconds: "{{ now(utc=true).strftime('%s') | int - pool_start_epoch | int }}"
+
+    # A bare "did not become ready" tells us nothing about WHY -- the pool may be
+    # healthy in AWS while the controller simply never wrote status. Capture the
+    # CRs and the controller's own view before failing.
+    - name: Collect diagnostics when the pool never became ready
+      shell: |
+        echo "===== ROSAMachinePool/{{ pool_name }} (status) ====="
+        oc get rosamachinepool {{ pool_name }} -n {{ rosa_hcp_namespace }} \
+          -o jsonpath='{.status}' 2>&1; echo
+        echo "===== MachinePool/{{ pool_name }} (phase + status) ====="
+        oc get machinepool {{ pool_name }} -n {{ rosa_hcp_namespace }} \
+          -o jsonpath='{.status}' 2>&1; echo
+        echo "===== CAPA controller lines for this pool ====="
+        oc logs -n {{ capa_namespace }} deploy/capa-controller-manager \
+          --tail=2000 2>/dev/null | grep -F '{{ pool_name }}' | tail -30
+      register: pool_diagnostics
+      changed_when: false
+      failed_when: false
+      when: final_ready | lower != "true"
+
+    - name: Display diagnostics
+      debug:
+        msg: "{{ pool_diagnostics.stdout_lines }}"
+      when: final_ready | lower != "true"
 
     - name: Verify pool is ready
       fail:
@@ -244,9 +273,15 @@
           Ready: {{ final_ready }}
           Replicas: {{ final_replicas }}
 
+          This gate gates on .status.ready / .status.replicas, which only the CAPA
+          controller writes. An empty status with a healthy pool in AWS means the
+          controller never reconciled it -- check the diagnostics above before
+          assuming the pool itself failed.
+
           Check status:
             oc describe rosamachinepool {{ pool_name }} -n {{ rosa_hcp_namespace }}
             oc describe machinepool {{ pool_name }} -n {{ rosa_hcp_namespace }}
+            oc logs -n {{ capa_namespace }} deploy/capa-controller-manager | grep {{ pool_name }}
       when: final_ready | lower != "true"
 
     - name: Display success
