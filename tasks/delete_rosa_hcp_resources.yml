@@ -7,52 +7,73 @@
 # ================================================================
 
 - name: Set agent monitor log file for real-time monitoring
-  set_fact:
+  ansible.builtin.set_fact:
     agent_monitor_log: "/tmp/deletion-agent-{{ cluster_name }}.log"
 
 - name: Initialize agent monitor log file
-  copy:
+  # force: true is intentional — start with a fresh log each run for clean output
+  ansible.builtin.copy:
     content: ""
     dest: "{{ agent_monitor_log }}"
     force: true
+    mode: '0644'
+
+- name: Initialize deletion failure tracking
+  ansible.builtin.set_fact:
+    rcp_deletion_failed: false
+    rosanetwork_deletion_failed: false
+    cf_deletion_failed: false
+    rrc_deletion_failed: false
 
 - name: Check if Cluster exists
-  shell: |
-    oc get cluster {{ cluster_name }} -n {{ rosa_hcp_namespace }} -o name 2>/dev/null || echo "not-found"
+  ansible.builtin.shell:
+    cmd: |
+      oc get cluster "$CLUSTER_NAME" -n "$NAMESPACE" -o name 2>/dev/null || echo "__NOTFOUND__"
+  environment:
+    CLUSTER_NAME: "{{ cluster_name }}"
+    NAMESPACE: "{{ rosa_hcp_namespace }}"
   register: cluster_exists
   changed_when: false
 
 - name: Check if ROSAControlPlane exists
-  shell: |
-    oc get rosacontrolplane {{ cluster_name }} -n {{ rosa_hcp_namespace }} -o name 2>/dev/null || echo "not-found"
+  ansible.builtin.shell:
+    cmd: |
+      oc get rosacontrolplane "$CLUSTER_NAME" -n "$NAMESPACE" -o name 2>/dev/null || echo "__NOTFOUND__"
+  environment:
+    CLUSTER_NAME: "{{ cluster_name }}"
+    NAMESPACE: "{{ rosa_hcp_namespace }}"
   register: rcp_exists
   changed_when: false
 
 - name: Check if ROSAMachinePool exists
-  shell: |
-    oc get rosamachinepool {{ machine_pool_name }} -n {{ rosa_hcp_namespace }} -o name 2>/dev/null || echo "not-found"
+  ansible.builtin.shell:
+    cmd: |
+      oc get rosamachinepool "$MACHINE_POOL_NAME" -n "$NAMESPACE" -o name 2>/dev/null || echo "__NOTFOUND__"
+  environment:
+    MACHINE_POOL_NAME: "{{ machine_pool_name }}"
+    NAMESPACE: "{{ rosa_hcp_namespace }}"
   register: rmp_exists
   changed_when: false
 
 - name: Discover ROSANetwork by label or name
-  shell: |
-    COUNT=$(oc get rosanetwork -n "$NAMESPACE" \
-      -l "cluster.x-k8s.io/cluster-name=$CLUSTER_NAME" \
-      -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null \
-      | grep -c . || echo "0")
-    COUNT=${COUNT:-0}
-    if [ "$COUNT" -gt 1 ]; then
-      echo "ERROR: Found $COUNT ROSANetwork resources with label cluster.x-k8s.io/cluster-name=$CLUSTER_NAME — cannot safely determine target. Aborting." >&2
-      exit 1
-    fi
-    FOUND=$(oc get rosanetwork -n "$NAMESPACE" \
-      -l "cluster.x-k8s.io/cluster-name=$CLUSTER_NAME" \
-      -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
-    if [ -z "$FOUND" ]; then
-      FOUND=$(oc get rosanetwork "$NETWORK_NAME" -n "$NAMESPACE" \
-        -o jsonpath='{.metadata.name}' 2>/dev/null)
-    fi
-    echo "${FOUND:-not-found}"
+  ansible.builtin.shell:
+    cmd: |
+      COUNT=$(oc get rosanetwork -n "$NAMESPACE" \
+        -l "cluster.x-k8s.io/cluster-name=$CLUSTER_NAME" \
+        -o name 2>/dev/null | wc -l | awk '{print $1}')
+      if [ "$COUNT" -gt 1 ]; then
+        echo "ERROR: Found $COUNT ROSANetwork resources with label cluster.x-k8s.io/cluster-name=$CLUSTER_NAME — cannot safely determine target. Aborting." >&2
+        exit 1
+      fi
+      FOUND=$(oc get rosanetwork -n "$NAMESPACE" \
+        -l "cluster.x-k8s.io/cluster-name=$CLUSTER_NAME" \
+        -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+      if [ -z "$FOUND" ]; then
+        echo "WARNING: No ROSANetwork found by label, falling back to name lookup: $NETWORK_NAME" >&2
+        FOUND=$(oc get rosanetwork "$NETWORK_NAME" -n "$NAMESPACE" \
+          -o jsonpath='{.metadata.name}' 2>/dev/null)
+      fi
+      echo "${FOUND:-not-found}"
   environment:
     NAMESPACE: "{{ rosa_hcp_namespace }}"
     CLUSTER_NAME: "{{ cluster_name }}"
@@ -61,14 +82,15 @@
   changed_when: false
 
 - name: Set discovered ROSANetwork name
-  set_fact:
+  ansible.builtin.set_fact:
     discovered_rosa_network_name: "{{ rn_exists.stdout | trim }}"
 
 - name: Get ROSANetwork stack name from resource spec
-  shell: |
-    oc get rosanetwork "$NETWORK_NAME" \
-      -n "$NAMESPACE" \
-      -o jsonpath='{.spec.stackName}' 2>/dev/null || true
+  ansible.builtin.shell:
+    cmd: |
+      oc get rosanetwork "$NETWORK_NAME" \
+        -n "$NAMESPACE" \
+        -o jsonpath='{.spec.stackName}' 2>/dev/null || true
   environment:
     NETWORK_NAME: "{{ discovered_rosa_network_name }}"
     NAMESPACE: "{{ rosa_hcp_namespace }}"
@@ -77,31 +99,34 @@
   when: discovered_rosa_network_name != 'not-found'
 
 - name: Set discovered CF stack name
-  set_fact:
+  # NOTE: Jinja2 does NOT short-circuit, but | default('') makes rn_stack_name_raw.stdout safe when the task was skipped.
+  # The discovered_rosa_network_name guard must remain the left operand of 'and' so the ternary selects the else branch
+  # before evaluating rn_stack_name_raw.stdout when ROSANetwork was not found.
+  ansible.builtin.set_fact:
     discovered_cf_stack_name: >-
       {{ rn_stack_name_raw.stdout | default('') | trim
          if (discovered_rosa_network_name != 'not-found' and rn_stack_name_raw.stdout | default('') | trim != '')
          else cluster_name + '-rosa-network-stack' }}
 
 - name: Discover ROSARoleConfig by label or name
-  shell: |
-    COUNT=$(oc get rosaroleconfig -n "$NAMESPACE" \
-      -l "cluster.x-k8s.io/cluster-name=$CLUSTER_NAME" \
-      -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null \
-      | grep -c . || echo "0")
-    COUNT=${COUNT:-0}
-    if [ "$COUNT" -gt 1 ]; then
-      echo "ERROR: Found $COUNT ROSARoleConfig resources with label cluster.x-k8s.io/cluster-name=$CLUSTER_NAME — cannot safely determine target. Aborting." >&2
-      exit 1
-    fi
-    FOUND=$(oc get rosaroleconfig -n "$NAMESPACE" \
-      -l "cluster.x-k8s.io/cluster-name=$CLUSTER_NAME" \
-      -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
-    if [ -z "$FOUND" ]; then
-      FOUND=$(oc get rosaroleconfig "$ROLE_CONFIG_NAME" -n "$NAMESPACE" \
-        -o jsonpath='{.metadata.name}' 2>/dev/null)
-    fi
-    echo "${FOUND:-not-found}"
+  ansible.builtin.shell:
+    cmd: |
+      COUNT=$(oc get rosaroleconfig -n "$NAMESPACE" \
+        -l "cluster.x-k8s.io/cluster-name=$CLUSTER_NAME" \
+        -o name 2>/dev/null | wc -l | awk '{print $1}')
+      if [ "$COUNT" -gt 1 ]; then
+        echo "ERROR: Found $COUNT ROSARoleConfig resources with label cluster.x-k8s.io/cluster-name=$CLUSTER_NAME — cannot safely determine target. Aborting." >&2
+        exit 1
+      fi
+      FOUND=$(oc get rosaroleconfig -n "$NAMESPACE" \
+        -l "cluster.x-k8s.io/cluster-name=$CLUSTER_NAME" \
+        -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+      if [ -z "$FOUND" ]; then
+        echo "WARNING: No ROSARoleConfig found by label, falling back to name lookup: $ROLE_CONFIG_NAME" >&2
+        FOUND=$(oc get rosaroleconfig "$ROLE_CONFIG_NAME" -n "$NAMESPACE" \
+          -o jsonpath='{.metadata.name}' 2>/dev/null)
+      fi
+      echo "${FOUND:-not-found}"
   environment:
     NAMESPACE: "{{ rosa_hcp_namespace }}"
     CLUSTER_NAME: "{{ cluster_name }}"
@@ -110,65 +135,87 @@
   changed_when: false
 
 - name: Set discovered ROSARoleConfig name
-  set_fact:
+  ansible.builtin.set_fact:
     discovered_rosa_role_config_name: "{{ rrc_exists.stdout | trim }}"
 
 - name: Display resource status
-  debug:
+  ansible.builtin.debug:
     msg: |
       Current Resource Status:
-      • Cluster: {{ 'Found' if 'not-found' not in cluster_exists.stdout else 'Not Found' }}
-      • ROSAControlPlane: {{ 'Found' if 'not-found' not in rcp_exists.stdout else 'Not Found' }}
-      • ROSAMachinePool: {{ 'Found' if 'not-found' not in rmp_exists.stdout else 'Not Found' }}
+      • Cluster: {{ 'Found' if '__NOTFOUND__' not in cluster_exists.stdout else 'Not Found' }}
+      • ROSAControlPlane: {{ 'Found' if '__NOTFOUND__' not in rcp_exists.stdout else 'Not Found' }}
+      • ROSAMachinePool: {{ 'Found' if '__NOTFOUND__' not in rmp_exists.stdout else 'Not Found' }}
       • ROSANetwork: {{ 'Found (' + discovered_rosa_network_name + ')' if discovered_rosa_network_name != 'not-found' else 'Not Found' }}
       • ROSARoleConfig: {{ 'Found (' + discovered_rosa_role_config_name + ')' if discovered_rosa_role_config_name != 'not-found' else 'Not Found' }}
 
 - name: Build list of resources to delete
-  set_fact:
+  ansible.builtin.set_fact:
     resources_to_delete: []
 
 - name: Add cluster to deletion list (if exists)
-  set_fact:
+  ansible.builtin.set_fact:
     resources_to_delete: "{{ resources_to_delete + ['cluster/' + cluster_name] }}"
-  when: "'not-found' not in cluster_exists.stdout"
+  when: "'__NOTFOUND__' not in cluster_exists.stdout"
 
 - name: Add ROSAControlPlane to deletion list (if exists)
-  set_fact:
+  ansible.builtin.set_fact:
     resources_to_delete: "{{ resources_to_delete + ['rosacontrolplane/' + cluster_name] }}"
-  when: "'not-found' not in rcp_exists.stdout"
+  when: "'__NOTFOUND__' not in rcp_exists.stdout"
 
 - name: Display resources to be deleted
-  debug:
+  ansible.builtin.debug:
     msg: |
       Resources to delete:
       {{ resources_to_delete | join('\n      ') }}
   when: resources_to_delete | length > 0
 
 - name: Delete all ROSA resources with single oc delete command
-  shell: |
-    # shellcheck disable=SC2086
-    oc delete -n "$NAMESPACE" $RESOURCES_TO_DELETE --wait=false
+  ansible.builtin.shell:
+    cmd: |
+      # $RESOURCES_TO_DELETE is intentionally unquoted — word-splits the space-joined list
+      # into individual resource arguments. cluster_name must not contain spaces (enforced
+      # by OCP naming constraints: [a-z0-9-]+).
+      # shellcheck disable=SC2086
+      oc delete -n "$NAMESPACE" $RESOURCES_TO_DELETE --wait=false
   environment:
     NAMESPACE: "{{ rosa_hcp_namespace }}"
     RESOURCES_TO_DELETE: "{{ resources_to_delete | join(' ') }}"
   register: delete_all
+  changed_when: (delete_all.rc | default(-1)) == 0
   when: resources_to_delete | length > 0
 
+- name: Delete ROSAMachinePool if not cascade-deleted
+  ansible.builtin.shell:
+    cmd: |
+      oc delete rosamachinepool "$MACHINE_POOL_NAME" -n "$NAMESPACE" --wait=false 2>&1
+  environment:
+    MACHINE_POOL_NAME: "{{ machine_pool_name }}"
+    NAMESPACE: "{{ rosa_hcp_namespace }}"
+  register: delete_rmp
+  changed_when: delete_rmp.rc == 0
+  failed_when:
+    - delete_rmp.rc != 0
+    - "'not found' not in (delete_rmp.stdout | lower)"
+    - "'not found' not in (delete_rmp.stderr | lower)"
+  when:
+    - "'__NOTFOUND__' not in rmp_exists.stdout"
+
 - name: Show deletion status
-  debug:
+  ansible.builtin.debug:
     msg: "✓ Deletion initiated for {{ resources_to_delete | length }} resource(s)"
   when:
     - resources_to_delete | length > 0
-    - delete_all.rc == 0
+    - (delete_all.rc | default(-1)) == 0
 
 - name: No resources to delete
-  debug:
+  ansible.builtin.debug:
     msg: "ℹ️  No matching resources found to delete"
   when: resources_to_delete | length == 0
 
 - name: Emit agent context for ROSAControlPlane deletion wait
-  shell: |
-    echo "#AGENT_CONTEXT: resource_name=$CLUSTER_NAME namespace=$NAMESPACE resource_type=rosacontrolplane" | tee -a "$LOGFILE"
+  ansible.builtin.shell:
+    cmd: |
+      echo "#AGENT_CONTEXT: resource_name=$CLUSTER_NAME namespace=$NAMESPACE resource_type=rosacontrolplane" | tee -a "$LOGFILE"
   environment:
     LOGFILE: "{{ agent_monitor_log }}"
     CLUSTER_NAME: "{{ cluster_name }}"
@@ -176,69 +223,77 @@
   changed_when: false
   when:
     - wait_for_deletion | bool
-    - "'not-found' not in rcp_exists.stdout"
+    - "'__NOTFOUND__' not in rcp_exists.stdout"
+    - not (delete_all.skipped | default(true))
 
 - name: Wait for ROSAControlPlane deletion to complete
-  shell: |
-    for i in $(seq 1 $RETRIES); do
-      OUTPUT=$(oc get rosacontrolplane "$CLUSTER_NAME" -n "$NAMESPACE" 2>&1)
-      RC=$?
-      if [ $RC -ne 0 ]; then
-        if echo "$OUTPUT" | grep -qi "not found\|NotFound\|no resources found"; then
-          echo "ROSAControlPlane deleted successfully" | tee -a "$LOGFILE"
-          exit 0
+  ansible.builtin.shell:
+    cmd: |
+      for i in $(seq 1 $RETRIES); do
+        OUTPUT=$(oc get rosacontrolplane "$CLUSTER_NAME" -n "$NAMESPACE" 2>&1)
+        RC=$?
+        if [ $RC -ne 0 ]; then
+          if echo "$OUTPUT" | grep -qi "not found\|NotFound\|no resources found"; then
+            echo "ROSAControlPlane deleted successfully" | tee -a "$LOGFILE"
+            exit 0
+          fi
+          echo "WARNING: oc get failed unexpectedly (rc=$RC): $OUTPUT" | tee -a "$LOGFILE"
         fi
-        echo "WARNING: oc get failed unexpectedly (rc=$RC): $OUTPUT" | tee -a "$LOGFILE"
-      fi
-      echo "FAILED - RETRYING: [localhost]: Wait for rosacontrolplane $CLUSTER_NAME deletion to complete ($((RETRIES - i)) retries left)." | tee -a "$LOGFILE"
-      sleep 10
-    done
-    echo "Timed out waiting for ROSAControlPlane deletion" | tee -a "$LOGFILE"
-    exit 1
+        echo "FAILED - RETRYING: [localhost]: Wait for rosacontrolplane $CLUSTER_NAME deletion to complete ($((RETRIES - i)) retries left)." | tee -a "$LOGFILE"
+        if [ "$i" -eq "$RETRIES" ]; then break; fi
+        sleep 10
+      done
+      echo "Timed out waiting for ROSAControlPlane deletion" | tee -a "$LOGFILE"
+      exit 1
   environment:
     LOGFILE: "{{ agent_monitor_log }}"
-    RETRIES: "{{ (rosacontrolplane_timeout | default(deletion_timeout) | int / 10) | int }}"
+    RETRIES: "{{ [(rosacontrolplane_timeout | default(deletion_timeout) | int / 10) | int, 1] | max }}"
     CLUSTER_NAME: "{{ cluster_name }}"
     NAMESPACE: "{{ rosa_hcp_namespace }}"
   register: wait_rcp
   failed_when: false
+  changed_when: false
   when:
     - wait_for_deletion | bool
-    - "'not-found' not in rcp_exists.stdout"
+    - "'__NOTFOUND__' not in rcp_exists.stdout"
+    - not (delete_all.skipped | default(true))
 
 - name: Final check - verify ROSAControlPlane is actually gone
-  shell: |
-    for i in $(seq 1 18); do
-      OUTPUT=$(oc get rosacontrolplane "$CLUSTER_NAME" -n "$NAMESPACE" 2>&1)
-      RC=$?
-      if [ $RC -ne 0 ]; then
-        if echo "$OUTPUT" | grep -qi "not found\|NotFound\|no resources found"; then
-          echo "ROSAControlPlane confirmed deleted" | tee -a "$LOGFILE"
-          exit 0
+  ansible.builtin.shell:
+    cmd: |
+      for i in $(seq 1 $RCP_FINAL_RETRIES); do
+        OUTPUT=$(oc get rosacontrolplane "$CLUSTER_NAME" -n "$NAMESPACE" 2>&1)
+        RC=$?
+        if [ $RC -ne 0 ]; then
+          if echo "$OUTPUT" | grep -qi "not found\|NotFound\|no resources found"; then
+            echo "ROSAControlPlane confirmed deleted" | tee -a "$LOGFILE"
+            exit 0
+          fi
+          echo "WARNING: oc get failed unexpectedly (rc=$RC): $OUTPUT" | tee -a "$LOGFILE"
         fi
-        echo "WARNING: oc get failed unexpectedly (rc=$RC): $OUTPUT" | tee -a "$LOGFILE"
-      fi
-      echo "FAILED - RETRYING: [localhost]: Final check rosacontrolplane $CLUSTER_NAME deletion ($((18 - i)) retries left)." | tee -a "$LOGFILE"
-      sleep 10
-    done
-    echo "ROSAControlPlane still exists after final check" | tee -a "$LOGFILE"
-    exit 1
+        echo "FAILED - RETRYING: [localhost]: Final check rosacontrolplane $CLUSTER_NAME deletion ($(($RCP_FINAL_RETRIES - i)) retries left)." | tee -a "$LOGFILE"
+        if [ "$i" -eq "$RCP_FINAL_RETRIES" ]; then break; fi
+        sleep 10
+      done
+      echo "ROSAControlPlane still exists after final check" | tee -a "$LOGFILE"
+      exit 1
   environment:
     LOGFILE: "{{ agent_monitor_log }}"
     CLUSTER_NAME: "{{ cluster_name }}"
     NAMESPACE: "{{ rosa_hcp_namespace }}"
+    RCP_FINAL_RETRIES: "{{ [(rosacontrolplane_final_check_retries | default(180) | int / 10) | int, 1] | max }}"  # timeout in seconds / 10 = retry count
   register: final_rcp_check
   failed_when: false
   changed_when: false
   when:
     - wait_for_deletion | bool
-    - "'not-found' not in rcp_exists.stdout"
-    - wait_rcp.rc != 0
+    - "'__NOTFOUND__' not in rcp_exists.stdout"
+    - (wait_rcp.rc | default(1)) != 0
 
 - name: Display ROSAControlPlane deletion result
-  debug:
+  ansible.builtin.debug:
     msg: |
-      {% if wait_rcp.rc == 0 or (final_rcp_check.rc | default(1)) == 0 %}
+      {% if (wait_rcp | default({'rc': -1})).rc == 0 or (final_rcp_check | default({'rc': -1})).rc == 0 %}
       ✅ ROSAControlPlane successfully deleted: {{ cluster_name }}
       {% else %}
       ⚠️  ROSAControlPlane still exists (may still be deleting): {{ cluster_name }}
@@ -246,51 +301,96 @@
       {% endif %}
   when:
     - wait_for_deletion | bool
-    - "'not-found' not in rcp_exists.stdout"
+    - "'__NOTFOUND__' not in rcp_exists.stdout"
 
 - name: Warn if ROSAControlPlane still exists after all retries
-  set_fact:
+  ansible.builtin.set_fact:
     rcp_deletion_failed: true
   when:
     - wait_for_deletion | bool
-    - "'not-found' not in rcp_exists.stdout"
-    - wait_rcp.rc != 0
+    - "'__NOTFOUND__' not in rcp_exists.stdout"
+    - not (delete_all.skipped | default(true))
+    - (wait_rcp.rc | default(1)) != 0
     - (final_rcp_check.rc | default(1)) != 0
 
 - name: Display ROSAControlPlane timeout warning
-  debug:
+  ansible.builtin.debug:
     msg: |
       ⚠️  ROSAControlPlane {{ cluster_name }} still exists after timeout.
       Continuing with remaining resource cleanup...
       Check: oc get rosacontrolplane {{ cluster_name }} -n {{ rosa_hcp_namespace }}
   when: rcp_deletion_failed | default(false) | bool
 
-- name: Clean up additional security groups (before VPC deletion)
-  include_tasks: delete_security_group.yml
+- name: Mark ROSANetwork as failed when ROSAControlPlane timed out
+  # When the RCP finalizer is still running we intentionally skip ROSANetwork deletion
+  # (to avoid CloudFormation DELETE_FAILED). Mark the network as failed so the final
+  # fail task reports it and the operator knows to clean it up manually.
+  ansible.builtin.set_fact:
+    rosanetwork_deletion_failed: true
   when:
-    - (AWS_ACCESS_KEY_ID is defined and AWS_ACCESS_KEY_ID | length > 0 and AWS_SECRET_ACCESS_KEY is defined and AWS_SECRET_ACCESS_KEY | length > 0) or (lookup('env', 'AWS_ACCESS_KEY_ID') | length > 0 and lookup('env', 'AWS_SECRET_ACCESS_KEY') | length > 0)
-    - (feature_security_groups_enabled | default(false) | bool) or (created_security_group_id is defined)
-
-- name: Delete ROSANetwork (after ROSAControlPlane deletion completes)
-  shell: |
-    oc delete rosanetwork {{ discovered_rosa_network_name }} -n {{ rosa_hcp_namespace }} --wait=false
-  register: delete_rn
-  failed_when: false
-  when:
+    - rcp_deletion_failed | default(false) | bool
     - delete_network | bool
     - discovered_rosa_network_name != 'not-found'
 
+- name: Check AWS credentials availability
+  # Use lookup('env') for both checks — bare var names raise AnsibleUndefinedVariable
+  # when the variable is not passed as a play var (env-only credentials).
+  ansible.builtin.set_fact:
+    aws_creds_available: >-
+      {{ lookup('env', 'AWS_ACCESS_KEY_ID') | length > 0 and
+         lookup('env', 'AWS_SECRET_ACCESS_KEY') | length > 0 }}
+
+- name: Clean up additional security groups (before VPC deletion)
+  ansible.builtin.include_tasks: delete_security_group.yml
+  vars:
+    security_group_id: "{{ created_security_group_id | default('') }}"
+  when:
+    - aws_creds_available | bool
+    - (feature_security_groups_enabled | default(false) | bool) or (created_security_group_id is defined)
+
+- name: Delete ROSANetwork (after ROSAControlPlane deletion completes)
+  # Guarded by rcp_deletion_failed: if the RCP timed out, its finalizer may still hold a
+  # reference to the ROSANetwork. Deleting the network while the RCP finalizer is running
+  # can cause the CloudFormation stack to enter DELETE_FAILED unnecessarily.
+  ansible.builtin.shell:
+    cmd: |
+      oc delete rosanetwork "$NETWORK_NAME" -n "$NAMESPACE" --wait=false
+  environment:
+    NETWORK_NAME: "{{ discovered_rosa_network_name }}"
+    NAMESPACE: "{{ rosa_hcp_namespace }}"
+  register: delete_rn
+  failed_when: false
+  changed_when: delete_rn.rc == 0
+  when:
+    - delete_network | bool
+    - discovered_rosa_network_name != 'not-found'
+    - not (rcp_deletion_failed | default(false))
+
 - name: Delete ManagedCluster (if exists)
-  shell: |
-    oc delete managedcluster {{ cluster_name }} --wait=false
+  ansible.builtin.shell:
+    cmd: |
+      oc delete managedcluster "$CLUSTER_NAME" --wait=false
+  environment:
+    CLUSTER_NAME: "{{ cluster_name }}"
   register: delete_mc
   failed_when: false
-  ignore_errors: true
-  when: deployment_mode != 'standalone'
+  changed_when: delete_mc.rc == 0
+  when: deployment_mode | default('standalone') != 'standalone'
+
+- name: Log ManagedCluster deletion failure if unexpected
+  ansible.builtin.debug:
+    msg: "WARNING: oc delete managedcluster exited {{ delete_mc.rc | default('N/A') }}: {{ delete_mc.stderr | default('') }}"
+  when:
+    - (deployment_mode | default('standalone')) != 'standalone'
+    - (delete_mc.rc | default(0)) != 0
+    - "'not found' not in (delete_mc.stderr | default('') | lower)"
+    - '"doesn\'t have a resource type" not in (delete_mc.stderr | default("") | lower)'
+    - '"no kind is registered" not in (delete_mc.stderr | default("") | lower)'
 
 - name: Emit agent context for ROSANetwork deletion wait
-  shell: |
-    echo "#AGENT_CONTEXT: resource_name=$NETWORK_NAME namespace=$NAMESPACE resource_type=rosanetwork" | tee -a "$LOGFILE"
+  ansible.builtin.shell:
+    cmd: |
+      echo "#AGENT_CONTEXT: resource_name=$NETWORK_NAME namespace=$NAMESPACE resource_type=rosanetwork" | tee -a "$LOGFILE"
   environment:
     LOGFILE: "{{ agent_monitor_log }}"
     NETWORK_NAME: "{{ discovered_rosa_network_name }}"
@@ -300,17 +400,9 @@
     - wait_for_deletion | bool
     - delete_network | bool
     - discovered_rosa_network_name != 'not-found'
+    - not (delete_rn.skipped | default(true))
 
 - name: Wait for ROSANetwork deletion to complete
-  environment:
-    AWS_ACCESS_KEY_ID: "{{ AWS_ACCESS_KEY_ID | default(omit) }}"
-    AWS_SECRET_ACCESS_KEY: "{{ AWS_SECRET_ACCESS_KEY | default(omit) }}"
-    LOGFILE: "{{ agent_monitor_log }}"
-    STACK_NAME: "{{ discovered_cf_stack_name | default(cluster_name + '-rosa-network-stack') }}"
-    REGION: "{{ aws_region | default('us-west-2') }}"
-    RETRIES: "{{ (rosanetwork_timeout | default(deletion_timeout) | int / 10) | int }}"
-    NETWORK_NAME: "{{ discovered_rosa_network_name }}"
-    NAMESPACE: "{{ rosa_hcp_namespace }}"
   ansible.builtin.shell:
     cmd: |
       ITERATION_COUNT=0
@@ -356,7 +448,6 @@
               #
               # NOTE: This VPC cleanup logic is also implemented in agents/remediation_agent.py
               # (_fix_retry_cloudformation_delete). Keep both in sync when adding new resource types.
-              # The agent additionally handles subnets and internet gateways (TODO: add those here).
               # The agent path is a concurrent secondary recovery; see PR #135 for architecture notes.
               echo "Cleaning up VPC $VPC_ID dependencies" | tee -a "$LOGFILE"
               CLEANUP_ERRORS=0
@@ -364,20 +455,75 @@
               # Delete VPC endpoints first (create ela-attach ENIs that block deletion)
               VPCE_IDS=$(aws ec2 describe-vpc-endpoints \
                 --region "$REGION" \
-                --filters "Name=vpc-id,Values=$VPC_ID" "Name=vpc-endpoint-state,Values=available,pending,deleting" \
+                --filters "Name=vpc-id,Values=$VPC_ID" "Name=vpc-endpoint-state,Values=available,pending,deleting,pending-acceptance" \
                 --query 'VpcEndpoints[*].VpcEndpointId' --output text 2>/dev/null)
-              VPCE_IDS=$(echo $VPCE_IDS)  # normalize tab-separated output to spaces
+              VPCE_IDS=$(echo "$VPCE_IDS" | tr '\t' ' ')  # normalize tab-separated output to spaces
               if [ -n "$VPCE_IDS" ]; then
                 echo "Deleting VPC endpoints: $VPCE_IDS" | tee -a "$LOGFILE"
+                # shellcheck disable=SC2086 — intentional word split of space-separated ID list
                 aws ec2 delete-vpc-endpoints --region "$REGION" --vpc-endpoint-ids $VPCE_IDS 2>&1 | tee -a "$LOGFILE" || { CLEANUP_ERRORS=$((CLEANUP_ERRORS + 1)); true; }
-                sleep 20
+                # Poll until endpoints reach deleted state — ela-attach ENIs are only released once endpoint is fully deleted
+                REMAINING="unknown"
+                for poll in $(seq 1 6); do
+                  REMAINING=$(aws ec2 describe-vpc-endpoints \
+                    --region "$REGION" \
+                    --filters "Name=vpc-id,Values=$VPC_ID" "Name=vpc-endpoint-state,Values=available,pending,deleting,pending-acceptance" \
+                    --query 'length(VpcEndpoints)' --output text 2>/dev/null || echo "error")
+                  if [ "$REMAINING" = "error" ]; then
+                    echo "WARNING: VPCE describe failed, retrying..." | tee -a "$LOGFILE"
+                    sleep 5
+                    continue
+                  fi
+                  [ "$REMAINING" = "0" ] && break
+                  sleep 10
+                done
+                if [ "$REMAINING" != "0" ] && [ "$REMAINING" != "error" ] && [ "$REMAINING" != "unknown" ]; then
+                  echo "WARNING: VPC endpoints not fully deleted after poll timeout — proceeding anyway" | tee -a "$LOGFILE"
+                fi
               fi
+
+              # Detach and delete internet gateways (block VPC deletion if present)
+              IGW_IDS=$(aws ec2 describe-internet-gateways \
+                --region "$REGION" \
+                --filters "Name=attachment.vpc-id,Values=$VPC_ID" \
+                --query 'InternetGateways[*].InternetGatewayId' --output text 2>/dev/null)
+              # shellcheck disable=SC2086 — intentional word split of space-separated ID list
+              for IGW_ID in $IGW_IDS; do
+                aws ec2 detach-internet-gateway --region "$REGION" --internet-gateway-id "$IGW_ID" --vpc-id "$VPC_ID" 2>&1 | tee -a "$LOGFILE" || { CLEANUP_ERRORS=$((CLEANUP_ERRORS + 1)); true; }
+                aws ec2 delete-internet-gateway --region "$REGION" --internet-gateway-id "$IGW_ID" 2>&1 | tee -a "$LOGFILE" || { CLEANUP_ERRORS=$((CLEANUP_ERRORS + 1)); true; }
+              done
+
+              # Delete NAT gateways (block subnet deletion if present)
+              NGW_IDS=$(aws ec2 describe-nat-gateways \
+                --region "$REGION" \
+                --filter "Name=vpc-id,Values=$VPC_ID" "Name=state,Values=available,deleting,failed" \
+                --query 'NatGateways[*].NatGatewayId' --output text 2>/dev/null)
+              # shellcheck disable=SC2086 — intentional word split of space-separated ID list
+              for NGW_ID in $NGW_IDS; do
+                aws ec2 delete-nat-gateway --region "$REGION" --nat-gateway-id "$NGW_ID" 2>&1 | tee -a "$LOGFILE" || { CLEANUP_ERRORS=$((CLEANUP_ERRORS + 1)); true; }
+              done
+              # Wait for NAT gateways to finish deleting — ENIs created by NGW are only released after deletion
+              # shellcheck disable=SC2086 — intentional word split of space-separated ID list
+              for NGW_ID in $NGW_IDS; do
+                for poll in $(seq 1 8); do
+                  NGW_STATE=$(aws ec2 describe-nat-gateways --region "$REGION" \
+                    --nat-gateway-ids "$NGW_ID" \
+                    --query 'NatGateways[0].State' --output text 2>/dev/null || echo "deleted")
+                  if [ "$NGW_STATE" = "deleted" ] || [ "$NGW_STATE" = "None" ]; then break; fi
+                  if [ "$NGW_STATE" = "failed" ]; then
+                    echo "WARNING: NAT gateway $NGW_ID is in failed state — ENIs may not be released" | tee -a "$LOGFILE"
+                    break
+                  fi
+                  sleep 15
+                done
+              done
 
               # Delete orphaned ENIs — detach first to handle attached interfaces
               ENI_IDS=$(aws ec2 describe-network-interfaces \
                 --region "$REGION" \
                 --filters "Name=vpc-id,Values=$VPC_ID" \
                 --query 'NetworkInterfaces[*].NetworkInterfaceId' --output text 2>/dev/null)
+              # shellcheck disable=SC2086 — intentional word split of space-separated ID list
               for ENI_ID in $ENI_IDS; do
                 ATTACH_ID=$(aws ec2 describe-network-interfaces \
                   --region "$REGION" \
@@ -386,16 +532,77 @@
                 if [ -n "$ATTACH_ID" ] && [ "$ATTACH_ID" != "None" ]; then
                   aws ec2 detach-network-interface --region "$REGION" \
                     --attachment-id "$ATTACH_ID" --force 2>&1 | tee -a "$LOGFILE" || { CLEANUP_ERRORS=$((CLEANUP_ERRORS + 1)); true; }
-                  sleep 5
+                  # Poll until detached — detach is async and delete fails if interface still attached
+                  for poll in $(seq 1 6); do
+                    ATTACH_STATUS=$(aws ec2 describe-network-interfaces \
+                      --region "$REGION" \
+                      --network-interface-ids "$ENI_ID" \
+                      --query 'NetworkInterfaces[0].Attachment.Status' --output text 2>/dev/null || echo "error")
+                    if [ "$ATTACH_STATUS" = "error" ]; then
+                      echo "WARNING: describe-network-interfaces failed for $ENI_ID — proceeding anyway" | tee -a "$LOGFILE"
+                      break
+                    fi
+                    if [ "$ATTACH_STATUS" = "detached" ] || [ "$ATTACH_STATUS" = "None" ]; then break; fi
+                    sleep 5
+                  done
                 fi
                 aws ec2 delete-network-interface --region "$REGION" --network-interface-id "$ENI_ID" 2>&1 | tee -a "$LOGFILE" || { CLEANUP_ERRORS=$((CLEANUP_ERRORS + 1)); true; }
               done
 
-              # Delete non-default security groups
+              # Disassociate and delete non-main route tables before subnets
+              # (route table disassociation must precede subnet deletion for clean state)
+              RT_IDS=$(aws ec2 describe-route-tables \
+                --region "$REGION" \
+                --filters "Name=vpc-id,Values=$VPC_ID" \
+                --query 'RouteTables[?!Associations[?Main==`true`]].RouteTableId' --output text 2>/dev/null)
+              if [ -z "$RT_IDS" ]; then
+                echo "No non-main route tables found or describe failed for VPC $VPC_ID" | tee -a "$LOGFILE"
+              fi
+              # shellcheck disable=SC2086 — intentional word split of space-separated ID list
+              for RT_ID in $RT_IDS; do
+                ASSOC_IDS=$(aws ec2 describe-route-tables --region "$REGION" \
+                  --route-table-ids "$RT_ID" \
+                  --query 'RouteTables[0].Associations[?Main!=`true`].RouteTableAssociationId' --output text 2>/dev/null)
+                # shellcheck disable=SC2086 — intentional word split
+                for ASSOC_ID in $ASSOC_IDS; do
+                  aws ec2 disassociate-route-table --region "$REGION" --association-id "$ASSOC_ID" 2>&1 | tee -a "$LOGFILE" || { CLEANUP_ERRORS=$((CLEANUP_ERRORS + 1)); true; }
+                done
+                aws ec2 delete-route-table --region "$REGION" --route-table-id "$RT_ID" 2>&1 | tee -a "$LOGFILE" || { CLEANUP_ERRORS=$((CLEANUP_ERRORS + 1)); true; }
+              done
+
+              # Delete subnets (after route tables are disassociated)
+              SUBNET_IDS=$(aws ec2 describe-subnets \
+                --region "$REGION" \
+                --filters "Name=vpc-id,Values=$VPC_ID" \
+                --query 'Subnets[*].SubnetId' --output text 2>/dev/null)
+              # shellcheck disable=SC2086 — intentional word split of space-separated ID list
+              for SUBNET_ID in $SUBNET_IDS; do
+                aws ec2 delete-subnet --region "$REGION" --subnet-id "$SUBNET_ID" 2>&1 | tee -a "$LOGFILE" || { CLEANUP_ERRORS=$((CLEANUP_ERRORS + 1)); true; }
+              done
+
+              # Revoke cross-SG rules before deletion to avoid DependencyViolation errors
               SG_IDS=$(aws ec2 describe-security-groups \
                 --region "$REGION" \
                 --filters "Name=vpc-id,Values=$VPC_ID" \
                 --query 'SecurityGroups[?GroupName!=`default`].GroupId' --output text 2>/dev/null)
+              # shellcheck disable=SC2086 — intentional word split of space-separated ID list
+              for SG_ID in $SG_IDS; do
+                INGRESS=$(aws ec2 describe-security-groups --region "$REGION" --group-ids "$SG_ID" \
+                  --query 'SecurityGroups[0].IpPermissions[?UserIdGroupPairs!=`[]`]' \
+                  --output json 2>/dev/null)
+                [ "$INGRESS" != "[]" ] && [ "$INGRESS" != "null" ] && [ -n "$INGRESS" ] && \
+                  aws ec2 revoke-security-group-ingress --region "$REGION" --group-id "$SG_ID" \
+                    --ip-permissions "$INGRESS" 2>/dev/null || true
+                EGRESS=$(aws ec2 describe-security-groups --region "$REGION" --group-ids "$SG_ID" \
+                  --query 'SecurityGroups[0].IpPermissionsEgress[?UserIdGroupPairs!=`[]`]' \
+                  --output json 2>/dev/null)
+                [ "$EGRESS" != "[]" ] && [ "$EGRESS" != "null" ] && [ -n "$EGRESS" ] && \
+                  aws ec2 revoke-security-group-egress --region "$REGION" --group-id "$SG_ID" \
+                    --ip-permissions "$EGRESS" 2>/dev/null || true
+              done
+
+              # Delete non-default security groups
+              # shellcheck disable=SC2086 — intentional word split of space-separated ID list
               for SG_ID in $SG_IDS; do
                 aws ec2 delete-security-group --region "$REGION" --group-id "$SG_ID" 2>&1 | tee -a "$LOGFILE" || { CLEANUP_ERRORS=$((CLEANUP_ERRORS + 1)); true; }
               done
@@ -416,38 +623,54 @@
         fi
 
         echo "FAILED - RETRYING: [localhost]: Wait for rosanetwork $NETWORK_NAME deletion to complete ($((RETRIES - i)) retries left)." | tee -a "$LOGFILE"
+        if [ "$i" -eq "$RETRIES" ]; then break; fi
         sleep 10
       done
       echo "Timed out waiting for ROSANetwork deletion" | tee -a "$LOGFILE"
       exit 1
+  environment:
+    AWS_ACCESS_KEY_ID: "{{ AWS_ACCESS_KEY_ID | default(omit) }}"
+    AWS_SECRET_ACCESS_KEY: "{{ AWS_SECRET_ACCESS_KEY | default(omit) }}"
+    AWS_SESSION_TOKEN: "{{ AWS_SESSION_TOKEN | default(omit) }}"
+    LOGFILE: "{{ agent_monitor_log }}"
+    STACK_NAME: "{{ discovered_cf_stack_name | default(cluster_name + '-rosa-network-stack') }}"
+    REGION: "{{ aws_region | default('us-west-2') }}"
+    RETRIES: "{{ [(rosanetwork_timeout | default(deletion_timeout) | int / 10) | int, 1] | max }}"
+    NETWORK_NAME: "{{ discovered_rosa_network_name }}"
+    NAMESPACE: "{{ rosa_hcp_namespace }}"
   register: wait_rn
   failed_when: false
+  changed_when: false
   when:
     - wait_for_deletion | bool
     - delete_network | bool
     - discovered_rosa_network_name != 'not-found'
+    - not (delete_rn.skipped | default(true))
 
 - name: Final check - verify ROSANetwork is actually gone
-  shell: |
-    for i in $(seq 1 36); do
-      OUTPUT=$(oc get rosanetwork "$NETWORK_NAME" -n "$NAMESPACE" 2>&1)
-      RC=$?
-      if [ $RC -ne 0 ]; then
-        if echo "$OUTPUT" | grep -qi "not found\|NotFound\|no resources found"; then
-          echo "ROSANetwork confirmed deleted" | tee -a "$LOGFILE"
-          exit 0
+  ansible.builtin.shell:
+    cmd: |
+      for i in $(seq 1 $RN_FINAL_RETRIES); do
+        OUTPUT=$(oc get rosanetwork "$NETWORK_NAME" -n "$NAMESPACE" 2>&1)
+        RC=$?
+        if [ $RC -ne 0 ]; then
+          if echo "$OUTPUT" | grep -qi "not found\|NotFound\|no resources found"; then
+            echo "ROSANetwork confirmed deleted" | tee -a "$LOGFILE"
+            exit 0
+          fi
+          echo "WARNING: oc get failed unexpectedly (rc=$RC): $OUTPUT" | tee -a "$LOGFILE"
         fi
-        echo "WARNING: oc get failed unexpectedly (rc=$RC): $OUTPUT" | tee -a "$LOGFILE"
-      fi
-      echo "FAILED - RETRYING: [localhost]: Final check rosanetwork $NETWORK_NAME deletion ($((36 - i)) retries left)." | tee -a "$LOGFILE"
-      sleep 10
-    done
-    echo "ROSANetwork still exists after final check" | tee -a "$LOGFILE"
-    exit 1
+        echo "FAILED - RETRYING: [localhost]: Final check rosanetwork $NETWORK_NAME deletion ($(($RN_FINAL_RETRIES - i)) retries left)." | tee -a "$LOGFILE"
+        if [ "$i" -eq "$RN_FINAL_RETRIES" ]; then break; fi
+        sleep 10
+      done
+      echo "ROSANetwork still exists after final check" | tee -a "$LOGFILE"
+      exit 1
   environment:
     LOGFILE: "{{ agent_monitor_log }}"
     NETWORK_NAME: "{{ discovered_rosa_network_name }}"
     NAMESPACE: "{{ rosa_hcp_namespace }}"
+    RN_FINAL_RETRIES: "{{ [(rosanetwork_final_check_retries | default(180) | int / 10) | int, 1] | max }}"  # timeout in seconds / 10 = retry count
   register: final_rn_check
   failed_when: false
   changed_when: false
@@ -455,12 +678,13 @@
     - wait_for_deletion | bool
     - delete_network | bool
     - discovered_rosa_network_name != 'not-found'
-    - wait_rn.rc != 0
+    - not (delete_rn.skipped | default(true))
+    - (wait_rn.rc | default(1)) != 0
 
 - name: Display ROSANetwork deletion result
-  debug:
+  ansible.builtin.debug:
     msg: |
-      {% if wait_rn.rc == 0 or (final_rn_check.rc | default(1)) == 0 %}
+      {% if (wait_rn | default({'rc': -1})).rc == 0 or (final_rn_check | default({'rc': -1})).rc == 0 %}
       ✅ ROSANetwork successfully deleted: {{ discovered_rosa_network_name }}
       {% else %}
       ⚠️  ROSANetwork still exists (CloudFormation stack may still be deleting)
@@ -470,24 +694,26 @@
     - wait_for_deletion | bool
     - delete_network | bool
     - discovered_rosa_network_name != 'not-found'
+    - not (delete_rn.skipped | default(true))
 
 - name: Warn if ROSANetwork still exists after all retries
-  set_fact:
+  ansible.builtin.set_fact:
     rosanetwork_deletion_failed: true
   when:
     - wait_for_deletion | bool
     - delete_network | bool
     - discovered_rosa_network_name != 'not-found'
-    - wait_rn.rc != 0
+    - not (delete_rn.skipped | default(true))
+    - (wait_rn.rc | default(1)) != 0
     - (final_rn_check.rc | default(1)) != 0
 
 - name: Display ROSANetwork timeout warning
-  debug:
+  ansible.builtin.debug:
     msg: |
       ⚠️  ROSANetwork {{ discovered_rosa_network_name }} still exists after timeout.
       Continuing with remaining resource cleanup...
       CloudFormation stack may need manual cleanup.
-      Check: python3 -c "import boto3; print(boto3.client('cloudformation', region_name='{{ aws_region | default('us-west-2') }}').describe_stacks(StackName='{{ cluster_name }}-rosa-network-stack'))"
+      Check: python3 -c "import boto3; print(boto3.client('cloudformation', region_name='{{ aws_region | default(\"us-west-2\") }}').describe_stacks(StackName='{{ discovered_cf_stack_name | default(cluster_name + \"-rosa-network-stack\") }}'))"
   when: rosanetwork_deletion_failed | default(false) | bool
 
 # ================================================================
@@ -501,17 +727,19 @@
 # ================================================================
 
 - name: Emit agent context for CloudFormation verification
-  shell: |
-    echo "#AGENT_CONTEXT: resource_name=$NETWORK_NAME namespace=$NAMESPACE resource_type=rosanetwork" | tee -a "$LOGFILE"
+  ansible.builtin.shell:
+    cmd: |
+      echo "#AGENT_CONTEXT: resource_name=$STACK_NAME namespace=$NAMESPACE resource_type=cloudformation stack_name=$STACK_NAME" | tee -a "$LOGFILE"
   environment:
     LOGFILE: "{{ agent_monitor_log }}"
-    NETWORK_NAME: "{{ discovered_rosa_network_name }}"
+    STACK_NAME: "{{ discovered_cf_stack_name | default(cluster_name + '-rosa-network-stack') }}"
     NAMESPACE: "{{ rosa_hcp_namespace }}"
   changed_when: false
   when:
     - wait_for_deletion | bool
     - delete_network | bool
     - discovered_rosa_network_name != 'not-found'
+    - not (delete_rn.skipped | default(true))
 
 # This task is a final confirmation check that runs after the inline CF recovery
 # in the "Wait for ROSANetwork deletion" task above. If the inline recovery succeeded,
@@ -519,94 +747,125 @@
 # failed silently, this task detects DELETE_FAILED and logs it for operator attention.
 # It does not perform cleanup — the inline recovery is the active recovery mechanism.
 - name: Verify CloudFormation stack cleanup after ROSANetwork deletion
-  no_log: true
+  ansible.builtin.shell:
+    cmd: |
+      echo "Verifying CloudFormation stack $STACK_NAME cleanup..." | tee -a "$LOGFILE"
+      CF_VERIFY_RETRIES=0
+      for i in $(seq 1 $CFN_RETRIES); do
+        # Try K8s resource status first (no boto3/AWS dependency)
+        K8S_STATUS=$(oc get rosanetwork "$NETWORK_NAME" -n "$NAMESPACE" -o jsonpath='{.status.stackStatus}' 2>/dev/null)
+        if [ -n "$K8S_STATUS" ]; then
+          STATUS="$K8S_STATUS"
+        else
+          # K8s resource gone — try boto3 as fallback
+          STATUS=$(python3 "$CFN_SCRIPT" "$STACK_NAME" "$REGION" 2>&1)
+          RC=$?
+          if [ $RC -eq 2 ]; then
+            echo "WARNING: boto3 not available — cannot verify CloudFormation cleanup, assuming success" | tee -a "$LOGFILE"
+            echo "Install boto3 for full verification: pip install boto3" | tee -a "$LOGFILE"
+            exit 0
+          fi
+          if [ $RC -ne 0 ]; then
+            if echo "$STATUS" | grep -qi "GONE"; then
+              echo "CloudFormation stack $STACK_NAME confirmed deleted" | tee -a "$LOGFILE"
+              exit 0
+            fi
+            echo "WARNING: CloudFormation check failed (rc=$RC): $STATUS" | tee -a "$LOGFILE"
+          fi
+          if [ "$STATUS" = "GONE" ]; then
+            echo "CloudFormation stack $STACK_NAME confirmed deleted" | tee -a "$LOGFILE"
+            exit 0
+          fi
+        fi
+        if [ "$STATUS" = "DELETE_COMPLETE" ]; then
+          echo "CloudFormation stack $STACK_NAME confirmed deleted" | tee -a "$LOGFILE"
+          exit 0
+        fi
+        if [ "$STATUS" = "DELETE_FAILED" ]; then
+          if [ "$CF_VERIFY_RETRIES" -lt 1 ]; then
+            echo "CloudFormation stack DELETE_FAILED: $STACK_NAME — retrying deletion (attempt $((CF_VERIFY_RETRIES + 1)))" | tee -a "$LOGFILE"
+            aws cloudformation delete-stack --stack-name "$STACK_NAME" --region "$REGION" 2>&1 | tee -a "$LOGFILE" || true
+            CF_VERIFY_RETRIES=$((CF_VERIFY_RETRIES + 1))
+          else
+            echo "CloudFormation stack DELETE_FAILED: $STACK_NAME — retry cap reached, polling only" | tee -a "$LOGFILE"
+          fi
+          echo "FAILED - RETRYING: [localhost]: Wait for cloudformation $STACK_NAME deletion to complete ($(($CFN_RETRIES - i)) retries left)." | tee -a "$LOGFILE"
+          if [ "$i" -eq "$CFN_RETRIES" ]; then break; fi
+          sleep 15
+          continue
+        fi
+        echo "FAILED - RETRYING: [localhost]: Wait for cloudformation $STACK_NAME deletion to complete ($(($CFN_RETRIES - i)) retries left). Status: $STATUS" | tee -a "$LOGFILE"
+        if [ "$i" -eq "$CFN_RETRIES" ]; then break; fi
+        sleep 10
+      done
+      echo "WARNING: CloudFormation stack $STACK_NAME not confirmed deleted after verification" | tee -a "$LOGFILE"
+      exit 1
   environment:
     AWS_ACCESS_KEY_ID: "{{ AWS_ACCESS_KEY_ID | default(omit) }}"
     AWS_SECRET_ACCESS_KEY: "{{ AWS_SECRET_ACCESS_KEY | default(omit) }}"
+    AWS_SESSION_TOKEN: "{{ AWS_SESSION_TOKEN | default(omit) }}"
     LOGFILE: "{{ agent_monitor_log }}"
     STACK_NAME: "{{ discovered_cf_stack_name | default(cluster_name + '-rosa-network-stack') }}"
     REGION: "{{ aws_region | default('us-west-2') }}"
     NETWORK_NAME: "{{ discovered_rosa_network_name }}"
     NAMESPACE: "{{ rosa_hcp_namespace }}"
     CFN_SCRIPT: "{{ playbook_dir }}/../scripts/check_cfn_stack_status.py"
-  shell: |
-    RETRIES=36
-    echo "Verifying CloudFormation stack $STACK_NAME cleanup..." | tee -a "$LOGFILE"
-    for i in $(seq 1 $RETRIES); do
-      # Try K8s resource status first (no boto3/AWS dependency)
-      K8S_STATUS=$(oc get rosanetwork "$NETWORK_NAME" -n "$NAMESPACE" -o jsonpath='{.status.stackStatus}' 2>/dev/null)
-      if [ -n "$K8S_STATUS" ]; then
-        STATUS="$K8S_STATUS"
-      else
-        # K8s resource gone — try boto3 as fallback
-        STATUS=$(python3 "$CFN_SCRIPT" "$STACK_NAME" "$REGION" 2>&1)
-        RC=$?
-        if [ $RC -eq 2 ]; then
-          echo "WARNING: boto3 not available and K8s resource gone — cannot verify CloudFormation cleanup" | tee -a "$LOGFILE"
-          echo "Install boto3: pip install boto3" | tee -a "$LOGFILE"
-          exit 1
-        fi
-        if [ $RC -ne 0 ]; then
-          if echo "$STATUS" | grep -qi "GONE"; then
-            echo "CloudFormation stack $STACK_NAME confirmed deleted" | tee -a "$LOGFILE"
-            exit 0
-          fi
-          echo "WARNING: CloudFormation check failed (rc=$RC): $STATUS" | tee -a "$LOGFILE"
-        fi
-        if [ "$STATUS" = "GONE" ]; then
-          echo "CloudFormation stack $STACK_NAME confirmed deleted" | tee -a "$LOGFILE"
-          exit 0
-        fi
-      fi
-      if [ "$STATUS" = "DELETE_COMPLETE" ]; then
-        echo "CloudFormation stack $STACK_NAME confirmed deleted" | tee -a "$LOGFILE"
-        exit 0
-      fi
-      if [ "$STATUS" = "DELETE_FAILED" ]; then
-        echo "CloudFormation stack DELETE_FAILED: $STACK_NAME — orphaned AWS resources detected" | tee -a "$LOGFILE"
-        echo "FAILED - RETRYING: [localhost]: Wait for cloudformation $STACK_NAME deletion to complete ($((RETRIES - i)) retries left)." | tee -a "$LOGFILE"
-        sleep 10
-        continue
-      fi
-      echo "FAILED - RETRYING: [localhost]: Wait for cloudformation $STACK_NAME deletion to complete ($((RETRIES - i)) retries left). Status: $STATUS" | tee -a "$LOGFILE"
-      sleep 10
-    done
-    echo "WARNING: CloudFormation stack $STACK_NAME not confirmed deleted after verification" | tee -a "$LOGFILE"
-    exit 1
+    CFN_RETRIES: "{{ [(cfn_verification_timeout | default(360) | int / 10) | int, 1] | max }}"
   register: cfn_verify
   failed_when: false
+  changed_when: false
   when:
     - wait_for_deletion | bool
     - delete_network | bool
     - discovered_rosa_network_name != 'not-found'
+    - not (delete_rn.skipped | default(true))
 
 - name: Display CloudFormation verification result
-  debug:
+  ansible.builtin.debug:
     msg: |
-      {% if cfn_verify.rc == 0 %}
-      ✅ CloudFormation stack {{ cluster_name }}-rosa-network-stack confirmed deleted
+      {% if (cfn_verify | default({'rc': -1})).rc == 0 %}
+      ✅ CloudFormation stack {{ discovered_cf_stack_name | default(cluster_name + '-rosa-network-stack') }} confirmed deleted
       {% else %}
-      ⚠️  CloudFormation stack {{ cluster_name }}-rosa-network-stack may have orphaned resources
-      Check: python3 -c "import boto3; print(boto3.client('cloudformation', region_name='{{ aws_region | default('us-west-2') }}').describe_stacks(StackName='{{ cluster_name }}-rosa-network-stack'))"
+      ⚠️  CloudFormation stack {{ discovered_cf_stack_name | default(cluster_name + '-rosa-network-stack') }} may have orphaned resources
+      Check: python3 -c "import boto3; print(boto3.client('cloudformation', region_name='{{ aws_region | default(\"us-west-2\") }}').describe_stacks(StackName='{{ discovered_cf_stack_name | default(cluster_name + \"-rosa-network-stack\") }}'))"
       {% endif %}
   when:
     - wait_for_deletion | bool
     - delete_network | bool
     - discovered_rosa_network_name != 'not-found'
-    - cfn_verify is defined
+    - not (delete_rn.skipped | default(true))
+
+- name: Record CloudFormation verification failure
+  ansible.builtin.set_fact:
+    cf_deletion_failed: true
+  when:
+    - wait_for_deletion | bool
+    - delete_network | bool
+    - discovered_rosa_network_name != 'not-found'
+    - not (delete_rn.skipped | default(true))
+    - (cfn_verify.rc | default(0)) != 0  # default(0) is intentional: absent cfn_verify means verification was skipped (not failed)
 
 - name: Delete ROSARoleConfig (after ROSANetwork deletion completes)
-  shell: |
-    oc delete rosaroleconfig {{ discovered_rosa_role_config_name }} -n {{ rosa_hcp_namespace }} --wait=false
+  # Intentionally runs even if ROSANetwork deletion failed — IAM role cleanup is
+  # independent of network cleanup. The ROSA operator does not hold finalizers on
+  # ROSARoleConfig from the ROSANetwork controller path.
+  ansible.builtin.shell:
+    cmd: |
+      oc delete rosaroleconfig "$ROLE_CONFIG_NAME" -n "$NAMESPACE" --wait=false
+  environment:
+    ROLE_CONFIG_NAME: "{{ discovered_rosa_role_config_name }}"
+    NAMESPACE: "{{ rosa_hcp_namespace }}"
   register: delete_rrc
   failed_when: false
+  changed_when: delete_rrc.rc == 0
   when:
     - delete_roles | bool
     - discovered_rosa_role_config_name != 'not-found'
 
 - name: Emit agent context for ROSARoleConfig deletion wait
-  shell: |
-    echo "#AGENT_CONTEXT: resource_name=$ROLE_CONFIG_NAME namespace=$NAMESPACE resource_type=rosaroleconfig" | tee -a "$LOGFILE"
+  ansible.builtin.shell:
+    cmd: |
+      echo "#AGENT_CONTEXT: resource_name=$ROLE_CONFIG_NAME namespace=$NAMESPACE resource_type=rosaroleconfig" | tee -a "$LOGFILE"
   environment:
     LOGFILE: "{{ agent_monitor_log }}"
     ROLE_CONFIG_NAME: "{{ discovered_rosa_role_config_name }}"
@@ -616,57 +875,65 @@
     - wait_for_deletion | bool
     - delete_roles | bool
     - discovered_rosa_role_config_name != 'not-found'
+    - not (delete_rrc.skipped | default(true))
 
 - name: Wait for ROSARoleConfig deletion to complete
-  shell: |
-    for i in $(seq 1 $RETRIES); do
-      OUTPUT=$(oc get rosaroleconfig "$ROLE_CONFIG_NAME" -n "$NAMESPACE" 2>&1)
-      RC=$?
-      if [ $RC -ne 0 ]; then
-        if echo "$OUTPUT" | grep -qi "not found\|NotFound\|no resources found"; then
-          echo "ROSARoleConfig deleted successfully" | tee -a "$LOGFILE"
-          exit 0
+  ansible.builtin.shell:
+    cmd: |
+      for i in $(seq 1 $RETRIES); do
+        OUTPUT=$(oc get rosaroleconfig "$ROLE_CONFIG_NAME" -n "$NAMESPACE" 2>&1)
+        RC=$?
+        if [ $RC -ne 0 ]; then
+          if echo "$OUTPUT" | grep -qi "not found\|NotFound\|no resources found"; then
+            echo "ROSARoleConfig deleted successfully" | tee -a "$LOGFILE"
+            exit 0
+          fi
+          echo "WARNING: oc get failed unexpectedly (rc=$RC): $OUTPUT" | tee -a "$LOGFILE"
         fi
-        echo "WARNING: oc get failed unexpectedly (rc=$RC): $OUTPUT" | tee -a "$LOGFILE"
-      fi
-      echo "FAILED - RETRYING: [localhost]: Wait for rosaroleconfig $ROLE_CONFIG_NAME deletion to complete ($((RETRIES - i)) retries left)." | tee -a "$LOGFILE"
-      sleep 10
-    done
-    echo "Timed out waiting for ROSARoleConfig deletion" | tee -a "$LOGFILE"
-    exit 1
+        echo "FAILED - RETRYING: [localhost]: Wait for rosaroleconfig $ROLE_CONFIG_NAME deletion to complete ($((RETRIES - i)) retries left)." | tee -a "$LOGFILE"
+        if [ "$i" -eq "$RETRIES" ]; then break; fi
+        sleep 10
+      done
+      echo "Timed out waiting for ROSARoleConfig deletion" | tee -a "$LOGFILE"
+      exit 1
   environment:
     LOGFILE: "{{ agent_monitor_log }}"
-    RETRIES: "{{ (rosaroleconfig_timeout | default(deletion_timeout) | int / 10) | int }}"
+    RETRIES: "{{ [(rosaroleconfig_timeout | default(deletion_timeout) | int / 10) | int, 1] | max }}"
     ROLE_CONFIG_NAME: "{{ discovered_rosa_role_config_name }}"
     NAMESPACE: "{{ rosa_hcp_namespace }}"
   register: wait_rrc
   failed_when: false
+  changed_when: false
   when:
     - wait_for_deletion | bool
     - delete_roles | bool
     - discovered_rosa_role_config_name != 'not-found'
+    - not (delete_rrc.skipped | default(true))
 
 - name: Final check - verify ROSARoleConfig is actually gone
-  shell: |
-    for i in $(seq 1 18); do
-      OUTPUT=$(oc get rosaroleconfig "$ROLE_CONFIG_NAME" -n "$NAMESPACE" 2>&1)
-      RC=$?
-      if [ $RC -ne 0 ]; then
-        if echo "$OUTPUT" | grep -qi "not found\|NotFound\|no resources found"; then
-          echo "ROSARoleConfig confirmed deleted" | tee -a "$LOGFILE"
-          exit 0
+  ansible.builtin.shell:
+    cmd: |
+      for i in $(seq 1 $RRC_FINAL_RETRIES); do
+        OUTPUT=$(oc get rosaroleconfig "$ROLE_CONFIG_NAME" -n "$NAMESPACE" 2>&1)
+        RC=$?
+        if [ $RC -ne 0 ]; then
+          if echo "$OUTPUT" | grep -qi "not found\|NotFound\|no resources found"; then
+            echo "ROSARoleConfig confirmed deleted" | tee -a "$LOGFILE"
+            exit 0
+          fi
+          echo "WARNING: oc get failed unexpectedly (rc=$RC): $OUTPUT" | tee -a "$LOGFILE"
         fi
-        echo "WARNING: oc get failed unexpectedly (rc=$RC): $OUTPUT" | tee -a "$LOGFILE"
-      fi
-      echo "FAILED - RETRYING: [localhost]: Final check rosaroleconfig $ROLE_CONFIG_NAME deletion ($((18 - i)) retries left)." | tee -a "$LOGFILE"
-      sleep 10
-    done
-    echo "ROSARoleConfig still exists after final check" | tee -a "$LOGFILE"
-    exit 1
+        echo "FAILED - RETRYING: [localhost]: Final check rosaroleconfig $ROLE_CONFIG_NAME deletion ($(($RRC_FINAL_RETRIES - i)) retries left)." | tee -a "$LOGFILE"
+        if [ "$i" -eq "$RRC_FINAL_RETRIES" ]; then break; fi
+        sleep 10
+      done
+      echo "ROSARoleConfig still exists after final check" | tee -a "$LOGFILE"
+      exit 1
   environment:
     LOGFILE: "{{ agent_monitor_log }}"
     ROLE_CONFIG_NAME: "{{ discovered_rosa_role_config_name }}"
     NAMESPACE: "{{ rosa_hcp_namespace }}"
+    RRC_FINAL_RETRIES: "{{ [(rosaroleconfig_final_check_retries | default(180) | int / 10) | int, 1] | max }}"  # timeout in seconds / 10 = retry count
   register: final_rrc_check
   failed_when: false
   changed_when: false
@@ -674,12 +941,13 @@
     - wait_for_deletion | bool
     - delete_roles | bool
     - discovered_rosa_role_config_name != 'not-found'
-    - wait_rrc.rc != 0
+    - not (delete_rrc.skipped | default(true))
+    - (wait_rrc.rc | default(1)) != 0
 
 - name: Display ROSARoleConfig deletion result
-  debug:
+  ansible.builtin.debug:
     msg: |
-      {% if wait_rrc.rc == 0 or (final_rrc_check.rc | default(1)) == 0 %}
+      {% if (wait_rrc | default({'rc': -1})).rc == 0 or (final_rrc_check | default({'rc': -1})).rc == 0 %}
       ✅ ROSARoleConfig successfully deleted: {{ discovered_rosa_role_config_name }}
       {% else %}
       ⚠️  ROSARoleConfig still exists (IAM roles may still be deleting)
@@ -690,36 +958,49 @@
     - delete_roles | bool
     - discovered_rosa_role_config_name != 'not-found'
 
+- name: Warn if ROSARoleConfig still exists after all retries
+  ansible.builtin.set_fact:
+    rrc_deletion_failed: true
+  when:
+    - wait_for_deletion | bool
+    - delete_roles | bool
+    - discovered_rosa_role_config_name != 'not-found'
+    - not (delete_rrc.skipped | default(true))
+    - (wait_rrc.rc | default(1)) != 0
+    - (final_rrc_check.rc | default(1)) != 0
+
 - name: Set deletion summary
-  set_fact:
+  ansible.builtin.set_fact:
     deletion_summary: |
-      {% if 'not-found' not in cluster_exists.stdout %}
+      {% if '__NOTFOUND__' not in cluster_exists.stdout %}
       • Core Cluster: {{ '✅ Deleted' if delete_all is defined and delete_all.rc == 0 else '⏳ Deletion initiated' }}
       {% endif %}
-      {% if 'not-found' not in rcp_exists.stdout %}
-      • ROSAControlPlane: {{ '✅ Deleted' if (wait_for_deletion and (wait_rcp.rc == 0 or (final_rcp_check.rc | default(1)) == 0)) else '⏳ Deletion initiated' }}
+      {% if '__NOTFOUND__' not in rcp_exists.stdout %}
+      • ROSAControlPlane: {{ '✅ Deleted' if (wait_for_deletion and ((wait_rcp | default({'rc': -1})).rc == 0 or (final_rcp_check | default({'rc': -1})).rc == 0)) else '⏳ Deletion initiated' }}
       {% endif %}
-      {% if 'not-found' not in rmp_exists.stdout %}
-      • ROSAMachinePool: ✅ Auto-deleted (cascade)
+      {% if '__NOTFOUND__' not in rmp_exists.stdout %}
+      • ROSAMachinePool: ⏳ Cascade deletion assumed (not verified)
       {% endif %}
       {% if delete_network | bool and discovered_rosa_network_name != 'not-found' %}
-      • ROSANetwork: {{ '✅ Deleted' if (wait_for_deletion and (wait_rn.rc == 0 or (final_rn_check.rc | default(1)) == 0)) else '⏳ Deletion initiated' }}
+      • ROSANetwork: {{ '✅ Deleted' if (wait_for_deletion and ((wait_rn | default({'rc': -1})).rc == 0 or (final_rn_check | default({'rc': -1})).rc == 0)) else '⏳ Deletion initiated' }}
       {% endif %}
       {% if delete_roles | bool and discovered_rosa_role_config_name != 'not-found' %}
-      • ROSARoleConfig: {{ '✅ Deleted' if (wait_for_deletion and (wait_rrc.rc == 0 or (final_rrc_check.rc | default(1)) == 0)) else '⏳ Deletion initiated' }}
+      • ROSARoleConfig: {{ '✅ Deleted' if (wait_for_deletion and ((wait_rrc | default({'rc': -1})).rc == 0 or (final_rrc_check | default({'rc': -1})).rc == 0)) else '⏳ Deletion initiated' }}
       {% endif %}
 
 - name: Display deletion summary
-  debug:
+  ansible.builtin.debug:
     msg: |
 
       Deletion Summary:
       {{ deletion_summary }}
 
 - name: Fail if any resource deletion timed out
-  fail:
+  ansible.builtin.fail:
     msg: |
       One or more resources failed to delete within the timeout period.
       {{ '⚠️  ROSAControlPlane timed out' if (rcp_deletion_failed | default(false)) else '' }}
       {{ '⚠️  ROSANetwork timed out' if (rosanetwork_deletion_failed | default(false)) else '' }}
-  when: (rcp_deletion_failed | default(false)) or (rosanetwork_deletion_failed | default(false))
+      {{ '⚠️  CloudFormation stack deletion unconfirmed — orphaned AWS resources may exist' if (cf_deletion_failed | default(false)) else '' }}
+      {{ '⚠️  ROSARoleConfig timed out' if (rrc_deletion_failed | default(false)) else '' }}
+  when: (rcp_deletion_failed | default(false)) or (rosanetwork_deletion_failed | default(false)) or (cf_deletion_failed | default(false)) or (rrc_deletion_failed | default(false))
