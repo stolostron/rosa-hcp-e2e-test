@@ -30,7 +30,7 @@
 
     - name: Query OCM for available HCP versions
       uri:
-        url: "{{ _ocm_api_url }}/api/clusters_mgmt/v1/versions?search={{ _version_search | urlencode }}&order={{ 'raw_id desc' | urlencode }}&size={{ _query_size }}"
+        url: "{{ _ocm_api_url }}/api/clusters_mgmt/v1/versions?product=hcp&search={{ _version_search | urlencode }}&order={{ 'raw_id desc' | urlencode }}&size={{ _query_size }}"
         method: GET
         headers:
           Authorization: "Bearer {{ _ocm_version_token.json.access_token }}"

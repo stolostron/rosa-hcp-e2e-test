@@ -189,7 +189,7 @@
           echo ""
           echo "===== CAPA controller logs (last 500 lines) ====="
           oc logs -n {{ capa_namespace }} \
-            -l control-plane=controller-manager --tail=500 2>&1 || true
+            deployment/capa-controller-manager --tail=500 2>&1 || true
           echo ""
           echo "===== Namespace events (sorted by timestamp) ====="
           oc get events -n {{ rosa_hcp_namespace }} \

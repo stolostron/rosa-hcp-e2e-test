@@ -152,7 +152,7 @@
           oc get rosaroleconfig -n {{ rosa_hcp_namespace }} -o yaml 2>&1 || echo "(get yaml failed)"
           echo ""
           echo "===== CAPA controller logs (last 500 lines) ====="
-          oc logs -n {{ capa_namespace }} -l control-plane=controller-manager \
+          oc logs -n {{ capa_namespace }} deployment/capa-controller-manager \
             --tail=500 2>&1 || echo "(controller logs unavailable)"
           echo ""
           echo "===== Namespace events (sorted by timestamp) ====="

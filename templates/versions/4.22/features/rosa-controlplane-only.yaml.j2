@@ -296,7 +296,7 @@ metadata:
 spec:
   nodePoolName: {{ (rosa_role_prefix | default(domain_prefix) | default('test'))[:4] | regex_replace('-$', '') }}-np
   instanceType: {{ machine_pool.instance_type | default('m5.xlarge') }}
-  version: {{ rcp_version | default(openshift_version) }}
+  version: "{{ rcp_version | default(openshift_version) }}"
 {% if root_volume_size is defined and root_volume_size %}
   volumeSize: {{ root_volume_size }}
 {% endif %}
