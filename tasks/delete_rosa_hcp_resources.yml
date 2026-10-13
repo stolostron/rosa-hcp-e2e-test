@@ -231,16 +231,7 @@
         DELETION_TS=$(echo "$OUTPUT" | jq -r '.metadata.deletionTimestamp // empty' 2>/dev/null)
         if [ -n "$DELETION_TS" ]; then
           # Parse timestamp robustly: handle both GNU date and BSD date using Python (portable)
-          DELETION_EPOCH=$(echo "$DELETION_TS" | python3 -c "
-import sys
-from datetime import datetime
-try:
-  ts = sys.stdin.read().strip()
-  dt = datetime.fromisoformat(ts.replace('Z', '+00:00'))
-  print(int(dt.timestamp()))
-except:
-  print(0)
-" 2>/dev/null || echo 0)
+          DELETION_EPOCH=$(echo "$DELETION_TS" | python3 -c "import sys,datetime; dt=datetime.datetime.fromisoformat(sys.stdin.read().strip().replace('Z','+00:00')); print(int(dt.timestamp()))" 2>/dev/null || echo 0)
 
           # Only check age thresholds if timestamp parsing succeeded (DELETION_EPOCH > 0)
           # If parsing failed, DELETION_EPOCH=0 would give false positive AGE (~56 years)
@@ -333,20 +324,25 @@ except:
   when:
     - wait_for_deletion | bool
     - "'__NOTFOUND__' not in rcp_exists.stdout"
-    - (wait_rcp.rc | default(1)) != 0
+    - (wait_rcp | default({'rc': 1})).rc != 0
 
 - name: Display ROSAControlPlane deletion result
   ansible.builtin.debug:
-    msg: |
-      {% if (wait_rcp | default({'rc': -1})).rc == 0 or (final_rcp_check | default({'rc': -1})).rc == 0 %}
-      ✅ ROSAControlPlane successfully deleted: {{ cluster_name }}
-      {% else %}
-      ⚠️  ROSAControlPlane still exists (may still be deleting): {{ cluster_name }}
-      Check status: oc get rosacontrolplane {{ cluster_name }} -n {{ rosa_hcp_namespace }}
-      {% endif %}
+    msg: "✅ ROSAControlPlane successfully deleted: {{ cluster_name }}"
   when:
     - wait_for_deletion | bool
     - "'__NOTFOUND__' not in rcp_exists.stdout"
+    - "wait_rcp is defined and wait_rcp.rc == 0 or final_rcp_check is defined and final_rcp_check.rc == 0"
+
+- name: Display ROSAControlPlane still exists warning
+  ansible.builtin.debug:
+    msg: |
+      ⚠️  ROSAControlPlane still exists (may still be deleting): {{ cluster_name }}
+      Check status: oc get rosacontrolplane {{ cluster_name }} -n {{ rosa_hcp_namespace }}
+  when:
+    - wait_for_deletion | bool
+    - "'__NOTFOUND__' not in rcp_exists.stdout"
+    - "not (wait_rcp is defined and wait_rcp.rc == 0 or final_rcp_check is defined and final_rcp_check.rc == 0)"
 
 - name: Warn if ROSAControlPlane still exists after all retries
   set_fact:
@@ -354,8 +350,8 @@ except:
   when:
     - wait_for_deletion | bool
     - "'not-found' not in rcp_exists.stdout"
-    - wait_rcp.rc != 0
-    - (final_rcp_check.rc | default(1)) != 0
+    - (wait_rcp | default({'rc': 1})).rc != 0
+    - (final_rcp_check | default({'rc': 1})).rc != 0
 
 - name: Display ROSAControlPlane timeout warning
   debug:
@@ -529,16 +525,7 @@ except:
         RN_DELETION_TS=$(echo "$OUTPUT" | jq -r '.metadata.deletionTimestamp // empty' 2>/dev/null)
         if [ -n "$RN_DELETION_TS" ]; then
           # Parse timestamp robustly: handle both GNU date and BSD date using Python (portable)
-          RN_DELETION_EPOCH=$(echo "$RN_DELETION_TS" | python3 -c "
-import sys
-from datetime import datetime
-try:
-  ts = sys.stdin.read().strip()
-  dt = datetime.fromisoformat(ts.replace('Z', '+00:00'))
-  print(int(dt.timestamp()))
-except:
-  print(0)
-" 2>/dev/null || echo 0)
+          RN_DELETION_EPOCH=$(echo "$RN_DELETION_TS" | python3 -c "import sys,datetime; dt=datetime.datetime.fromisoformat(sys.stdin.read().strip().replace('Z','+00:00')); print(int(dt.timestamp()))" 2>/dev/null || echo 0)
 
           # Only check age thresholds if timestamp parsing succeeded (RN_DELETION_EPOCH > 0)
           if [ -n "$RN_DELETION_EPOCH" ] && [ "$RN_DELETION_EPOCH" -gt 0 ]; then
@@ -610,21 +597,27 @@ except:
     - wait_for_deletion | bool
     - delete_network | bool
     - discovered_rosa_network_name != 'not-found'
-    - wait_rn.rc != 0
+    - (wait_rn | default({'rc': 1})).rc != 0
 
 - name: Display ROSANetwork deletion result
   debug:
-    msg: |
-      {% if wait_rn.rc == 0 or (final_rn_check.rc | default(1)) == 0 %}
-      ✅ ROSANetwork successfully deleted: {{ discovered_rosa_network_name }}
-      {% else %}
-      ⚠️  ROSANetwork still exists (CloudFormation stack may still be deleting)
-      Check status: oc get rosanetwork {{ discovered_rosa_network_name }} -n {{ rosa_hcp_namespace }}
-      {% endif %}
+    msg: "✅ ROSANetwork successfully deleted: {{ discovered_rosa_network_name }}"
   when:
     - wait_for_deletion | bool
     - delete_network | bool
     - discovered_rosa_network_name != 'not-found'
+    - "wait_rn is defined and wait_rn.rc == 0 or final_rn_check is defined and final_rn_check.rc == 0"
+
+- name: Display ROSANetwork still exists warning
+  debug:
+    msg: |
+      ⚠️  ROSANetwork still exists (CloudFormation stack may still be deleting)
+      Check status: oc get rosanetwork {{ discovered_rosa_network_name }} -n {{ rosa_hcp_namespace }}
+  when:
+    - wait_for_deletion | bool
+    - delete_network | bool
+    - discovered_rosa_network_name != 'not-found'
+    - "not (wait_rn is defined and wait_rn.rc == 0 or final_rn_check is defined and final_rn_check.rc == 0)"
 
 - name: Warn if ROSANetwork still exists after all retries
   set_fact:
@@ -633,8 +626,8 @@ except:
     - wait_for_deletion | bool
     - delete_network | bool
     - discovered_rosa_network_name != 'not-found'
-    - wait_rn.rc != 0
-    - (final_rn_check.rc | default(1)) != 0
+    - (wait_rn | default({'rc': 1})).rc != 0
+    - (final_rn_check | default({'rc': 1})).rc != 0
 
 - name: Display ROSANetwork timeout warning
   debug:
@@ -791,16 +784,7 @@ except:
       RRC_DELETION_TS=$(echo "$OUTPUT" | jq -r '.metadata.deletionTimestamp // empty' 2>/dev/null)
       if [ -n "$RRC_DELETION_TS" ]; then
         # Parse timestamp robustly: handle both GNU date and BSD date using Python (portable)
-        RRC_DELETION_EPOCH=$(echo "$RRC_DELETION_TS" | python3 -c "
-import sys
-from datetime import datetime
-try:
-  ts = sys.stdin.read().strip()
-  dt = datetime.fromisoformat(ts.replace('Z', '+00:00'))
-  print(int(dt.timestamp()))
-except:
-  print(0)
-" 2>/dev/null || echo 0)
+        RRC_DELETION_EPOCH=$(echo "$RRC_DELETION_TS" | python3 -c "import sys,datetime; dt=datetime.datetime.fromisoformat(sys.stdin.read().strip().replace('Z','+00:00')); print(int(dt.timestamp()))" 2>/dev/null || echo 0)
 
         # Only check age thresholds if timestamp parsing succeeded (RRC_DELETION_EPOCH > 0)
         if [ -n "$RRC_DELETION_EPOCH" ] && [ "$RRC_DELETION_EPOCH" -gt 0 ]; then
@@ -884,21 +868,27 @@ except:
     - wait_for_deletion | bool
     - delete_roles | bool
     - discovered_rosa_role_config_name != 'not-found'
-    - wait_rrc.rc != 0
+    - (wait_rrc | default({'rc': 1})).rc != 0
 
 - name: Display ROSARoleConfig deletion result
   debug:
-    msg: |
-      {% if wait_rrc.rc == 0 or (final_rrc_check.rc | default(1)) == 0 %}
-      ✅ ROSARoleConfig successfully deleted: {{ discovered_rosa_role_config_name }}
-      {% else %}
-      ⚠️  ROSARoleConfig still exists (IAM roles may still be deleting)
-      Check status: oc get rosaroleconfig {{ discovered_rosa_role_config_name }} -n {{ rosa_hcp_namespace }}
-      {% endif %}
+    msg: "✅ ROSARoleConfig successfully deleted: {{ discovered_rosa_role_config_name }}"
   when:
     - wait_for_deletion | bool
     - delete_roles | bool
     - discovered_rosa_role_config_name != 'not-found'
+    - "wait_rrc is defined and wait_rrc.rc == 0 or final_rrc_check is defined and final_rrc_check.rc == 0"
+
+- name: Display ROSARoleConfig still exists warning
+  debug:
+    msg: |
+      ⚠️  ROSARoleConfig still exists (IAM roles may still be deleting)
+      Check status: oc get rosaroleconfig {{ discovered_rosa_role_config_name }} -n {{ rosa_hcp_namespace }}
+  when:
+    - wait_for_deletion | bool
+    - delete_roles | bool
+    - discovered_rosa_role_config_name != 'not-found'
+    - "not (wait_rrc is defined and wait_rrc.rc == 0 or final_rrc_check is defined and final_rrc_check.rc == 0)"
 
 - name: Set deletion summary
   set_fact:
