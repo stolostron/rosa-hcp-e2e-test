@@ -379,7 +379,6 @@ pipeline {
                                   ${EXTRA_VARS}
                             '''
                         }
-                        archiveArtifacts artifacts: 'rosa-hcp-e2e-test/test-results/**/*.xml', allowEmptyArchive: true, followSymlinks: false, fingerprint: true
                     }
                     catch (ex) {
                         def securityFeatures = ['etcd-kms', 'etcd_kms', 'fips', 'security-groups', 'security_groups', 'external-oidc', 'external_oidc', 'private', 'private_network']
@@ -393,6 +392,14 @@ pipeline {
                             echo 'Feature flag verification failed — features may not have been applied correctly'
                             currentBuild.result = 'UNSTABLE'
                         }
+                    }
+                    finally {
+                        // In `finally`, not in `try`: a verification failure makes
+                        // the sh above throw straight to `catch`, so archiving from
+                        // inside `try` would skip exactly the builds whose artifacts
+                        // matter most. The per-feature results exist only while the
+                        // cluster does, so this must also precede the delete stage.
+                        archiveArtifacts artifacts: 'rosa-hcp-e2e-test/test-results/**/*.xml, rosa-hcp-e2e-test/test-results/**/feature-verification*.json', allowEmptyArchive: true, followSymlinks: false, fingerprint: true
                     }
                 }
             }

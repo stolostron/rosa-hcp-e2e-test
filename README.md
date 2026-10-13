@@ -477,10 +477,39 @@ ansible-playbook playbooks/create_rosa_hcp_cluster.yml --syntax-check
 
 ```
 test-results/
-├── test-run-<timestamp>.log
-├── junit-<test-suite>.xml
-└── results-<timestamp>.json
+├── feature-verification.json              # latest per-feature results (suite 21)
+├── latest-<label>.xml                      # latest JUnit report
+└── <date>/
+    ├── test-run-<label>-<timestamp>.xml
+    └── feature-verification-<label>-<timestamp>.json
 ```
+
+### Per-Feature Verification Results
+
+Suite 21 writes `test-results/feature-verification.json` **while the cluster is
+still alive** — after the delete stage its observed values cannot be recovered.
+The file records, for every requested feature, whether it passed, failed, or
+warned, plus the resource specs the checks read.
+
+Two things consume it:
+
+**1. JUnit expands to one testcase per feature.** Without the artifact the whole
+suite reports as a single test; with it, CI names the feature that broke and can
+trend one feature across builds:
+
+```xml
+<testcase classname="FeatureVerification" name="channel_group"/>
+<testcase classname="FeatureVerification" name="fips">
+  <skipped message="CRD has no field 'fips' — platform limitation"/>
+</testcase>
+```
+
+A **warned** feature (the installed CRD has no field for it) maps to `skipped`,
+not `failure` — a platform limitation is not an automation defect, and keeping
+the build green while still surfacing the gap is the distinction you need when
+validating a new OpenShift release. If the playbook dies before writing the
+artifact (login failure, timeout), the runner falls back to the single
+playbook-level testcase carrying the raw error.
 
 ## Contributing
 
