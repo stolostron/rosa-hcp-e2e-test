@@ -213,21 +213,25 @@
 - name: Wait for ROSAControlPlane deletion to complete
   ansible.builtin.shell:
     cmd: |
+      START_TIME=$(date +%s)
       for i in $(seq 1 $RETRIES); do
         OUTPUT=$(oc get rosacontrolplane "$CLUSTER_NAME" -n "$NAMESPACE" 2>&1)
         RC=$?
+        ELAPSED=$(($(date +%s) - START_TIME))
         if [ $RC -ne 0 ]; then
           if echo "$OUTPUT" | grep -qi "not found\|NotFound\|no resources found"; then
-            echo "ROSAControlPlane deleted successfully" | tee -a "$LOGFILE"
+            echo "✓ ROSAControlPlane deleted successfully (attempt $i/$RETRIES, ${ELAPSED}s elapsed)" | tee -a "$LOGFILE"
             exit 0
           fi
           echo "WARNING: oc get failed unexpectedly (rc=$RC): $OUTPUT" | tee -a "$LOGFILE"
         fi
-        echo "FAILED - RETRYING: [localhost]: Wait for rosacontrolplane $CLUSTER_NAME deletion to complete ($((RETRIES - i)) retries left)." | tee -a "$LOGFILE"
+        echo "PROGRESS: Attempt $i/$RETRIES (${ELAPSED}s elapsed) — ROSAControlPlane still deleting, retrying in $((MIN(30, 2**((i-1)/20))))s..." | tee -a "$LOGFILE"
         if [ "$i" -eq "$RETRIES" ]; then break; fi
-        sleep 10
+        SLEEP_TIME=$((MIN(30, 2**((i-1)/20))))
+        sleep "$SLEEP_TIME"
       done
-      echo "Timed out waiting for ROSAControlPlane deletion" | tee -a "$LOGFILE"
+      TOTAL_ELAPSED=$(($(date +%s) - START_TIME))
+      echo "Timed out waiting for ROSAControlPlane deletion after ${TOTAL_ELAPSED}s ($RETRIES attempts)" | tee -a "$LOGFILE"
       exit 1
   environment:
     LOGFILE: "{{ agent_monitor_log }}"
@@ -245,21 +249,25 @@
 - name: Final check - verify ROSAControlPlane is actually gone
   ansible.builtin.shell:
     cmd: |
+      START_TIME=$(date +%s)
       for i in $(seq 1 $RCP_FINAL_RETRIES); do
         OUTPUT=$(oc get rosacontrolplane "$CLUSTER_NAME" -n "$NAMESPACE" 2>&1)
         RC=$?
+        ELAPSED=$(($(date +%s) - START_TIME))
         if [ $RC -ne 0 ]; then
           if echo "$OUTPUT" | grep -qi "not found\|NotFound\|no resources found"; then
-            echo "ROSAControlPlane confirmed deleted" | tee -a "$LOGFILE"
+            echo "✓ ROSAControlPlane confirmed deleted (final check attempt $i/$RCP_FINAL_RETRIES, ${ELAPSED}s elapsed)" | tee -a "$LOGFILE"
             exit 0
           fi
           echo "WARNING: oc get failed unexpectedly (rc=$RC): $OUTPUT" | tee -a "$LOGFILE"
         fi
-        echo "FAILED - RETRYING: [localhost]: Final check rosacontrolplane $CLUSTER_NAME deletion ($(($RCP_FINAL_RETRIES - i)) retries left)." | tee -a "$LOGFILE"
+        echo "PROGRESS: Final check attempt $i/$RCP_FINAL_RETRIES (${ELAPSED}s elapsed) — retrying in $((MIN(30, 2**((i-1)/20))))s..." | tee -a "$LOGFILE"
         if [ "$i" -eq "$RCP_FINAL_RETRIES" ]; then break; fi
-        sleep 10
+        SLEEP_TIME=$((MIN(30, 2**((i-1)/20))))
+        sleep "$SLEEP_TIME"
       done
-      echo "ROSAControlPlane still exists after final check" | tee -a "$LOGFILE"
+      TOTAL_ELAPSED=$(($(date +%s) - START_TIME))
+      echo "ROSAControlPlane still exists after final check (${TOTAL_ELAPSED}s, $RCP_FINAL_RETRIES attempts)" | tee -a "$LOGFILE"
       exit 1
   environment:
     LOGFILE: "{{ agent_monitor_log }}"
@@ -359,15 +367,17 @@
     NAMESPACE: "{{ rosa_hcp_namespace }}"
   ansible.builtin.shell:
     cmd: |
+      START_TIME=$(date +%s)
       ITERATION_COUNT=0
       MAX_CF_RETRIES=3
       CF_RETRY_COUNT=0
       for i in $(seq 1 $RETRIES); do
         OUTPUT=$(oc get rosanetwork "$NETWORK_NAME" -n "$NAMESPACE" 2>&1)
         RC=$?
+        ELAPSED=$(($(date +%s) - START_TIME))
         if [ $RC -ne 0 ]; then
           if echo "$OUTPUT" | grep -qi "not found\|NotFound\|no resources found"; then
-            echo "ROSANetwork deleted successfully" | tee -a "$LOGFILE"
+            echo "✓ ROSANetwork deleted successfully (attempt $i/$RETRIES, ${ELAPSED}s elapsed)" | tee -a "$LOGFILE"
             exit 0
           fi
           echo "WARNING: oc get failed unexpectedly (rc=$RC): $OUTPUT" | tee -a "$LOGFILE"
@@ -461,10 +471,12 @@
           fi
         fi
 
-        echo "FAILED - RETRYING: [localhost]: Wait for rosanetwork $NETWORK_NAME deletion to complete ($((RETRIES - i)) retries left)." | tee -a "$LOGFILE"
-        sleep 10
+        SLEEP_TIME=$((MIN(30, 2**((i-1)/20))))
+        echo "PROGRESS: Attempt $i/$RETRIES (${ELAPSED}s elapsed) — ROSANetwork still deleting, retrying in ${SLEEP_TIME}s..." | tee -a "$LOGFILE"
+        sleep "$SLEEP_TIME"
       done
-      echo "Timed out waiting for ROSANetwork deletion" | tee -a "$LOGFILE"
+      TOTAL_ELAPSED=$(($(date +%s) - START_TIME))
+      echo "Timed out waiting for ROSANetwork deletion after ${TOTAL_ELAPSED}s ($RETRIES attempts)" | tee -a "$LOGFILE"
       exit 1
   register: wait_rn
   failed_when: false
@@ -475,20 +487,25 @@
 
 - name: Final check - verify ROSANetwork is actually gone
   shell: |
-    for i in $(seq 1 36); do
+    START_TIME=$(date +%s)
+    FINAL_RETRIES=36
+    for i in $(seq 1 $FINAL_RETRIES); do
       OUTPUT=$(oc get rosanetwork "$NETWORK_NAME" -n "$NAMESPACE" 2>&1)
       RC=$?
+      ELAPSED=$(($(date +%s) - START_TIME))
       if [ $RC -ne 0 ]; then
         if echo "$OUTPUT" | grep -qi "not found\|NotFound\|no resources found"; then
-          echo "ROSANetwork confirmed deleted" | tee -a "$LOGFILE"
+          echo "✓ ROSANetwork confirmed deleted (final check attempt $i/$FINAL_RETRIES, ${ELAPSED}s elapsed)" | tee -a "$LOGFILE"
           exit 0
         fi
         echo "WARNING: oc get failed unexpectedly (rc=$RC): $OUTPUT" | tee -a "$LOGFILE"
       fi
-      echo "FAILED - RETRYING: [localhost]: Final check rosanetwork $NETWORK_NAME deletion ($((36 - i)) retries left)." | tee -a "$LOGFILE"
-      sleep 10
+      SLEEP_TIME=$((MIN(30, 2**((i-1)/20))))
+      echo "PROGRESS: Final check attempt $i/$FINAL_RETRIES (${ELAPSED}s elapsed) — retrying in ${SLEEP_TIME}s..." | tee -a "$LOGFILE"
+      sleep "$SLEEP_TIME"
     done
-    echo "ROSANetwork still exists after final check" | tee -a "$LOGFILE"
+    TOTAL_ELAPSED=$(($(date +%s) - START_TIME))
+    echo "ROSANetwork still exists after final check (${TOTAL_ELAPSED}s, $FINAL_RETRIES attempts)" | tee -a "$LOGFILE"
     exit 1
   environment:
     LOGFILE: "{{ agent_monitor_log }}"
@@ -665,20 +682,24 @@
 
 - name: Wait for ROSARoleConfig deletion to complete
   shell: |
+    START_TIME=$(date +%s)
     for i in $(seq 1 $RETRIES); do
       OUTPUT=$(oc get rosaroleconfig "$ROLE_CONFIG_NAME" -n "$NAMESPACE" 2>&1)
       RC=$?
+      ELAPSED=$(($(date +%s) - START_TIME))
       if [ $RC -ne 0 ]; then
         if echo "$OUTPUT" | grep -qi "not found\|NotFound\|no resources found"; then
-          echo "ROSARoleConfig deleted successfully" | tee -a "$LOGFILE"
+          echo "✓ ROSARoleConfig deleted successfully (attempt $i/$RETRIES, ${ELAPSED}s elapsed)" | tee -a "$LOGFILE"
           exit 0
         fi
         echo "WARNING: oc get failed unexpectedly (rc=$RC): $OUTPUT" | tee -a "$LOGFILE"
       fi
-      echo "FAILED - RETRYING: [localhost]: Wait for rosaroleconfig $ROLE_CONFIG_NAME deletion to complete ($((RETRIES - i)) retries left)." | tee -a "$LOGFILE"
-      sleep 10
+      SLEEP_TIME=$((MIN(30, 2**((i-1)/20))))
+      echo "PROGRESS: Attempt $i/$RETRIES (${ELAPSED}s elapsed) — ROSARoleConfig still deleting, retrying in ${SLEEP_TIME}s..." | tee -a "$LOGFILE"
+      sleep "$SLEEP_TIME"
     done
-    echo "Timed out waiting for ROSARoleConfig deletion" | tee -a "$LOGFILE"
+    TOTAL_ELAPSED=$(($(date +%s) - START_TIME))
+    echo "Timed out waiting for ROSARoleConfig deletion after ${TOTAL_ELAPSED}s ($RETRIES attempts)" | tee -a "$LOGFILE"
     exit 1
   environment:
     LOGFILE: "{{ agent_monitor_log }}"
@@ -694,20 +715,25 @@
 
 - name: Final check - verify ROSARoleConfig is actually gone
   shell: |
-    for i in $(seq 1 18); do
+    START_TIME=$(date +%s)
+    FINAL_RETRIES=18
+    for i in $(seq 1 $FINAL_RETRIES); do
       OUTPUT=$(oc get rosaroleconfig "$ROLE_CONFIG_NAME" -n "$NAMESPACE" 2>&1)
       RC=$?
+      ELAPSED=$(($(date +%s) - START_TIME))
       if [ $RC -ne 0 ]; then
         if echo "$OUTPUT" | grep -qi "not found\|NotFound\|no resources found"; then
-          echo "ROSARoleConfig confirmed deleted" | tee -a "$LOGFILE"
+          echo "✓ ROSARoleConfig confirmed deleted (final check attempt $i/$FINAL_RETRIES, ${ELAPSED}s elapsed)" | tee -a "$LOGFILE"
           exit 0
         fi
         echo "WARNING: oc get failed unexpectedly (rc=$RC): $OUTPUT" | tee -a "$LOGFILE"
       fi
-      echo "FAILED - RETRYING: [localhost]: Final check rosaroleconfig $ROLE_CONFIG_NAME deletion ($((18 - i)) retries left)." | tee -a "$LOGFILE"
-      sleep 10
+      SLEEP_TIME=$((MIN(30, 2**((i-1)/20))))
+      echo "PROGRESS: Final check attempt $i/$FINAL_RETRIES (${ELAPSED}s elapsed) — retrying in ${SLEEP_TIME}s..." | tee -a "$LOGFILE"
+      sleep "$SLEEP_TIME"
     done
-    echo "ROSARoleConfig still exists after final check" | tee -a "$LOGFILE"
+    TOTAL_ELAPSED=$(($(date +%s) - START_TIME))
+    echo "ROSARoleConfig still exists after final check (${TOTAL_ELAPSED}s, $FINAL_RETRIES attempts)" | tee -a "$LOGFILE"
     exit 1
   environment:
     LOGFILE: "{{ agent_monitor_log }}"
