@@ -230,13 +230,17 @@
         # Early-exit detection: check for stuck conditions before retrying (uses jq for robust JSON parsing)
         DELETION_TS=$(echo "$OUTPUT" | jq -r '.metadata.deletionTimestamp // empty' 2>/dev/null)
         if [ -n "$DELETION_TS" ]; then
-          # Parse timestamp robustly: handle both GNU date and BSD date
-          if date -d "$DELETION_TS" +%s >/dev/null 2>&1; then
-            DELETION_EPOCH=$(date -d "$DELETION_TS" +%s)
-          else
-            # Fallback for BSD date (macOS): convert ISO 8601 to epoch
-            DELETION_EPOCH=$(echo "$DELETION_TS" | awk -F'[T:-]' '{print mktime($1 " " $2 " " $3 " " $4 " " $5 " " $6)}')
-          fi
+          # Parse timestamp robustly: handle both GNU date and BSD date using Python (portable)
+          DELETION_EPOCH=$(echo "$DELETION_TS" | python3 -c "
+import sys
+from datetime import datetime
+try:
+  ts = sys.stdin.read().strip()
+  dt = datetime.fromisoformat(ts.replace('Z', '+00:00'))
+  print(int(dt.timestamp()))
+except:
+  print(0)
+" 2>/dev/null || echo 0)
           AGE=$(($(date +%s) - DELETION_EPOCH))
 
           # If stuck deleting for >20 min, it's likely unrecoverable
@@ -527,13 +531,17 @@
         # Check if resource is stuck on finalizers or deletion (similar to CP checks)
         RN_DELETION_TS=$(echo "$OUTPUT" | jq -r '.metadata.deletionTimestamp // empty' 2>/dev/null)
         if [ -n "$RN_DELETION_TS" ]; then
-          # Parse timestamp robustly: handle both GNU date and BSD date
-          if date -d "$RN_DELETION_TS" +%s >/dev/null 2>&1; then
-            RN_DELETION_EPOCH=$(date -d "$RN_DELETION_TS" +%s)
-          else
-            # Fallback for BSD date (macOS): convert ISO 8601 to epoch
-            RN_DELETION_EPOCH=$(echo "$RN_DELETION_TS" | awk -F'[T:-]' '{print mktime($1 " " $2 " " $3 " " $4 " " $5 " " $6)}')
-          fi
+          # Parse timestamp robustly: handle both GNU date and BSD date using Python (portable)
+          RN_DELETION_EPOCH=$(echo "$RN_DELETION_TS" | python3 -c "
+import sys
+from datetime import datetime
+try:
+  ts = sys.stdin.read().strip()
+  dt = datetime.fromisoformat(ts.replace('Z', '+00:00'))
+  print(int(dt.timestamp()))
+except:
+  print(0)
+" 2>/dev/null || echo 0)
           RN_AGE=$(($(date +%s) - RN_DELETION_EPOCH))
 
           # If ROSANetwork stuck >5 min with finalizers, unlikely to recover
@@ -781,13 +789,17 @@
       # Early-exit detection: RoleConfig typically deletes fast, if stuck >5 min it's stuck (uses jq for robust parsing)
       RRC_DELETION_TS=$(echo "$OUTPUT" | jq -r '.metadata.deletionTimestamp // empty' 2>/dev/null)
       if [ -n "$RRC_DELETION_TS" ]; then
-        # Parse timestamp robustly: handle both GNU date and BSD date
-        if date -d "$RRC_DELETION_TS" +%s >/dev/null 2>&1; then
-          RRC_DELETION_EPOCH=$(date -d "$RRC_DELETION_TS" +%s)
-        else
-          # Fallback for BSD date (macOS): convert ISO 8601 to epoch
-          RRC_DELETION_EPOCH=$(echo "$RRC_DELETION_TS" | awk -F'[T:-]' '{print mktime($1 " " $2 " " $3 " " $4 " " $5 " " $6)}')
-        fi
+        # Parse timestamp robustly: handle both GNU date and BSD date using Python (portable)
+        RRC_DELETION_EPOCH=$(echo "$RRC_DELETION_TS" | python3 -c "
+import sys
+from datetime import datetime
+try:
+  ts = sys.stdin.read().strip()
+  dt = datetime.fromisoformat(ts.replace('Z', '+00:00'))
+  print(int(dt.timestamp()))
+except:
+  print(0)
+" 2>/dev/null || echo 0)
         RRC_AGE=$(($(date +%s) - RRC_DELETION_EPOCH))
 
         # RoleConfig usually deletes in <1 min; if stuck >5 min, something's wrong
