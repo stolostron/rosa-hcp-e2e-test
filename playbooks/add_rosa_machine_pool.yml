@@ -55,6 +55,8 @@
         instance_type: "{{ instance_type | default('m5.xlarge') }}"
         replicas: "{{ replicas | default(1) }}"
         availability_zone: "{{ availability_zone | default('') }}"
+        machine_pool_readiness_timeout_minutes: "{{ machine_pool_readiness_timeout_minutes | default(30) }}"
+        machine_pool_readiness_poll_interval: "{{ machine_pool_readiness_poll_interval | default(30) }}"
 
     - name: Prepare ansible runner host
       include_tasks: ../tasks/prepare_ansible_runner.yml
@@ -235,8 +237,8 @@
       until: >
         pool_status.stdout is defined and
         pool_status.stdout.split('|')[0] == 'true'
-      retries: 60
-      delay: 30
+      retries: "{{ ((machine_pool_readiness_timeout_minutes | int * 60) / (machine_pool_readiness_poll_interval | int)) | int }}"
+      delay: "{{ machine_pool_readiness_poll_interval | int }}"
       failed_when: false
       changed_when: false
 
@@ -273,14 +275,17 @@
     - name: Verify pool is ready
       fail:
         msg: |
-          ROSAMachinePool {{ pool_name }} did not become ready within 30 minutes.
+          ROSAMachinePool {{ pool_name }} did not become ready within {{ machine_pool_readiness_timeout_minutes }} minutes (timeout: machine_pool_readiness_timeout_minutes).
           Ready: {{ final_ready }}
           Replicas: {{ final_replicas }}
+          Elapsed: {{ total_pool_seconds }}s
 
           This gate gates on .status.ready / .status.replicas, which only the CAPA
           controller writes. An empty status with a healthy pool in AWS means the
           controller never reconciled it -- check the diagnostics above before
           assuming the pool itself failed.
+
+          To increase timeout, pass: -e machine_pool_readiness_timeout_minutes=60
 
           Check status:
             oc describe rosamachinepool {{ pool_name }} -n {{ rosa_hcp_namespace }}
