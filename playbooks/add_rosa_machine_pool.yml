@@ -246,7 +246,7 @@
       set_fact:
         final_ready: "{{ pool_status.stdout.split('|')[0] | default('false', true) }}"
         final_replicas: "{{ pool_status.stdout.split('|')[1] | default('0', true) }}"
-        total_pool_seconds: "{{ now(utc=true).strftime('%s') | int - pool_start_epoch | int }}"
+        total_pool_seconds: "{{ ansible_date_time.epoch | int - pool_start_epoch | int }}"
 
     # A bare "did not become ready" tells us nothing about WHY -- the pool may be
     # healthy in AWS while the controller simply never wrote status. Capture the

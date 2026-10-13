@@ -227,10 +227,16 @@
           echo "WARNING: oc get failed unexpectedly (rc=$RC): $OUTPUT" | tee -a "$LOGFILE"
         fi
 
-        # Early-exit detection: check for stuck conditions before retrying
-        if echo "$OUTPUT" | grep -q '"deletionTimestamp"'; then
-          DELETION_TS=$(echo "$OUTPUT" | grep -o '"deletionTimestamp":"[^"]*' | cut -d'"' -f4)
-          DELETION_EPOCH=$(date -d "$DELETION_TS" +%s 2>/dev/null || echo 0)
+        # Early-exit detection: check for stuck conditions before retrying (uses jq for robust JSON parsing)
+        DELETION_TS=$(echo "$OUTPUT" | jq -r '.metadata.deletionTimestamp // empty' 2>/dev/null)
+        if [ -n "$DELETION_TS" ]; then
+          # Parse timestamp robustly: handle both GNU date and BSD date
+          if date -d "$DELETION_TS" +%s >/dev/null 2>&1; then
+            DELETION_EPOCH=$(date -d "$DELETION_TS" +%s)
+          else
+            # Fallback for BSD date (macOS): convert ISO 8601 to epoch
+            DELETION_EPOCH=$(echo "$DELETION_TS" | awk -F'[T:-]' '{print mktime($1 " " $2 " " $3 " " $4 " " $5 " " $6)}')
+          fi
           AGE=$(($(date +%s) - DELETION_EPOCH))
 
           # If stuck deleting for >20 min, it's likely unrecoverable
@@ -246,23 +252,29 @@
           fi
 
           # Check for terminal failure phase
-          if echo "$OUTPUT" | grep -q '"phase":"DELETE_FAILED"'; then
+          PHASE=$(echo "$OUTPUT" | jq -r '.status.phase // empty' 2>/dev/null)
+          if [ "$PHASE" = "DELETE_FAILED" ]; then
             echo "⚠️  ROSAControlPlane in DELETE_FAILED phase — unrecoverable, early exit" | tee -a "$LOGFILE"
             echo "#AGENT_CONTEXT: resource_name=$CLUSTER_NAME status=delete_failed_phase" | tee -a "$LOGFILE"
             exit 1
           fi
 
           # Check for stuck on finalizer (resource exists but has finalizers preventing deletion)
-          if echo "$OUTPUT" | grep -q '"finalizers"' && [ "$AGE" -gt 300 ]; then
+          FINALIZERS=$(echo "$OUTPUT" | jq -r '.metadata.finalizers | length' 2>/dev/null)
+          if [ "$FINALIZERS" -gt 0 ] && [ "$AGE" -gt 300 ]; then
             echo "⚠️  ROSAControlPlane stuck on finalizer for ${AGE}s — likely needs manual intervention, early exit" | tee -a "$LOGFILE"
             echo "#AGENT_CONTEXT: resource_name=$CLUSTER_NAME status=stuck_on_finalizer age_seconds=$AGE" | tee -a "$LOGFILE"
             exit 1
           fi
         fi
 
-        echo "PROGRESS: Attempt $i/$RETRIES (${ELAPSED}s elapsed) — ROSAControlPlane still deleting, retrying in $((MIN(30, 2**((i-1)/20))))s..." | tee -a "$LOGFILE"
+        # Calculate sleep time with proper ternary operator (no MIN function in bash)
+        EXPONENT=$(echo "scale=0; ($i - 1) / 20" | bc 2>/dev/null || echo 0)
+        SLEEP_BASE=$((2 ** EXPONENT))
+        SLEEP_TIME=$([ $SLEEP_BASE -gt 30 ] && echo 30 || echo $SLEEP_BASE)
+
+        echo "PROGRESS: Attempt $i/$RETRIES (${ELAPSED}s elapsed) — ROSAControlPlane still deleting, retrying in ${SLEEP_TIME}s..." | tee -a "$LOGFILE"
         if [ "$i" -eq "$RETRIES" ]; then break; fi
-        SLEEP_TIME=$((MIN(30, 2**((i-1)/20))))
         sleep "$SLEEP_TIME"
       done
       TOTAL_ELAPSED=$(($(date +%s) - START_TIME))
@@ -296,9 +308,14 @@
           fi
           echo "WARNING: oc get failed unexpectedly (rc=$RC): $OUTPUT" | tee -a "$LOGFILE"
         fi
-        echo "PROGRESS: Final check attempt $i/$RCP_FINAL_RETRIES (${ELAPSED}s elapsed) — retrying in $((MIN(30, 2**((i-1)/20))))s..." | tee -a "$LOGFILE"
+
+        # Calculate sleep time with proper ternary operator (no MIN function in bash)
+        EXPONENT=$(echo "scale=0; ($i - 1) / 20" | bc 2>/dev/null || echo 0)
+        SLEEP_BASE=$((2 ** EXPONENT))
+        SLEEP_TIME=$([ $SLEEP_BASE -gt 30 ] && echo 30 || echo $SLEEP_BASE)
+
+        echo "PROGRESS: Final check attempt $i/$RCP_FINAL_RETRIES (${ELAPSED}s elapsed) — retrying in ${SLEEP_TIME}s..." | tee -a "$LOGFILE"
         if [ "$i" -eq "$RCP_FINAL_RETRIES" ]; then break; fi
-        SLEEP_TIME=$((MIN(30, 2**((i-1)/20))))
         sleep "$SLEEP_TIME"
       done
       TOTAL_ELAPSED=$(($(date +%s) - START_TIME))
@@ -506,23 +523,33 @@
           fi
         fi
 
-        # Early-exit detection for ROSANetwork
+        # Early-exit detection for ROSANetwork (uses jq for robust JSON parsing)
         # Check if resource is stuck on finalizers or deletion (similar to CP checks)
-        RN_JSON=$(oc get rosanetwork "$NETWORK_NAME" -n "$NAMESPACE" -o json 2>/dev/null || echo '{}')
-        if echo "$RN_JSON" | grep -q '"deletionTimestamp"'; then
-          RN_DELETION_TS=$(echo "$RN_JSON" | grep -o '"deletionTimestamp":"[^"]*' | cut -d'"' -f4 | head -1)
-          RN_DELETION_EPOCH=$(date -d "$RN_DELETION_TS" +%s 2>/dev/null || echo 0)
+        RN_DELETION_TS=$(echo "$OUTPUT" | jq -r '.metadata.deletionTimestamp // empty' 2>/dev/null)
+        if [ -n "$RN_DELETION_TS" ]; then
+          # Parse timestamp robustly: handle both GNU date and BSD date
+          if date -d "$RN_DELETION_TS" +%s >/dev/null 2>&1; then
+            RN_DELETION_EPOCH=$(date -d "$RN_DELETION_TS" +%s)
+          else
+            # Fallback for BSD date (macOS): convert ISO 8601 to epoch
+            RN_DELETION_EPOCH=$(echo "$RN_DELETION_TS" | awk -F'[T:-]' '{print mktime($1 " " $2 " " $3 " " $4 " " $5 " " $6)}')
+          fi
           RN_AGE=$(($(date +%s) - RN_DELETION_EPOCH))
 
           # If ROSANetwork stuck >5 min with finalizers, unlikely to recover
-          if echo "$RN_JSON" | grep -q '"finalizers"' && [ "$RN_AGE" -gt 300 ]; then
+          RN_FINALIZERS=$(echo "$OUTPUT" | jq -r '.metadata.finalizers | length' 2>/dev/null)
+          if [ "$RN_FINALIZERS" -gt 0 ] && [ "$RN_AGE" -gt 300 ]; then
             echo "⚠️  ROSANetwork stuck on finalizer for ${RN_AGE}s — early exit" | tee -a "$LOGFILE"
             echo "#AGENT_CONTEXT: resource_name=$NETWORK_NAME status=stuck_on_finalizer age_seconds=$RN_AGE" | tee -a "$LOGFILE"
             exit 1
           fi
         fi
 
-        SLEEP_TIME=$((MIN(30, 2**((i-1)/20))))
+        # Calculate sleep time with proper ternary operator (no MIN function in bash)
+        EXPONENT=$(echo "scale=0; ($i - 1) / 20" | bc 2>/dev/null || echo 0)
+        SLEEP_BASE=$((2 ** EXPONENT))
+        SLEEP_TIME=$([ $SLEEP_BASE -gt 30 ] && echo 30 || echo $SLEEP_BASE)
+
         echo "PROGRESS: Attempt $i/$RETRIES (${ELAPSED}s elapsed) — ROSANetwork still deleting, retrying in ${SLEEP_TIME}s..." | tee -a "$LOGFILE"
         sleep "$SLEEP_TIME"
       done
@@ -551,7 +578,12 @@
         fi
         echo "WARNING: oc get failed unexpectedly (rc=$RC): $OUTPUT" | tee -a "$LOGFILE"
       fi
-      SLEEP_TIME=$((MIN(30, 2**((i-1)/20))))
+
+      # Calculate sleep time with proper ternary operator (no MIN function in bash)
+      EXPONENT=$(echo "scale=0; ($i - 1) / 20" | bc 2>/dev/null || echo 0)
+      SLEEP_BASE=$((2 ** EXPONENT))
+      SLEEP_TIME=$([ $SLEEP_BASE -gt 30 ] && echo 30 || echo $SLEEP_BASE)
+
       echo "PROGRESS: Final check attempt $i/$FINAL_RETRIES (${ELAPSED}s elapsed) — retrying in ${SLEEP_TIME}s..." | tee -a "$LOGFILE"
       sleep "$SLEEP_TIME"
     done
@@ -746,10 +778,16 @@
         echo "WARNING: oc get failed unexpectedly (rc=$RC): $OUTPUT" | tee -a "$LOGFILE"
       fi
 
-      # Early-exit detection: RoleConfig typically deletes fast, if stuck >5 min it's stuck
-      if echo "$OUTPUT" | grep -q '"deletionTimestamp"'; then
-        RRC_DELETION_TS=$(echo "$OUTPUT" | grep -o '"deletionTimestamp":"[^"]*' | cut -d'"' -f4)
-        RRC_DELETION_EPOCH=$(date -d "$RRC_DELETION_TS" +%s 2>/dev/null || echo 0)
+      # Early-exit detection: RoleConfig typically deletes fast, if stuck >5 min it's stuck (uses jq for robust parsing)
+      RRC_DELETION_TS=$(echo "$OUTPUT" | jq -r '.metadata.deletionTimestamp // empty' 2>/dev/null)
+      if [ -n "$RRC_DELETION_TS" ]; then
+        # Parse timestamp robustly: handle both GNU date and BSD date
+        if date -d "$RRC_DELETION_TS" +%s >/dev/null 2>&1; then
+          RRC_DELETION_EPOCH=$(date -d "$RRC_DELETION_TS" +%s)
+        else
+          # Fallback for BSD date (macOS): convert ISO 8601 to epoch
+          RRC_DELETION_EPOCH=$(echo "$RRC_DELETION_TS" | awk -F'[T:-]' '{print mktime($1 " " $2 " " $3 " " $4 " " $5 " " $6)}')
+        fi
         RRC_AGE=$(($(date +%s) - RRC_DELETION_EPOCH))
 
         # RoleConfig usually deletes in <1 min; if stuck >5 min, something's wrong
@@ -760,14 +798,19 @@
         fi
 
         # Check for DELETE_FAILED phase
-        if echo "$OUTPUT" | grep -q '"phase":"DELETE_FAILED"'; then
+        RRC_PHASE=$(echo "$OUTPUT" | jq -r '.status.phase // empty' 2>/dev/null)
+        if [ "$RRC_PHASE" = "DELETE_FAILED" ]; then
           echo "⚠️  ROSARoleConfig in DELETE_FAILED phase — early exit" | tee -a "$LOGFILE"
           echo "#AGENT_CONTEXT: resource_name=$ROLE_CONFIG_NAME status=delete_failed_phase" | tee -a "$LOGFILE"
           exit 1
         fi
       fi
 
-      SLEEP_TIME=$((MIN(30, 2**((i-1)/20))))
+      # Calculate sleep time with proper ternary operator (no MIN function in bash)
+      EXPONENT=$(echo "scale=0; ($i - 1) / 20" | bc 2>/dev/null || echo 0)
+      SLEEP_BASE=$((2 ** EXPONENT))
+      SLEEP_TIME=$([ $SLEEP_BASE -gt 30 ] && echo 30 || echo $SLEEP_BASE)
+
       echo "PROGRESS: Attempt $i/$RETRIES (${ELAPSED}s elapsed) — ROSARoleConfig still deleting, retrying in ${SLEEP_TIME}s..." | tee -a "$LOGFILE"
       sleep "$SLEEP_TIME"
     done
@@ -801,7 +844,12 @@
         fi
         echo "WARNING: oc get failed unexpectedly (rc=$RC): $OUTPUT" | tee -a "$LOGFILE"
       fi
-      SLEEP_TIME=$((MIN(30, 2**((i-1)/20))))
+
+      # Calculate sleep time with proper ternary operator (no MIN function in bash)
+      EXPONENT=$(echo "scale=0; ($i - 1) / 20" | bc 2>/dev/null || echo 0)
+      SLEEP_BASE=$((2 ** EXPONENT))
+      SLEEP_TIME=$([ $SLEEP_BASE -gt 30 ] && echo 30 || echo $SLEEP_BASE)
+
       echo "PROGRESS: Final check attempt $i/$FINAL_RETRIES (${ELAPSED}s elapsed) — retrying in ${SLEEP_TIME}s..." | tee -a "$LOGFILE"
       sleep "$SLEEP_TIME"
     done
