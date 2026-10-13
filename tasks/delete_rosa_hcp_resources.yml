@@ -241,35 +241,32 @@ try:
 except:
   print(0)
 " 2>/dev/null || echo 0)
-          AGE=$(($(date +%s) - DELETION_EPOCH))
 
-          # If stuck deleting for >20 min, it's likely unrecoverable
-          if [ "$AGE" -gt 1200 ]; then
-            STUCK_COUNTER=$((STUCK_COUNTER + 1))
-            if [ $STUCK_COUNTER -ge 3 ]; then
-              echo "⚠️  ROSAControlPlane stuck in deletion for ${AGE}s (3 consecutive checks) — early exit" | tee -a "$LOGFILE"
-              echo "#AGENT_CONTEXT: resource_name=$CLUSTER_NAME status=stuck_deleting age_seconds=$AGE" | tee -a "$LOGFILE"
+          # Only check age thresholds if timestamp parsing succeeded (DELETION_EPOCH > 0)
+          # If parsing failed, DELETION_EPOCH=0 would give false positive AGE (~56 years)
+          if [ -n "$DELETION_EPOCH" ] && [ "$DELETION_EPOCH" -gt 0 ]; then
+            AGE=$(($(date +%s) - DELETION_EPOCH))
+
+            # If stuck deleting for >20 min, it's likely unrecoverable
+            if [ "$AGE" -gt 1200 ]; then
+              STUCK_COUNTER=$((STUCK_COUNTER + 1))
+              if [ $STUCK_COUNTER -ge 3 ]; then
+                echo "⚠️  ROSAControlPlane stuck in deletion for ${AGE}s (3 consecutive checks) — early exit" | tee -a "$LOGFILE"
+                echo "#AGENT_CONTEXT: resource_name=$CLUSTER_NAME status=stuck_deleting age_seconds=$AGE" | tee -a "$LOGFILE"
+                exit 1
+              fi
+            else
+              STUCK_COUNTER=0  # Reset counter if age is now acceptable
+            fi
+
+            # Check for stuck on finalizer (resource exists but has finalizers preventing deletion)
+            FINALIZERS=$(echo "$OUTPUT" | jq -r '.metadata.finalizers | length' 2>/dev/null)
+            if [ "$FINALIZERS" -gt 0 ] && [ "$AGE" -gt 300 ]; then
+              echo "⚠️  ROSAControlPlane stuck on finalizer for ${AGE}s — likely needs manual intervention, early exit" | tee -a "$LOGFILE"
+              echo "#AGENT_CONTEXT: resource_name=$CLUSTER_NAME status=stuck_on_finalizer age_seconds=$AGE" | tee -a "$LOGFILE"
               exit 1
             fi
-          else
-            STUCK_COUNTER=0  # Reset counter if age is now acceptable
-          fi
-
-          # Check for terminal failure phase
-          PHASE=$(echo "$OUTPUT" | jq -r '.status.phase // empty' 2>/dev/null)
-          if [ "$PHASE" = "DELETE_FAILED" ]; then
-            echo "⚠️  ROSAControlPlane in DELETE_FAILED phase — unrecoverable, early exit" | tee -a "$LOGFILE"
-            echo "#AGENT_CONTEXT: resource_name=$CLUSTER_NAME status=delete_failed_phase" | tee -a "$LOGFILE"
-            exit 1
-          fi
-
-          # Check for stuck on finalizer (resource exists but has finalizers preventing deletion)
-          FINALIZERS=$(echo "$OUTPUT" | jq -r '.metadata.finalizers | length' 2>/dev/null)
-          if [ "$FINALIZERS" -gt 0 ] && [ "$AGE" -gt 300 ]; then
-            echo "⚠️  ROSAControlPlane stuck on finalizer for ${AGE}s — likely needs manual intervention, early exit" | tee -a "$LOGFILE"
-            echo "#AGENT_CONTEXT: resource_name=$CLUSTER_NAME status=stuck_on_finalizer age_seconds=$AGE" | tee -a "$LOGFILE"
-            exit 1
-          fi
+          fi  # End of age threshold checks (only if DELETION_EPOCH > 0)
         fi
 
         # Calculate sleep time with proper ternary operator (no MIN function in bash)
@@ -542,15 +539,19 @@ try:
 except:
   print(0)
 " 2>/dev/null || echo 0)
-          RN_AGE=$(($(date +%s) - RN_DELETION_EPOCH))
 
-          # If ROSANetwork stuck >5 min with finalizers, unlikely to recover
-          RN_FINALIZERS=$(echo "$OUTPUT" | jq -r '.metadata.finalizers | length' 2>/dev/null)
-          if [ "$RN_FINALIZERS" -gt 0 ] && [ "$RN_AGE" -gt 300 ]; then
-            echo "⚠️  ROSANetwork stuck on finalizer for ${RN_AGE}s — early exit" | tee -a "$LOGFILE"
-            echo "#AGENT_CONTEXT: resource_name=$NETWORK_NAME status=stuck_on_finalizer age_seconds=$RN_AGE" | tee -a "$LOGFILE"
-            exit 1
-          fi
+          # Only check age thresholds if timestamp parsing succeeded (RN_DELETION_EPOCH > 0)
+          if [ -n "$RN_DELETION_EPOCH" ] && [ "$RN_DELETION_EPOCH" -gt 0 ]; then
+            RN_AGE=$(($(date +%s) - RN_DELETION_EPOCH))
+
+            # If ROSANetwork stuck >5 min with finalizers, unlikely to recover
+            RN_FINALIZERS=$(echo "$OUTPUT" | jq -r '.metadata.finalizers | length' 2>/dev/null)
+            if [ "$RN_FINALIZERS" -gt 0 ] && [ "$RN_AGE" -gt 300 ]; then
+              echo "⚠️  ROSANetwork stuck on finalizer for ${RN_AGE}s — early exit" | tee -a "$LOGFILE"
+              echo "#AGENT_CONTEXT: resource_name=$NETWORK_NAME status=stuck_on_finalizer age_seconds=$RN_AGE" | tee -a "$LOGFILE"
+              exit 1
+            fi
+          fi  # End of age threshold checks (only if RN_DELETION_EPOCH > 0)
         fi
 
         # Calculate sleep time with proper ternary operator (no MIN function in bash)
@@ -800,22 +801,26 @@ try:
 except:
   print(0)
 " 2>/dev/null || echo 0)
-        RRC_AGE=$(($(date +%s) - RRC_DELETION_EPOCH))
 
-        # RoleConfig usually deletes in <1 min; if stuck >5 min, something's wrong
-        if [ "$RRC_AGE" -gt 300 ]; then
-          echo "⚠️  ROSARoleConfig stuck deleting for ${RRC_AGE}s (typical: <1 min) — early exit" | tee -a "$LOGFILE"
-          echo "#AGENT_CONTEXT: resource_name=$ROLE_CONFIG_NAME status=stuck_deleting age_seconds=$RRC_AGE" | tee -a "$LOGFILE"
-          exit 1
-        fi
+        # Only check age thresholds if timestamp parsing succeeded (RRC_DELETION_EPOCH > 0)
+        if [ -n "$RRC_DELETION_EPOCH" ] && [ "$RRC_DELETION_EPOCH" -gt 0 ]; then
+          RRC_AGE=$(($(date +%s) - RRC_DELETION_EPOCH))
 
-        # Check for DELETE_FAILED phase
-        RRC_PHASE=$(echo "$OUTPUT" | jq -r '.status.phase // empty' 2>/dev/null)
-        if [ "$RRC_PHASE" = "DELETE_FAILED" ]; then
-          echo "⚠️  ROSARoleConfig in DELETE_FAILED phase — early exit" | tee -a "$LOGFILE"
-          echo "#AGENT_CONTEXT: resource_name=$ROLE_CONFIG_NAME status=delete_failed_phase" | tee -a "$LOGFILE"
-          exit 1
-        fi
+          # RoleConfig usually deletes in <1 min; if stuck >5 min, something's wrong
+          if [ "$RRC_AGE" -gt 300 ]; then
+            echo "⚠️  ROSARoleConfig stuck deleting for ${RRC_AGE}s (typical: <1 min) — early exit" | tee -a "$LOGFILE"
+            echo "#AGENT_CONTEXT: resource_name=$ROLE_CONFIG_NAME status=stuck_deleting age_seconds=$RRC_AGE" | tee -a "$LOGFILE"
+            exit 1
+          fi
+
+          # Check for DELETE_FAILED phase
+          RRC_PHASE=$(echo "$OUTPUT" | jq -r '.status.phase // empty' 2>/dev/null)
+          if [ "$RRC_PHASE" = "DELETE_FAILED" ]; then
+            echo "⚠️  ROSARoleConfig in DELETE_FAILED phase — early exit" | tee -a "$LOGFILE"
+            echo "#AGENT_CONTEXT: resource_name=$ROLE_CONFIG_NAME status=delete_failed_phase" | tee -a "$LOGFILE"
+            exit 1
+          fi
+        fi  # End of age threshold checks (only if RRC_DELETION_EPOCH > 0)
       fi
 
       # Calculate sleep time with proper ternary operator (no MIN function in bash)
