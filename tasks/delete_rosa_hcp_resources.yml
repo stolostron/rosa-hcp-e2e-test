@@ -197,8 +197,9 @@
   when: resources_to_delete | length == 0
 
 - name: Emit agent context for ROSAControlPlane deletion wait
-  shell: |
-    echo "#AGENT_CONTEXT: resource_name=$CLUSTER_NAME namespace=$NAMESPACE resource_type=rosacontrolplane" | tee -a "$LOGFILE"
+  ansible.builtin.shell:
+    cmd: |
+      echo "#AGENT_CONTEXT: resource_name=$CLUSTER_NAME namespace=$NAMESPACE resource_type=rosacontrolplane" | tee -a "$LOGFILE"
   environment:
     LOGFILE: "{{ agent_monitor_log }}"
     CLUSTER_NAME: "{{ cluster_name }}"
@@ -206,69 +207,77 @@
   changed_when: false
   when:
     - wait_for_deletion | bool
-    - "'not-found' not in rcp_exists.stdout"
+    - "'__NOTFOUND__' not in rcp_exists.stdout"
+    - not (delete_all.skipped | default(true))
 
 - name: Wait for ROSAControlPlane deletion to complete
-  shell: |
-    for i in $(seq 1 $RETRIES); do
-      OUTPUT=$(oc get rosacontrolplane "$CLUSTER_NAME" -n "$NAMESPACE" 2>&1)
-      RC=$?
-      if [ $RC -ne 0 ]; then
-        if echo "$OUTPUT" | grep -qi "not found\|NotFound\|no resources found"; then
-          echo "ROSAControlPlane deleted successfully" | tee -a "$LOGFILE"
-          exit 0
+  ansible.builtin.shell:
+    cmd: |
+      for i in $(seq 1 $RETRIES); do
+        OUTPUT=$(oc get rosacontrolplane "$CLUSTER_NAME" -n "$NAMESPACE" 2>&1)
+        RC=$?
+        if [ $RC -ne 0 ]; then
+          if echo "$OUTPUT" | grep -qi "not found\|NotFound\|no resources found"; then
+            echo "ROSAControlPlane deleted successfully" | tee -a "$LOGFILE"
+            exit 0
+          fi
+          echo "WARNING: oc get failed unexpectedly (rc=$RC): $OUTPUT" | tee -a "$LOGFILE"
         fi
-        echo "WARNING: oc get failed unexpectedly (rc=$RC): $OUTPUT" | tee -a "$LOGFILE"
-      fi
-      echo "FAILED - RETRYING: [localhost]: Wait for rosacontrolplane $CLUSTER_NAME deletion to complete ($((RETRIES - i)) retries left)." | tee -a "$LOGFILE"
-      sleep 10
-    done
-    echo "Timed out waiting for ROSAControlPlane deletion" | tee -a "$LOGFILE"
-    exit 1
+        echo "FAILED - RETRYING: [localhost]: Wait for rosacontrolplane $CLUSTER_NAME deletion to complete ($((RETRIES - i)) retries left)." | tee -a "$LOGFILE"
+        if [ "$i" -eq "$RETRIES" ]; then break; fi
+        sleep 10
+      done
+      echo "Timed out waiting for ROSAControlPlane deletion" | tee -a "$LOGFILE"
+      exit 1
   environment:
     LOGFILE: "{{ agent_monitor_log }}"
-    RETRIES: "{{ (rosacontrolplane_timeout | default(deletion_timeout) | int / 10) | int }}"
+    RETRIES: "{{ [(rosacontrolplane_timeout | default(deletion_timeout) | int / 10) | int, 1] | max }}"
     CLUSTER_NAME: "{{ cluster_name }}"
     NAMESPACE: "{{ rosa_hcp_namespace }}"
   register: wait_rcp
   failed_when: false
+  changed_when: false
   when:
     - wait_for_deletion | bool
-    - "'not-found' not in rcp_exists.stdout"
+    - "'__NOTFOUND__' not in rcp_exists.stdout"
+    - not (delete_all.skipped | default(true))
 
 - name: Final check - verify ROSAControlPlane is actually gone
-  shell: |
-    for i in $(seq 1 18); do
-      OUTPUT=$(oc get rosacontrolplane "$CLUSTER_NAME" -n "$NAMESPACE" 2>&1)
-      RC=$?
-      if [ $RC -ne 0 ]; then
-        if echo "$OUTPUT" | grep -qi "not found\|NotFound\|no resources found"; then
-          echo "ROSAControlPlane confirmed deleted" | tee -a "$LOGFILE"
-          exit 0
+  ansible.builtin.shell:
+    cmd: |
+      for i in $(seq 1 $RCP_FINAL_RETRIES); do
+        OUTPUT=$(oc get rosacontrolplane "$CLUSTER_NAME" -n "$NAMESPACE" 2>&1)
+        RC=$?
+        if [ $RC -ne 0 ]; then
+          if echo "$OUTPUT" | grep -qi "not found\|NotFound\|no resources found"; then
+            echo "ROSAControlPlane confirmed deleted" | tee -a "$LOGFILE"
+            exit 0
+          fi
+          echo "WARNING: oc get failed unexpectedly (rc=$RC): $OUTPUT" | tee -a "$LOGFILE"
         fi
-        echo "WARNING: oc get failed unexpectedly (rc=$RC): $OUTPUT" | tee -a "$LOGFILE"
-      fi
-      echo "FAILED - RETRYING: [localhost]: Final check rosacontrolplane $CLUSTER_NAME deletion ($((18 - i)) retries left)." | tee -a "$LOGFILE"
-      sleep 10
-    done
-    echo "ROSAControlPlane still exists after final check" | tee -a "$LOGFILE"
-    exit 1
+        echo "FAILED - RETRYING: [localhost]: Final check rosacontrolplane $CLUSTER_NAME deletion ($(($RCP_FINAL_RETRIES - i)) retries left)." | tee -a "$LOGFILE"
+        if [ "$i" -eq "$RCP_FINAL_RETRIES" ]; then break; fi
+        sleep 10
+      done
+      echo "ROSAControlPlane still exists after final check" | tee -a "$LOGFILE"
+      exit 1
   environment:
     LOGFILE: "{{ agent_monitor_log }}"
     CLUSTER_NAME: "{{ cluster_name }}"
     NAMESPACE: "{{ rosa_hcp_namespace }}"
+    RCP_FINAL_RETRIES: "{{ [(rosacontrolplane_final_check_retries | default(180) | int / 10) | int, 1] | max }}"
   register: final_rcp_check
   failed_when: false
   changed_when: false
   when:
     - wait_for_deletion | bool
-    - "'not-found' not in rcp_exists.stdout"
-    - wait_rcp.rc != 0
+    - "'__NOTFOUND__' not in rcp_exists.stdout"
+    - (wait_rcp.rc | default(1)) != 0
 
 - name: Display ROSAControlPlane deletion result
-  debug:
+  ansible.builtin.debug:
     msg: |
-      {% if wait_rcp.rc == 0 or (final_rcp_check.rc | default(1)) == 0 %}
+      {% if (wait_rcp | default({'rc': -1})).rc == 0 or (final_rcp_check | default({'rc': -1})).rc == 0 %}
       ✅ ROSAControlPlane successfully deleted: {{ cluster_name }}
       {% else %}
       ⚠️  ROSAControlPlane still exists (may still be deleting): {{ cluster_name }}
@@ -276,7 +285,7 @@
       {% endif %}
   when:
     - wait_for_deletion | bool
-    - "'not-found' not in rcp_exists.stdout"
+    - "'__NOTFOUND__' not in rcp_exists.stdout"
 
 - name: Warn if ROSAControlPlane still exists after all retries
   set_fact:
@@ -302,8 +311,12 @@
     - (feature_security_groups_enabled | default(false) | bool) or (created_security_group_id is defined)
 
 - name: Delete ROSANetwork (after ROSAControlPlane deletion completes)
-  shell: |
-    oc delete rosanetwork {{ discovered_rosa_network_name }} -n {{ rosa_hcp_namespace }} --wait=false
+  ansible.builtin.shell:
+    cmd: |
+      oc delete rosanetwork "$NETWORK_NAME" -n "$NAMESPACE" --wait=false
+  environment:
+    NETWORK_NAME: "{{ discovered_rosa_network_name }}"
+    NAMESPACE: "{{ rosa_hcp_namespace }}"
   register: delete_rn
   failed_when: false
   when:
@@ -311,8 +324,11 @@
     - discovered_rosa_network_name != 'not-found'
 
 - name: Delete ManagedCluster (if exists)
-  shell: |
-    oc delete managedcluster {{ cluster_name }} --wait=false
+  ansible.builtin.shell:
+    cmd: |
+      oc delete managedcluster "$CLUSTER_NAME" --wait=false
+  environment:
+    CLUSTER_NAME: "{{ cluster_name }}"
   register: delete_mc
   failed_when: false
   ignore_errors: true
@@ -727,16 +743,16 @@
       • Core Cluster: {{ '✅ Deleted' if delete_all is defined and delete_all.rc == 0 else '⏳ Deletion initiated' }}
       {% endif %}
       {% if 'not-found' not in rcp_exists.stdout %}
-      • ROSAControlPlane: {{ '✅ Deleted' if (wait_for_deletion and (wait_rcp.rc == 0 or (final_rcp_check.rc | default(1)) == 0)) else '⏳ Deletion initiated' }}
+      • ROSAControlPlane: {{ '✅ Deleted' if (wait_for_deletion and ((wait_rcp | default({'rc': -1})).rc == 0 or (final_rcp_check | default({'rc': -1})).rc == 0)) else '⏳ Deletion initiated' }}
       {% endif %}
       {% if 'not-found' not in rmp_exists.stdout %}
       • ROSAMachinePool: ✅ Auto-deleted (cascade)
       {% endif %}
       {% if delete_network | bool and discovered_rosa_network_name != 'not-found' %}
-      • ROSANetwork: {{ '✅ Deleted' if (wait_for_deletion and (wait_rn.rc == 0 or (final_rn_check.rc | default(1)) == 0)) else '⏳ Deletion initiated' }}
+      • ROSANetwork: {{ '✅ Deleted' if (wait_for_deletion and ((wait_rn | default({'rc': -1})).rc == 0 or (final_rn_check | default({'rc': -1})).rc == 0)) else '⏳ Deletion initiated' }}
       {% endif %}
       {% if delete_roles | bool and discovered_rosa_role_config_name != 'not-found' %}
-      • ROSARoleConfig: {{ '✅ Deleted' if (wait_for_deletion and (wait_rrc.rc == 0 or (final_rrc_check.rc | default(1)) == 0)) else '⏳ Deletion initiated' }}
+      • ROSARoleConfig: {{ '✅ Deleted' if (wait_for_deletion and ((wait_rrc | default({'rc': -1})).rc == 0 or (final_rrc_check | default({'rc': -1})).rc == 0)) else '⏳ Deletion initiated' }}
       {% endif %}
 
 - name: Display deletion summary
