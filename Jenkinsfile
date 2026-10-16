@@ -94,6 +94,7 @@ pipeline {
         CAPI_AWS_SECRET_ACCESS_KEY = credentials('CAPI_AWS_SECRET_ACCESS_KEY')
     }
     parameters {
+        // ========== Environment & Auth ==========
         string(name:'OCP_HUB_API_URL', defaultValue: '', description: 'Hub OCP API url')
         string(name:'OCP_HUB_CLUSTER_USER', defaultValue: 'kubeadmin', description: 'Hub OCP username')
         password(name:'OCP_HUB_CLUSTER_PASSWORD', defaultValue: '', description: 'Hub cluster password')
@@ -103,10 +104,37 @@ pipeline {
         password(name:'OCM_CLIENT_SECRET', defaultValue: '', description: 'OCM client secret for ROSA provisioning')
         string(name:'TEST_GIT_BRANCH', defaultValue: 'main', description: 'Git branch to test (for reference/documentation)')
         string(name:'NAME_PREFIX', defaultValue: 'jnk', description: 'Cluster name prefix (creates {prefix}-rosa-hcp)')
-        string(name:'CLUSTER_FEATURES', defaultValue: '', description: 'Comma-separated cluster features (e.g., no-cni,external-oidc,autoscaler). Run --list-features to see options.')
-        string(name:'FEATURE_GROUP', defaultValue: '', description: 'Feature group preset (e.g., day1-basic, day1-combo, day1-security, day1-networking). Run --list-groups to see options. Can be combined with CLUSTER_FEATURES.')
-        string(name:'EXTRA_FEATURE_VARS', defaultValue: '', description: 'Additional feature vars as key=value pairs separated by spaces (e.g., root_volume_size=500)')
-        string(name:'ETCD_KMS_ARN', defaultValue: '', description: 'AWS KMS ARN for etcd encryption (required when CLUSTER_FEATURES includes etcd-kms)')
+
+        // ========== Test Mode Selection ==========
+        choice(name: 'TEST_MODE', choices: ['scenario', 'custom-features'], defaultValue: 'scenario',
+               description: 'Scenario presets (recommended) or custom feature combinations (advanced users)')
+
+        // ========== Scenario Mode ==========
+        choice(name: 'TEST_SCENARIO', choices: [
+            'day1-basic',
+            'day1-combo',
+            'day1-networking',
+            'day1-security',
+            'day2-machinepool'
+        ], description: 'Test scenario preset (active only if TEST_MODE=scenario)')
+
+        // ========== Common Vars (both modes) ==========
+        string(name: 'OPENSHIFT_VERSION', defaultValue: '5.0.0-rc.6',
+               description: 'OpenShift version (e.g., 5.0.0-rc.6, 4.22.0)')
+
+        string(name: 'CHANNEL_GROUP', defaultValue: 'candidate',
+               description: 'Channel group (stable, fast, candidate)')
+
+        string(name: 'EXTRA_VARS_SCENARIO', defaultValue: '',
+               description: 'Additional Ansible vars for scenario mode (e.g., root_volume_size=500 etcd_encryption_kms_arn=arn:aws:...)')
+
+        // ========== Custom Features Mode (backward compatible) ==========
+        string(name:'CLUSTER_FEATURES', defaultValue: '', description: '[CUSTOM MODE] Comma-separated cluster features (e.g., no-cni,external-oidc,autoscaler). Run --list-features to see options.')
+        string(name:'FEATURE_GROUP', defaultValue: '', description: '[CUSTOM MODE] Feature group preset (e.g., day1-basic, day1-combo, day1-security, day1-networking). Run --list-groups to see options. Can be combined with CLUSTER_FEATURES.')
+        string(name:'EXTRA_FEATURE_VARS', defaultValue: '', description: '[CUSTOM MODE] Additional feature vars as key=value pairs separated by spaces (e.g., root_volume_size=500)')
+        string(name:'ETCD_KMS_ARN', defaultValue: '', description: '[CUSTOM MODE] AWS KMS ARN for etcd encryption (required when CLUSTER_FEATURES includes etcd-kms)')
+
+        // ========== Test Control Flow ==========
         booleanParam(name:'RUN_UPGRADE_TESTS', defaultValue: false, description: 'Run control plane and machine pool upgrade tests after provisioning')
         booleanParam(name:'CLEANUP_AFTER_TEST', defaultValue: true, description: 'Delete cluster after successful provisioning (E2E test)')
         booleanParam(name:'RESTORE_HYPERSHIFT', defaultValue: true, description: 'Restore HyperShift and disable CAPI/CAPA after test (uncheck to leave CAPI enabled)')
@@ -197,6 +225,7 @@ pipeline {
             when {
                 allOf {
                     expression { currentBuild.result != 'FAILURE' }
+                    expression { params.TEST_MODE == 'custom-features' }
                     expression { params.CLUSTER_FEATURES?.trim() || params.FEATURE_GROUP?.trim() }
                 }
             }
@@ -256,6 +285,11 @@ pipeline {
                 OCP_HUB_API_URL = "${params.OCP_HUB_API_URL}"
                 OCP_HUB_CLUSTER_USER = "${params.OCP_HUB_CLUSTER_USER}"
                 MCE_NAMESPACE = "${params.MCE_NAMESPACE}"
+                TEST_MODE = "${params.TEST_MODE}"
+                TEST_SCENARIO = "${params.TEST_SCENARIO}"
+                OPENSHIFT_VERSION = "${params.OPENSHIFT_VERSION}"
+                CHANNEL_GROUP = "${params.CHANNEL_GROUP}"
+                EXTRA_VARS_SCENARIO = "${params.EXTRA_VARS_SCENARIO}"
                 CLUSTER_FEATURES = "${params.CLUSTER_FEATURES}"
                 FEATURE_GROUP = "${params.FEATURE_GROUP}"
                 EXTRA_FEATURE_VARS = "${params.EXTRA_FEATURE_VARS}"
@@ -274,40 +308,58 @@ pipeline {
                             env.PROVISION_STARTED = 'true'
                             sh '''
                                 cd rosa-hcp-e2e-test
-                                # Build feature flags from CLUSTER_FEATURES parameter
-                                FEATURE_FLAGS=""
-                                if [ -n "${CLUSTER_FEATURES}" ]; then
-                                    for feature in $(echo "${CLUSTER_FEATURES}" | tr ',' ' '); do
-                                        FEATURE_FLAGS="${FEATURE_FLAGS} --feature ${feature}"
-                                    done
+
+                                # Dual-mode: route based on TEST_MODE
+                                if [ "${TEST_MODE}" = "scenario" ]; then
+                                    # ========== SCENARIO MODE ==========
+                                    ./run-test-suite.py --scenario "${TEST_SCENARIO}" --format junit -v --ai-agent \
+                                      -e openshift_version="${OPENSHIFT_VERSION}" \
+                                      -e channel_group="${CHANNEL_GROUP}" \
+                                      -e OCP_HUB_API_URL="${OCP_HUB_API_URL}" \
+                                      -e OCP_HUB_CLUSTER_USER="${OCP_HUB_CLUSTER_USER}" \
+                                      -e MCE_NAMESPACE="${MCE_NAMESPACE}" \
+                                      -e AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID}" \
+                                      -e AWS_REGION="us-west-2" \
+                                      -e name_prefix="${NAME_PREFIX}" \
+                                      -e OCM_API_URL="${OCM_API_URL}" \
+                                      ${EXTRA_VARS_SCENARIO}
+                                else
+                                    # ========== CUSTOM FEATURES MODE ==========
+                                    # Build feature flags from CLUSTER_FEATURES parameter
+                                    FEATURE_FLAGS=""
+                                    if [ -n "${CLUSTER_FEATURES}" ]; then
+                                        for feature in $(echo "${CLUSTER_FEATURES}" | tr ',' ' '); do
+                                            FEATURE_FLAGS="${FEATURE_FLAGS} --feature ${feature}"
+                                        done
+                                    fi
+                                    # Build feature group flag from FEATURE_GROUP parameter
+                                    GROUP_FLAG=""
+                                    if [ -n "${FEATURE_GROUP}" ]; then
+                                        GROUP_FLAG="--feature-group ${FEATURE_GROUP}"
+                                    fi
+                                    # Build extra vars from EXTRA_FEATURE_VARS and ETCD_KMS_ARN
+                                    EXTRA_VARS_CUSTOM=""
+                                    if [ -n "${ETCD_KMS_ARN}" ]; then
+                                        EXTRA_VARS_CUSTOM="${EXTRA_VARS_CUSTOM} -e etcd_encryption_kms_arn=${ETCD_KMS_ARN}"
+                                    fi
+                                    if [ -n "${EXTRA_FEATURE_VARS}" ]; then
+                                        for var in ${EXTRA_FEATURE_VARS}; do
+                                            EXTRA_VARS_CUSTOM="${EXTRA_VARS_CUSTOM} -e \"${var}\""
+                                        done
+                                    fi
+
+                                    ./run-test-suite.py 20-rosa-hcp-provision --format junit -v --ai-agent ${FEATURE_FLAGS} ${GROUP_FLAG} \
+                                      -e OCP_HUB_API_URL="${OCP_HUB_API_URL}" \
+                                      -e OCP_HUB_CLUSTER_USER="${OCP_HUB_CLUSTER_USER}" \
+                                      -e MCE_NAMESPACE="${MCE_NAMESPACE}" \
+                                      -e AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID}" \
+                                      -e AWS_REGION="us-west-2" \
+                                      -e name_prefix="${NAME_PREFIX}" \
+                                      -e OCM_API_URL="${OCM_API_URL}" \
+                                      -e openshift_version="${OPENSHIFT_VERSION}" \
+                                      -e channel_group="${CHANNEL_GROUP}" \
+                                      ${EXTRA_VARS_CUSTOM}
                                 fi
-                                # Build feature group flag from FEATURE_GROUP parameter
-                                GROUP_FLAG=""
-                                if [ -n "${FEATURE_GROUP}" ]; then
-                                    GROUP_FLAG="--feature-group ${FEATURE_GROUP}"
-                                fi
-                                # Build extra vars from EXTRA_FEATURE_VARS and ETCD_KMS_ARN
-                                EXTRA_VARS=""
-                                if [ -n "${ETCD_KMS_ARN}" ]; then
-                                    EXTRA_VARS="${EXTRA_VARS} -e etcd_encryption_kms_arn=${ETCD_KMS_ARN}"
-                                fi
-                                if [ -n "${EXTRA_FEATURE_VARS}" ]; then
-                                    for var in ${EXTRA_FEATURE_VARS}; do
-                                        EXTRA_VARS="${EXTRA_VARS} -e \"${var}\""
-                                    done
-                                fi
-                                # Execute the ROSA HCP provisioning test suite with maximum verbosity
-                                # Pass Jenkins parameters and credentials as Ansible extra vars
-                                # AI agents enabled for autonomous issue detection and remediation
-                                ./run-test-suite.py 20-rosa-hcp-provision --format junit -v --ai-agent ${FEATURE_FLAGS} ${GROUP_FLAG} \
-                                  -e OCP_HUB_API_URL="${OCP_HUB_API_URL}" \
-                                  -e OCP_HUB_CLUSTER_USER="${OCP_HUB_CLUSTER_USER}" \
-                                  -e MCE_NAMESPACE="${MCE_NAMESPACE}" \
-                                  -e AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID}" \
-                                  -e AWS_REGION="us-west-2" \
-                                  -e name_prefix="${NAME_PREFIX}" \
-                                  -e OCM_API_URL="${OCM_API_URL}" \
-                                  ${EXTRA_VARS}
                             '''
                         }
                         // Archive provisioning test results, including AI agent logs
@@ -325,13 +377,20 @@ pipeline {
             when {
                 allOf {
                     expression { currentBuild.result != 'FAILURE' }
-                    expression { params.CLUSTER_FEATURES?.trim() || params.FEATURE_GROUP?.trim() }
+                    // Scenario mode always verifies (scenario includes verify stage in registry)
+                    // Custom mode only verifies if features are explicitly set
+                    expression {
+                        (params.TEST_MODE == 'scenario') ||
+                        (params.CLUSTER_FEATURES?.trim() || params.FEATURE_GROUP?.trim())
+                    }
                 }
             }
             environment {
                 OCP_HUB_API_URL = "${params.OCP_HUB_API_URL}"
                 OCP_HUB_CLUSTER_USER = "${params.OCP_HUB_CLUSTER_USER}"
                 MCE_NAMESPACE = "${params.MCE_NAMESPACE}"
+                TEST_MODE = "${params.TEST_MODE}"
+                TEST_SCENARIO = "${params.TEST_SCENARIO}"
                 CLUSTER_FEATURES = "${params.CLUSTER_FEATURES}"
                 FEATURE_GROUP = "${params.FEATURE_GROUP}"
                 EXTRA_FEATURE_VARS = "${params.EXTRA_FEATURE_VARS}"
