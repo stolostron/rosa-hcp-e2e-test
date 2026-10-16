@@ -15,7 +15,7 @@
 | 3 | day1-combo | rs3 | 5.0.0-rc.6 | 6 features | ✅ | ✅ | ✅ | ⏳ | ✅ PASS | 20m 15s |
 | 4 | day1-networking | rs4 | 5.0.0-rc.6 | 4 features | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | TBD |
 | 5 | day1-combo | rs5 | 5.0.0-rc.6 | 6 features | ✅ | ✅ | ✅ | ❌ Bug | ✅ PASS | 21m 6s |
-| 6 | day2-machinepool | rs6 | 5.0.0-rc.6 | TBD | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | TBD |
+| 6 | day2-machinepool | rs6 | 5.0.0-rc.6 | Machine pools (multi-zone) | ✅ | ✅ | ⏳ | ⏳ | ⏳ IN PROGRESS | ~30m+ |
 
 **Current Status:** 3/6 tests passed ✅ (rs4 in progress)
 
