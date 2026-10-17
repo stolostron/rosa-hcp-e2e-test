@@ -1,0 +1,454 @@
+apiVersion: v1
+items:
+- apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+  kind: ROSAMachinePool
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"infrastructure.cluster.x-k8s.io/v1beta2","kind":"ROSAMachinePool","metadata":{"annotations":{},"labels":{"automation.acm.redhat.com/network-automation":"true","automation.acm.redhat.com/role-automation":"true","automation.acm.redhat.com/test-case":"ACM-21174-ControlPlane"},"name":"how5-rosa-hcp","namespace":"ns-rosa-hcp"},"spec":{"instanceType":"m5.xlarge","nodePoolName":"how5-np","version":"5.0.0-rc.5"}}
+    creationTimestamp: "2026-10-13T17:28:19Z"
+    finalizers:
+    - rosamachinepools.infrastructure.cluster.x-k8s.io
+    generation: 10
+    labels:
+      automation.acm.redhat.com/network-automation: "true"
+      automation.acm.redhat.com/role-automation: "true"
+      automation.acm.redhat.com/test-case: ACM-21174-ControlPlane
+      cluster.x-k8s.io/cluster-name: how5-rosa-hcp
+    name: how5-rosa-hcp
+    namespace: ns-rosa-hcp
+    ownerReferences:
+    - apiVersion: cluster.x-k8s.io/v1beta2
+      blockOwnerDeletion: true
+      controller: true
+      kind: MachinePool
+      name: how5-rosa-hcp
+      uid: 78ff5ff1-41b8-4743-96e5-6212fe17c674
+    resourceVersion: "14058071"
+    uid: 5aa8d135-1707-4d0e-9d34-ffeab6a8eb52
+  spec:
+    autoRepair: true
+    availabilityZone: us-west-2a
+    instanceType: m5.xlarge
+    nodeDrainGracePeriod: 0s
+    nodePoolName: how5-np
+    updateConfig:
+      rollingUpdate:
+        maxSurge: 1
+        maxUnavailable: 0
+    version: 5.0.0-rc.5
+  status:
+    conditions:
+    - lastTransitionTime: "2026-10-14T20:38:30Z"
+      message: 0 of 1 completed
+      reason: ReconciliationFailed
+      severity: Error
+      status: "False"
+      type: Ready
+    - lastTransitionTime: "2026-10-13T17:28:19Z"
+      reason: NotPaused
+      status: "False"
+      type: Paused
+    - lastTransitionTime: "2026-10-16T13:24:49Z"
+      message: 'failed to create ROSAMachinePool: status is 404, identifier is ''404'',
+        code is ''CLUSTERS-MGMT-404'', at ''2026-10-16T13:24:49Z'' and operation identifier
+        is ''a177689f-69af-47c6-8ed3-f013e30bcb92'': Cluster ''2tele9rv15fsh0k59apuh8gd1q4okt6m''
+        not found'
+      reason: ReconciliationFailed
+      severity: Error
+      status: "False"
+      type: RosaMachinePoolReady
+    - lastTransitionTime: "2026-10-13T17:42:46Z"
+      reason: upgraded
+      severity: Info
+      status: "False"
+      type: RosaMachinePoolUpgrading
+    id: how5-np
+    ready: true
+    replicas: 0
+- apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+  kind: ROSAMachinePool
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"infrastructure.cluster.x-k8s.io/v1beta2","kind":"ROSAMachinePool","metadata":{"annotations":{},"labels":{"automation.acm.redhat.com/network-automation":"true","automation.acm.redhat.com/role-automation":"true","automation.acm.redhat.com/test-case":"ACM-21174-ControlPlane"},"name":"how8-rosa-hcp","namespace":"ns-rosa-hcp"},"spec":{"instanceType":"m5.xlarge","nodePoolName":"how8-np","version":"5.0.0-rc.5"}}
+    creationTimestamp: "2026-10-13T20:36:12Z"
+    finalizers:
+    - rosamachinepools.infrastructure.cluster.x-k8s.io
+    generation: 5
+    labels:
+      automation.acm.redhat.com/network-automation: "true"
+      automation.acm.redhat.com/role-automation: "true"
+      automation.acm.redhat.com/test-case: ACM-21174-ControlPlane
+      cluster.x-k8s.io/cluster-name: how8-rosa-hcp
+    name: how8-rosa-hcp
+    namespace: ns-rosa-hcp
+    ownerReferences:
+    - apiVersion: cluster.x-k8s.io/v1beta2
+      blockOwnerDeletion: true
+      controller: true
+      kind: MachinePool
+      name: how8-rosa-hcp
+      uid: b9bcaaf5-2ef9-4845-8072-450e41b3021d
+    resourceVersion: "14058067"
+    uid: 0f635920-e432-46c6-a725-b97bf55b551b
+  spec:
+    autoRepair: true
+    availabilityZone: us-west-2b
+    instanceType: m5.xlarge
+    nodeDrainGracePeriod: 0s
+    nodePoolName: how8-np
+    providerIDList:
+    - aws:///us-west-2b/i-04e178da0424caedc
+    - aws:///us-west-2b/i-026d33242c57d44aa
+    updateConfig:
+      rollingUpdate:
+        maxSurge: 1
+        maxUnavailable: 0
+    version: 5.0.0-rc.5
+  status:
+    conditions:
+    - lastTransitionTime: "2026-10-14T15:10:42Z"
+      message: 0 of 1 completed
+      reason: ReconciliationFailed
+      severity: Error
+      status: "False"
+      type: Ready
+    - lastTransitionTime: "2026-10-13T20:36:13Z"
+      reason: NotPaused
+      status: "False"
+      type: Paused
+    - lastTransitionTime: "2026-10-16T13:24:49Z"
+      message: 'failed to create ROSAMachinePool: status is 404, identifier is ''404'',
+        code is ''CLUSTERS-MGMT-404'', at ''2026-10-16T13:24:49Z'' and operation identifier
+        is ''17ab0557-ccbc-4fd9-95bf-2cc6a74dc4d0'': Cluster ''2tel9nvt02trtkmskcrs6dpdq88sm2im''
+        not found'
+      reason: ReconciliationFailed
+      severity: Error
+      status: "False"
+      type: RosaMachinePoolReady
+    - lastTransitionTime: "2026-10-13T22:05:10Z"
+      reason: upgraded
+      severity: Info
+      status: "False"
+      type: RosaMachinePoolUpgrading
+    id: how8-np
+    ready: true
+    replicas: 2
+- apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+  kind: ROSAMachinePool
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"infrastructure.cluster.x-k8s.io/v1beta2","kind":"ROSAMachinePool","metadata":{"annotations":{},"labels":{"automation.acm.redhat.com/network-automation":"true","automation.acm.redhat.com/role-automation":"true","automation.acm.redhat.com/test-case":"ACM-21174-ControlPlane"},"name":"test-rosa-hcp-292479","namespace":"ns-rosa-hcp"},"spec":{"instanceType":"m5.xlarge","nodePoolName":"test-np","version":"5.0.0-rc.0"}}
+    creationTimestamp: "2026-10-13T15:55:24Z"
+    finalizers:
+    - rosamachinepools.infrastructure.cluster.x-k8s.io
+    generation: 122
+    labels:
+      automation.acm.redhat.com/network-automation: "true"
+      automation.acm.redhat.com/role-automation: "true"
+      automation.acm.redhat.com/test-case: ACM-21174-ControlPlane
+      cluster.x-k8s.io/cluster-name: test-rosa-hcp-292479
+    name: test-rosa-hcp-292479
+    namespace: ns-rosa-hcp
+    ownerReferences:
+    - apiVersion: cluster.x-k8s.io/v1beta2
+      blockOwnerDeletion: true
+      controller: true
+      kind: MachinePool
+      name: test-rosa-hcp-292479
+      uid: 54df855b-a697-4b9c-853f-aeae94d5b08f
+    resourceVersion: "14056724"
+    uid: 83f5b455-6af2-4a0b-8c2c-ca3996c99f86
+  spec:
+    autoRepair: true
+    availabilityZone: us-west-2b
+    instanceType: m5.xlarge
+    nodeDrainGracePeriod: 0s
+    nodePoolName: test-np
+    providerIDList:
+    - aws:///us-west-2b/i-0edc6676895a95010
+    - aws:///us-west-2b/i-06281ca0d190347bf
+    updateConfig:
+      rollingUpdate:
+        maxSurge: 1
+        maxUnavailable: 0
+    version: 5.0.0-rc.0
+  status:
+    conditions:
+    - lastTransitionTime: "2026-10-16T11:42:30Z"
+      message: 0 of 1 completed
+      reason: ReconciliationFailed
+      severity: Error
+      status: "False"
+      type: Ready
+    - lastTransitionTime: "2026-10-13T15:55:24Z"
+      reason: NotPaused
+      status: "False"
+      type: Paused
+    - lastTransitionTime: "2026-10-16T11:42:30Z"
+      message: 'failed to update ROSAMachinePool: status is 429, identifier is ''429''
+        and code is ''CLUSTERS-MGMT-429'': Too Many Requests'
+      reason: ReconciliationFailed
+      severity: Error
+      status: "False"
+      type: RosaMachinePoolReady
+    - lastTransitionTime: "2026-10-13T16:15:42Z"
+      reason: upgraded
+      severity: Info
+      status: "False"
+      type: RosaMachinePoolUpgrading
+    id: test-np
+    ready: true
+    replicas: 0
+- apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+  kind: ROSAMachinePool
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"infrastructure.cluster.x-k8s.io/v1beta2","kind":"ROSAMachinePool","metadata":{"annotations":{},"labels":{"automation.acm.redhat.com/network-automation":"true","automation.acm.redhat.com/role-automation":"true","automation.acm.redhat.com/test-case":"ACM-21174-ControlPlane"},"name":"test-rosa-hcp-744131","namespace":"ns-rosa-hcp"},"spec":{"instanceType":"m5.xlarge","nodePoolName":"test-np","version":"4.22.9"}}
+    creationTimestamp: "2026-10-16T12:51:05Z"
+    generation: 1
+    labels:
+      automation.acm.redhat.com/network-automation: "true"
+      automation.acm.redhat.com/role-automation: "true"
+      automation.acm.redhat.com/test-case: ACM-21174-ControlPlane
+      cluster.x-k8s.io/cluster-name: test-rosa-hcp-744131
+    name: test-rosa-hcp-744131
+    namespace: ns-rosa-hcp
+    ownerReferences:
+    - apiVersion: cluster.x-k8s.io/v1beta2
+      blockOwnerDeletion: true
+      controller: true
+      kind: MachinePool
+      name: test-rosa-hcp-744131
+      uid: fd3afd24-a1b5-4a4e-8072-de77b72fe2c1
+    resourceVersion: "14023589"
+    uid: dd805390-31cc-4f62-8d7d-13cc5ed17351
+  spec:
+    autoRepair: true
+    instanceType: m5.xlarge
+    nodeDrainGracePeriod: 0s
+    nodePoolName: test-np
+    updateConfig:
+      rollingUpdate:
+        maxSurge: 1
+        maxUnavailable: 0
+    version: 4.22.9
+  status:
+    conditions:
+    - lastTransitionTime: "2026-10-16T12:51:05Z"
+      reason: NotPaused
+      status: "False"
+      type: Paused
+    - lastTransitionTime: "2026-10-16T12:51:05Z"
+      reason: WaitingForRosaControlPlane
+      severity: Info
+      status: "False"
+      type: RosaMachinePoolReady
+    ready: false
+- apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+  kind: ROSAMachinePool
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"infrastructure.cluster.x-k8s.io/v1beta2","kind":"ROSAMachinePool","metadata":{"annotations":{},"labels":{"automation.acm.redhat.com/network-automation":"true","automation.acm.redhat.com/role-automation":"true","automation.acm.redhat.com/test-case":"ACM-21174-ControlPlane"},"name":"uit-rosa-hcp","namespace":"ns-rosa-hcp"},"spec":{"instanceType":"m5.xlarge","nodePoolName":"uit-np","version":"5.0.0-rc.0"}}
+    creationTimestamp: "2026-10-13T08:13:04Z"
+    finalizers:
+    - rosamachinepools.infrastructure.cluster.x-k8s.io
+    generation: 6
+    labels:
+      automation.acm.redhat.com/network-automation: "true"
+      automation.acm.redhat.com/role-automation: "true"
+      automation.acm.redhat.com/test-case: ACM-21174-ControlPlane
+      cluster.x-k8s.io/cluster-name: uit-rosa-hcp
+    name: uit-rosa-hcp
+    namespace: ns-rosa-hcp
+    ownerReferences:
+    - apiVersion: cluster.x-k8s.io/v1beta2
+      blockOwnerDeletion: true
+      controller: true
+      kind: MachinePool
+      name: uit-rosa-hcp
+      uid: aac9e2b3-46d0-4f66-a7e5-4d40c7333e45
+    resourceVersion: "14058068"
+    uid: 747beb12-4498-45d1-bb14-c0b7e1c13890
+  spec:
+    autoRepair: true
+    availabilityZone: us-west-2b
+    instanceType: m5.xlarge
+    nodeDrainGracePeriod: 0s
+    nodePoolName: uit-np
+    providerIDList:
+    - aws:///us-west-2b/i-04c4168f69774ef68
+    - aws:///us-west-2b/i-03d0595f323e56767
+    updateConfig:
+      rollingUpdate:
+        maxSurge: 1
+        maxUnavailable: 0
+    version: 5.0.0-rc.0
+  status:
+    conditions:
+    - lastTransitionTime: "2026-10-15T15:37:02Z"
+      message: 0 of 1 completed
+      reason: ReconciliationFailed
+      severity: Error
+      status: "False"
+      type: Ready
+    - lastTransitionTime: "2026-10-13T08:13:04Z"
+      reason: NotPaused
+      status: "False"
+      type: Paused
+    - lastTransitionTime: "2026-10-16T13:24:49Z"
+      message: 'failed to create ROSAMachinePool: status is 404, identifier is ''404'',
+        code is ''CLUSTERS-MGMT-404'', at ''2026-10-16T13:24:49Z'' and operation identifier
+        is ''1662944e-b5fb-46e7-bc9d-39b9f4830834'': Cluster ''2tek3jii7fgjqnddutohrubqer6le2jm''
+        not found'
+      reason: ReconciliationFailed
+      severity: Error
+      status: "False"
+      type: RosaMachinePoolReady
+    - lastTransitionTime: "2026-10-13T08:42:15Z"
+      reason: upgraded
+      severity: Info
+      status: "False"
+      type: RosaMachinePoolUpgrading
+    id: uit-np
+    ready: true
+    replicas: 0
+- apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+  kind: ROSAMachinePool
+  metadata:
+    creationTimestamp: "2026-10-13T08:38:53Z"
+    finalizers:
+    - rosamachinepools.infrastructure.cluster.x-k8s.io
+    generation: 5
+    labels:
+      cluster.x-k8s.io/cluster-name: uit-rosa-hcp
+    name: workers-0
+    namespace: ns-rosa-hcp
+    ownerReferences:
+    - apiVersion: cluster.x-k8s.io/v1beta2
+      blockOwnerDeletion: true
+      controller: true
+      kind: MachinePool
+      name: workers-0
+      uid: 1df59fed-1683-423f-a6c0-cbd61797a572
+    resourceVersion: "14058069"
+    uid: 8570d833-f26e-46b5-9209-70dfb84b1779
+  spec:
+    autoRepair: true
+    autoscaling:
+      maxReplicas: 1
+      minReplicas: 1
+    availabilityZone: us-west-2a
+    instanceType: m5.xlarge
+    nodeDrainGracePeriod: 0s
+    nodePoolName: workers-0
+    providerIDList:
+    - aws:///us-west-2a/i-0c07164f02fab2d87
+    subnet: subnet-028e10050ab44766c
+    updateConfig:
+      rollingUpdate:
+        maxSurge: 1
+        maxUnavailable: 0
+    version: 5.0.0-rc.0
+    volumeSize: 300
+  status:
+    conditions:
+    - lastTransitionTime: "2026-10-15T19:19:37Z"
+      message: 0 of 1 completed
+      reason: ReconciliationFailed
+      severity: Error
+      status: "False"
+      type: Ready
+    - lastTransitionTime: "2026-10-13T08:38:54Z"
+      reason: NotPaused
+      status: "False"
+      type: Paused
+    - lastTransitionTime: "2026-10-16T13:24:49Z"
+      message: 'failed to create ROSAMachinePool: status is 404, identifier is ''404'',
+        code is ''CLUSTERS-MGMT-404'', at ''2026-10-16T13:24:49Z'' and operation identifier
+        is ''c31c7a52-d361-415c-a04b-0bf275235f85'': Cluster ''2tek3jii7fgjqnddutohrubqer6le2jm''
+        not found'
+      reason: ReconciliationFailed
+      severity: Error
+      status: "False"
+      type: RosaMachinePoolReady
+    - lastTransitionTime: "2026-10-13T08:38:54Z"
+      reason: upgraded
+      severity: Info
+      status: "False"
+      type: RosaMachinePoolUpgrading
+    ready: true
+    replicas: 0
+- apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+  kind: ROSAMachinePool
+  metadata:
+    creationTimestamp: "2026-10-13T08:38:54Z"
+    finalizers:
+    - rosamachinepools.infrastructure.cluster.x-k8s.io
+    generation: 5
+    labels:
+      cluster.x-k8s.io/cluster-name: uit-rosa-hcp
+    name: workers-1
+    namespace: ns-rosa-hcp
+    ownerReferences:
+    - apiVersion: cluster.x-k8s.io/v1beta2
+      blockOwnerDeletion: true
+      controller: true
+      kind: MachinePool
+      name: workers-1
+      uid: 6f5872e0-424e-4ae4-82b7-995cb8d828ca
+    resourceVersion: "14058070"
+    uid: 422c5fbb-9986-412e-87b0-98c7a3b44f78
+  spec:
+    autoRepair: true
+    autoscaling:
+      maxReplicas: 1
+      minReplicas: 1
+    availabilityZone: us-west-2b
+    instanceType: m5.xlarge
+    nodeDrainGracePeriod: 0s
+    nodePoolName: workers-1
+    providerIDList:
+    - aws:///us-west-2b/i-0a631936f5723b780
+    subnet: subnet-03ea582dd2f53d10b
+    updateConfig:
+      rollingUpdate:
+        maxSurge: 1
+        maxUnavailable: 0
+    version: 5.0.0-rc.0
+    volumeSize: 300
+  status:
+    conditions:
+    - lastTransitionTime: "2026-10-15T19:19:37Z"
+      message: 0 of 1 completed
+      reason: ReconciliationFailed
+      severity: Error
+      status: "False"
+      type: Ready
+    - lastTransitionTime: "2026-10-13T08:38:54Z"
+      reason: NotPaused
+      status: "False"
+      type: Paused
+    - lastTransitionTime: "2026-10-16T13:24:49Z"
+      message: 'failed to create ROSAMachinePool: status is 404, identifier is ''404'',
+        code is ''CLUSTERS-MGMT-404'', at ''2026-10-16T13:24:49Z'' and operation identifier
+        is ''80382851-b100-47eb-9419-ca0ce1611db5'': Cluster ''2tek3jii7fgjqnddutohrubqer6le2jm''
+        not found'
+      reason: ReconciliationFailed
+      severity: Error
+      status: "False"
+      type: RosaMachinePoolReady
+    - lastTransitionTime: "2026-10-13T08:38:54Z"
+      reason: upgraded
+      severity: Info
+      status: "False"
+      type: RosaMachinePoolUpgrading
+    ready: true
+    replicas: 0
+kind: List
+metadata:
+  resourceVersion: ""
