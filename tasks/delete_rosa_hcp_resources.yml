@@ -197,8 +197,9 @@
   when: resources_to_delete | length == 0
 
 - name: Emit agent context for ROSAControlPlane deletion wait
-  shell: |
-    echo "#AGENT_CONTEXT: resource_name=$CLUSTER_NAME namespace=$NAMESPACE resource_type=rosacontrolplane" | tee -a "$LOGFILE"
+  ansible.builtin.shell:
+    cmd: |
+      echo "#AGENT_CONTEXT: resource_name=$CLUSTER_NAME namespace=$NAMESPACE resource_type=rosacontrolplane" | tee -a "$LOGFILE"
   environment:
     LOGFILE: "{{ agent_monitor_log }}"
     CLUSTER_NAME: "{{ cluster_name }}"
@@ -206,77 +207,142 @@
   changed_when: false
   when:
     - wait_for_deletion | bool
-    - "'not-found' not in rcp_exists.stdout"
+    - "'__NOTFOUND__' not in rcp_exists.stdout"
+    - not (delete_all.skipped | default(true))
 
 - name: Wait for ROSAControlPlane deletion to complete
-  shell: |
-    for i in $(seq 1 $RETRIES); do
-      OUTPUT=$(oc get rosacontrolplane "$CLUSTER_NAME" -n "$NAMESPACE" 2>&1)
-      RC=$?
-      if [ $RC -ne 0 ]; then
-        if echo "$OUTPUT" | grep -qi "not found\|NotFound\|no resources found"; then
-          echo "ROSAControlPlane deleted successfully" | tee -a "$LOGFILE"
-          exit 0
+  ansible.builtin.shell:
+    cmd: |
+      START_TIME=$(date +%s)
+      STUCK_COUNTER=0
+      for i in $(seq 1 $RETRIES); do
+        OUTPUT=$(oc get rosacontrolplane "$CLUSTER_NAME" -n "$NAMESPACE" -o json 2>&1)
+        RC=$?
+        ELAPSED=$(($(date +%s) - START_TIME))
+        if [ $RC -ne 0 ]; then
+          if echo "$OUTPUT" | grep -qi "not found\|NotFound\|no resources found"; then
+            echo "✓ ROSAControlPlane deleted successfully (attempt $i/$RETRIES, ${ELAPSED}s elapsed)" | tee -a "$LOGFILE"
+            exit 0
+          fi
+          echo "WARNING: oc get failed unexpectedly (rc=$RC): $OUTPUT" | tee -a "$LOGFILE"
         fi
-        echo "WARNING: oc get failed unexpectedly (rc=$RC): $OUTPUT" | tee -a "$LOGFILE"
-      fi
-      echo "FAILED - RETRYING: [localhost]: Wait for rosacontrolplane $CLUSTER_NAME deletion to complete ($((RETRIES - i)) retries left)." | tee -a "$LOGFILE"
-      sleep 10
-    done
-    echo "Timed out waiting for ROSAControlPlane deletion" | tee -a "$LOGFILE"
-    exit 1
+
+        # Early-exit detection: check for stuck conditions before retrying (uses jq for robust JSON parsing)
+        DELETION_TS=$(echo "$OUTPUT" | jq -r '.metadata.deletionTimestamp // empty' 2>/dev/null)
+        if [ -n "$DELETION_TS" ]; then
+          # Parse timestamp robustly: handle both GNU date and BSD date using Python (portable)
+          DELETION_EPOCH=$(echo "$DELETION_TS" | python3 -c "import sys,datetime; dt=datetime.datetime.fromisoformat(sys.stdin.read().strip().replace('Z','+00:00')); print(int(dt.timestamp()))" 2>/dev/null || echo 0)
+
+          # Only check age thresholds if timestamp parsing succeeded (DELETION_EPOCH > 0)
+          # If parsing failed, DELETION_EPOCH=0 would give false positive AGE (~56 years)
+          if [ -n "$DELETION_EPOCH" ] && [ "$DELETION_EPOCH" -gt 0 ]; then
+            AGE=$(($(date +%s) - DELETION_EPOCH))
+
+            # If stuck deleting for >20 min, it's likely unrecoverable
+            if [ "$AGE" -gt 1200 ]; then
+              STUCK_COUNTER=$((STUCK_COUNTER + 1))
+              if [ $STUCK_COUNTER -ge 3 ]; then
+                echo "⚠️  ROSAControlPlane stuck in deletion for ${AGE}s (3 consecutive checks) — early exit" | tee -a "$LOGFILE"
+                echo "#AGENT_CONTEXT: resource_name=$CLUSTER_NAME status=stuck_deleting age_seconds=$AGE" | tee -a "$LOGFILE"
+                exit 1
+              fi
+            else
+              STUCK_COUNTER=0  # Reset counter if age is now acceptable
+            fi
+
+            # Check for stuck on finalizer (resource exists but has finalizers preventing deletion)
+            FINALIZERS=$(echo "$OUTPUT" | jq -r '.metadata.finalizers | length' 2>/dev/null)
+            if [ "$FINALIZERS" -gt 0 ] && [ "$AGE" -gt 300 ]; then
+              echo "⚠️  ROSAControlPlane stuck on finalizer for ${AGE}s — likely needs manual intervention, early exit" | tee -a "$LOGFILE"
+              echo "#AGENT_CONTEXT: resource_name=$CLUSTER_NAME status=stuck_on_finalizer age_seconds=$AGE" | tee -a "$LOGFILE"
+              exit 1
+            fi
+          fi  # End of age threshold checks (only if DELETION_EPOCH > 0)
+        fi
+
+        # Calculate sleep time with proper ternary operator (no MIN function in bash)
+        EXPONENT=$(echo "scale=0; ($i - 1) / 20" | bc 2>/dev/null || echo 0)
+        SLEEP_BASE=$((2 ** EXPONENT))
+        SLEEP_TIME=$([ $SLEEP_BASE -gt 30 ] && echo 30 || echo $SLEEP_BASE)
+
+        echo "PROGRESS: Attempt $i/$RETRIES (${ELAPSED}s elapsed) — ROSAControlPlane still deleting, retrying in ${SLEEP_TIME}s..." | tee -a "$LOGFILE"
+        if [ "$i" -eq "$RETRIES" ]; then break; fi
+        sleep "$SLEEP_TIME"
+      done
+      TOTAL_ELAPSED=$(($(date +%s) - START_TIME))
+      echo "Timed out waiting for ROSAControlPlane deletion after ${TOTAL_ELAPSED}s ($RETRIES attempts)" | tee -a "$LOGFILE"
+      exit 1
   environment:
     LOGFILE: "{{ agent_monitor_log }}"
-    RETRIES: "{{ (rosacontrolplane_timeout | default(deletion_timeout) | int / 10) | int }}"
+    RETRIES: "{{ [(rosacontrolplane_timeout | default(deletion_timeout) | int / 10) | int, 1] | max }}"
     CLUSTER_NAME: "{{ cluster_name }}"
     NAMESPACE: "{{ rosa_hcp_namespace }}"
   register: wait_rcp
   failed_when: false
+  changed_when: false
   when:
     - wait_for_deletion | bool
-    - "'not-found' not in rcp_exists.stdout"
+    - "'__NOTFOUND__' not in rcp_exists.stdout"
+    - not (delete_all.skipped | default(true))
 
 - name: Final check - verify ROSAControlPlane is actually gone
-  shell: |
-    for i in $(seq 1 18); do
-      OUTPUT=$(oc get rosacontrolplane "$CLUSTER_NAME" -n "$NAMESPACE" 2>&1)
-      RC=$?
-      if [ $RC -ne 0 ]; then
-        if echo "$OUTPUT" | grep -qi "not found\|NotFound\|no resources found"; then
-          echo "ROSAControlPlane confirmed deleted" | tee -a "$LOGFILE"
-          exit 0
+  ansible.builtin.shell:
+    cmd: |
+      START_TIME=$(date +%s)
+      for i in $(seq 1 $RCP_FINAL_RETRIES); do
+        OUTPUT=$(oc get rosacontrolplane "$CLUSTER_NAME" -n "$NAMESPACE" 2>&1)
+        RC=$?
+        ELAPSED=$(($(date +%s) - START_TIME))
+        if [ $RC -ne 0 ]; then
+          if echo "$OUTPUT" | grep -qi "not found\|NotFound\|no resources found"; then
+            echo "✓ ROSAControlPlane confirmed deleted (final check attempt $i/$RCP_FINAL_RETRIES, ${ELAPSED}s elapsed)" | tee -a "$LOGFILE"
+            exit 0
+          fi
+          echo "WARNING: oc get failed unexpectedly (rc=$RC): $OUTPUT" | tee -a "$LOGFILE"
         fi
-        echo "WARNING: oc get failed unexpectedly (rc=$RC): $OUTPUT" | tee -a "$LOGFILE"
-      fi
-      echo "FAILED - RETRYING: [localhost]: Final check rosacontrolplane $CLUSTER_NAME deletion ($((18 - i)) retries left)." | tee -a "$LOGFILE"
-      sleep 10
-    done
-    echo "ROSAControlPlane still exists after final check" | tee -a "$LOGFILE"
-    exit 1
+
+        # Calculate sleep time with proper ternary operator (no MIN function in bash)
+        EXPONENT=$(echo "scale=0; ($i - 1) / 20" | bc 2>/dev/null || echo 0)
+        SLEEP_BASE=$((2 ** EXPONENT))
+        SLEEP_TIME=$([ $SLEEP_BASE -gt 30 ] && echo 30 || echo $SLEEP_BASE)
+
+        echo "PROGRESS: Final check attempt $i/$RCP_FINAL_RETRIES (${ELAPSED}s elapsed) — retrying in ${SLEEP_TIME}s..." | tee -a "$LOGFILE"
+        if [ "$i" -eq "$RCP_FINAL_RETRIES" ]; then break; fi
+        sleep "$SLEEP_TIME"
+      done
+      TOTAL_ELAPSED=$(($(date +%s) - START_TIME))
+      echo "ROSAControlPlane still exists after final check (${TOTAL_ELAPSED}s, $RCP_FINAL_RETRIES attempts)" | tee -a "$LOGFILE"
+      exit 1
   environment:
     LOGFILE: "{{ agent_monitor_log }}"
     CLUSTER_NAME: "{{ cluster_name }}"
     NAMESPACE: "{{ rosa_hcp_namespace }}"
+    RCP_FINAL_RETRIES: "{{ [(rosacontrolplane_final_check_retries | default(180) | int / 10) | int, 1] | max }}"
   register: final_rcp_check
   failed_when: false
   changed_when: false
   when:
     - wait_for_deletion | bool
-    - "'not-found' not in rcp_exists.stdout"
-    - wait_rcp.rc != 0
+    - "'__NOTFOUND__' not in rcp_exists.stdout"
+    - (wait_rcp | default({'rc': 1})).get('rc', 1) != 0
 
 - name: Display ROSAControlPlane deletion result
-  debug:
-    msg: |
-      {% if wait_rcp.rc == 0 or (final_rcp_check.rc | default(1)) == 0 %}
-      ✅ ROSAControlPlane successfully deleted: {{ cluster_name }}
-      {% else %}
-      ⚠️  ROSAControlPlane still exists (may still be deleting): {{ cluster_name }}
-      Check status: oc get rosacontrolplane {{ cluster_name }} -n {{ rosa_hcp_namespace }}
-      {% endif %}
+  ansible.builtin.debug:
+    msg: "✅ ROSAControlPlane successfully deleted: {{ cluster_name }}"
   when:
     - wait_for_deletion | bool
-    - "'not-found' not in rcp_exists.stdout"
+    - "'__NOTFOUND__' not in rcp_exists.stdout"
+    - "((wait_rcp is defined and (wait_rcp | default({'rc': 1})).get('rc', 1) == 0) or (final_rcp_check is defined and (final_rcp_check | default({'rc': 1})).get('rc', 1) == 0))"
+
+- name: Display ROSAControlPlane still exists warning
+  ansible.builtin.debug:
+    msg: |
+      ⚠️  ROSAControlPlane still exists (may still be deleting): {{ cluster_name }}
+      Check status: oc get rosacontrolplane {{ cluster_name }} -n {{ rosa_hcp_namespace }}
+  when:
+    - wait_for_deletion | bool
+    - "'__NOTFOUND__' not in rcp_exists.stdout"
+    - "not ((wait_rcp is defined and wait_rcp.rc == 0) or (final_rcp_check is defined and final_rcp_check.get('rc', 1) == 0))"
 
 - name: Warn if ROSAControlPlane still exists after all retries
   set_fact:
@@ -284,8 +350,8 @@
   when:
     - wait_for_deletion | bool
     - "'not-found' not in rcp_exists.stdout"
-    - wait_rcp.rc != 0
-    - (final_rcp_check.rc | default(1)) != 0
+    - (wait_rcp | default({'rc': 1})).get('rc', 1) != 0
+    - (final_rcp_check | default({'rc': 1})).get('rc', 1) != 0
 
 - name: Display ROSAControlPlane timeout warning
   debug:
@@ -302,8 +368,12 @@
     - (feature_security_groups_enabled | default(false) | bool) or (created_security_group_id is defined)
 
 - name: Delete ROSANetwork (after ROSAControlPlane deletion completes)
-  shell: |
-    oc delete rosanetwork {{ discovered_rosa_network_name }} -n {{ rosa_hcp_namespace }} --wait=false
+  ansible.builtin.shell:
+    cmd: |
+      oc delete rosanetwork "$NETWORK_NAME" -n "$NAMESPACE" --wait=false
+  environment:
+    NETWORK_NAME: "{{ discovered_rosa_network_name }}"
+    NAMESPACE: "{{ rosa_hcp_namespace }}"
   register: delete_rn
   failed_when: false
   when:
@@ -311,8 +381,11 @@
     - discovered_rosa_network_name != 'not-found'
 
 - name: Delete ManagedCluster (if exists)
-  shell: |
-    oc delete managedcluster {{ cluster_name }} --wait=false
+  ansible.builtin.shell:
+    cmd: |
+      oc delete managedcluster "$CLUSTER_NAME" --wait=false
+  environment:
+    CLUSTER_NAME: "{{ cluster_name }}"
   register: delete_mc
   failed_when: false
   ignore_errors: true
@@ -343,15 +416,17 @@
     NAMESPACE: "{{ rosa_hcp_namespace }}"
   ansible.builtin.shell:
     cmd: |
+      START_TIME=$(date +%s)
       ITERATION_COUNT=0
       MAX_CF_RETRIES=3
       CF_RETRY_COUNT=0
       for i in $(seq 1 $RETRIES); do
         OUTPUT=$(oc get rosanetwork "$NETWORK_NAME" -n "$NAMESPACE" 2>&1)
         RC=$?
+        ELAPSED=$(($(date +%s) - START_TIME))
         if [ $RC -ne 0 ]; then
           if echo "$OUTPUT" | grep -qi "not found\|NotFound\|no resources found"; then
-            echo "ROSANetwork deleted successfully" | tee -a "$LOGFILE"
+            echo "✓ ROSANetwork deleted successfully (attempt $i/$RETRIES, ${ELAPSED}s elapsed)" | tee -a "$LOGFILE"
             exit 0
           fi
           echo "WARNING: oc get failed unexpectedly (rc=$RC): $OUTPUT" | tee -a "$LOGFILE"
@@ -445,10 +520,37 @@
           fi
         fi
 
-        echo "FAILED - RETRYING: [localhost]: Wait for rosanetwork $NETWORK_NAME deletion to complete ($((RETRIES - i)) retries left)." | tee -a "$LOGFILE"
-        sleep 10
+        # Early-exit detection for ROSANetwork (uses jq for robust JSON parsing)
+        # Check if resource is stuck on finalizers or deletion (similar to CP checks)
+        RN_DELETION_TS=$(echo "$OUTPUT" | jq -r '.metadata.deletionTimestamp // empty' 2>/dev/null)
+        if [ -n "$RN_DELETION_TS" ]; then
+          # Parse timestamp robustly: handle both GNU date and BSD date using Python (portable)
+          RN_DELETION_EPOCH=$(echo "$RN_DELETION_TS" | python3 -c "import sys,datetime; dt=datetime.datetime.fromisoformat(sys.stdin.read().strip().replace('Z','+00:00')); print(int(dt.timestamp()))" 2>/dev/null || echo 0)
+
+          # Only check age thresholds if timestamp parsing succeeded (RN_DELETION_EPOCH > 0)
+          if [ -n "$RN_DELETION_EPOCH" ] && [ "$RN_DELETION_EPOCH" -gt 0 ]; then
+            RN_AGE=$(($(date +%s) - RN_DELETION_EPOCH))
+
+            # If ROSANetwork stuck >5 min with finalizers, unlikely to recover
+            RN_FINALIZERS=$(echo "$OUTPUT" | jq -r '.metadata.finalizers | length' 2>/dev/null)
+            if [ "$RN_FINALIZERS" -gt 0 ] && [ "$RN_AGE" -gt 300 ]; then
+              echo "⚠️  ROSANetwork stuck on finalizer for ${RN_AGE}s — early exit" | tee -a "$LOGFILE"
+              echo "#AGENT_CONTEXT: resource_name=$NETWORK_NAME status=stuck_on_finalizer age_seconds=$RN_AGE" | tee -a "$LOGFILE"
+              exit 1
+            fi
+          fi  # End of age threshold checks (only if RN_DELETION_EPOCH > 0)
+        fi
+
+        # Calculate sleep time with proper ternary operator (no MIN function in bash)
+        EXPONENT=$(echo "scale=0; ($i - 1) / 20" | bc 2>/dev/null || echo 0)
+        SLEEP_BASE=$((2 ** EXPONENT))
+        SLEEP_TIME=$([ $SLEEP_BASE -gt 30 ] && echo 30 || echo $SLEEP_BASE)
+
+        echo "PROGRESS: Attempt $i/$RETRIES (${ELAPSED}s elapsed) — ROSANetwork still deleting, retrying in ${SLEEP_TIME}s..." | tee -a "$LOGFILE"
+        sleep "$SLEEP_TIME"
       done
-      echo "Timed out waiting for ROSANetwork deletion" | tee -a "$LOGFILE"
+      TOTAL_ELAPSED=$(($(date +%s) - START_TIME))
+      echo "Timed out waiting for ROSANetwork deletion after ${TOTAL_ELAPSED}s ($RETRIES attempts)" | tee -a "$LOGFILE"
       exit 1
   register: wait_rn
   failed_when: false
@@ -459,20 +561,30 @@
 
 - name: Final check - verify ROSANetwork is actually gone
   shell: |
-    for i in $(seq 1 36); do
+    START_TIME=$(date +%s)
+    FINAL_RETRIES=36
+    for i in $(seq 1 $FINAL_RETRIES); do
       OUTPUT=$(oc get rosanetwork "$NETWORK_NAME" -n "$NAMESPACE" 2>&1)
       RC=$?
+      ELAPSED=$(($(date +%s) - START_TIME))
       if [ $RC -ne 0 ]; then
         if echo "$OUTPUT" | grep -qi "not found\|NotFound\|no resources found"; then
-          echo "ROSANetwork confirmed deleted" | tee -a "$LOGFILE"
+          echo "✓ ROSANetwork confirmed deleted (final check attempt $i/$FINAL_RETRIES, ${ELAPSED}s elapsed)" | tee -a "$LOGFILE"
           exit 0
         fi
         echo "WARNING: oc get failed unexpectedly (rc=$RC): $OUTPUT" | tee -a "$LOGFILE"
       fi
-      echo "FAILED - RETRYING: [localhost]: Final check rosanetwork $NETWORK_NAME deletion ($((36 - i)) retries left)." | tee -a "$LOGFILE"
-      sleep 10
+
+      # Calculate sleep time with proper ternary operator (no MIN function in bash)
+      EXPONENT=$(echo "scale=0; ($i - 1) / 20" | bc 2>/dev/null || echo 0)
+      SLEEP_BASE=$((2 ** EXPONENT))
+      SLEEP_TIME=$([ $SLEEP_BASE -gt 30 ] && echo 30 || echo $SLEEP_BASE)
+
+      echo "PROGRESS: Final check attempt $i/$FINAL_RETRIES (${ELAPSED}s elapsed) — retrying in ${SLEEP_TIME}s..." | tee -a "$LOGFILE"
+      sleep "$SLEEP_TIME"
     done
-    echo "ROSANetwork still exists after final check" | tee -a "$LOGFILE"
+    TOTAL_ELAPSED=$(($(date +%s) - START_TIME))
+    echo "ROSANetwork still exists after final check (${TOTAL_ELAPSED}s, $FINAL_RETRIES attempts)" | tee -a "$LOGFILE"
     exit 1
   environment:
     LOGFILE: "{{ agent_monitor_log }}"
@@ -485,21 +597,27 @@
     - wait_for_deletion | bool
     - delete_network | bool
     - discovered_rosa_network_name != 'not-found'
-    - wait_rn.rc != 0
+    - (wait_rn | default({'rc': 1})).get('rc', 1) != 0
 
 - name: Display ROSANetwork deletion result
   debug:
-    msg: |
-      {% if wait_rn.rc == 0 or (final_rn_check.rc | default(1)) == 0 %}
-      ✅ ROSANetwork successfully deleted: {{ discovered_rosa_network_name }}
-      {% else %}
-      ⚠️  ROSANetwork still exists (CloudFormation stack may still be deleting)
-      Check status: oc get rosanetwork {{ discovered_rosa_network_name }} -n {{ rosa_hcp_namespace }}
-      {% endif %}
+    msg: "✅ ROSANetwork successfully deleted: {{ discovered_rosa_network_name }}"
   when:
     - wait_for_deletion | bool
     - delete_network | bool
     - discovered_rosa_network_name != 'not-found'
+    - "wait_rn is defined and wait_rn.rc == 0 or final_rn_check is defined and final_rn_check.rc == 0"
+
+- name: Display ROSANetwork still exists warning
+  debug:
+    msg: |
+      ⚠️  ROSANetwork still exists (CloudFormation stack may still be deleting)
+      Check status: oc get rosanetwork {{ discovered_rosa_network_name }} -n {{ rosa_hcp_namespace }}
+  when:
+    - wait_for_deletion | bool
+    - delete_network | bool
+    - discovered_rosa_network_name != 'not-found'
+    - "not (wait_rn is defined and wait_rn.rc == 0 or final_rn_check is defined and final_rn_check.rc == 0)"
 
 - name: Warn if ROSANetwork still exists after all retries
   set_fact:
@@ -508,8 +626,8 @@
     - wait_for_deletion | bool
     - delete_network | bool
     - discovered_rosa_network_name != 'not-found'
-    - wait_rn.rc != 0
-    - (final_rn_check.rc | default(1)) != 0
+    - (wait_rn | default({'rc': 1})).get('rc', 1) != 0
+    - (final_rn_check | default({'rc': 1})).get('rc', 1) != 0
 
 - name: Display ROSANetwork timeout warning
   debug:
@@ -649,20 +767,56 @@
 
 - name: Wait for ROSARoleConfig deletion to complete
   shell: |
+    START_TIME=$(date +%s)
     for i in $(seq 1 $RETRIES); do
-      OUTPUT=$(oc get rosaroleconfig "$ROLE_CONFIG_NAME" -n "$NAMESPACE" 2>&1)
+      OUTPUT=$(oc get rosaroleconfig "$ROLE_CONFIG_NAME" -n "$NAMESPACE" -o json 2>&1)
       RC=$?
+      ELAPSED=$(($(date +%s) - START_TIME))
       if [ $RC -ne 0 ]; then
         if echo "$OUTPUT" | grep -qi "not found\|NotFound\|no resources found"; then
-          echo "ROSARoleConfig deleted successfully" | tee -a "$LOGFILE"
+          echo "✓ ROSARoleConfig deleted successfully (attempt $i/$RETRIES, ${ELAPSED}s elapsed)" | tee -a "$LOGFILE"
           exit 0
         fi
         echo "WARNING: oc get failed unexpectedly (rc=$RC): $OUTPUT" | tee -a "$LOGFILE"
       fi
-      echo "FAILED - RETRYING: [localhost]: Wait for rosaroleconfig $ROLE_CONFIG_NAME deletion to complete ($((RETRIES - i)) retries left)." | tee -a "$LOGFILE"
-      sleep 10
+
+      # Early-exit detection: RoleConfig typically deletes fast, if stuck >5 min it's stuck (uses jq for robust parsing)
+      RRC_DELETION_TS=$(echo "$OUTPUT" | jq -r '.metadata.deletionTimestamp // empty' 2>/dev/null)
+      if [ -n "$RRC_DELETION_TS" ]; then
+        # Parse timestamp robustly: handle both GNU date and BSD date using Python (portable)
+        RRC_DELETION_EPOCH=$(echo "$RRC_DELETION_TS" | python3 -c "import sys,datetime; dt=datetime.datetime.fromisoformat(sys.stdin.read().strip().replace('Z','+00:00')); print(int(dt.timestamp()))" 2>/dev/null || echo 0)
+
+        # Only check age thresholds if timestamp parsing succeeded (RRC_DELETION_EPOCH > 0)
+        if [ -n "$RRC_DELETION_EPOCH" ] && [ "$RRC_DELETION_EPOCH" -gt 0 ]; then
+          RRC_AGE=$(($(date +%s) - RRC_DELETION_EPOCH))
+
+          # RoleConfig usually deletes in <1 min; if stuck >5 min, something's wrong
+          if [ "$RRC_AGE" -gt 300 ]; then
+            echo "⚠️  ROSARoleConfig stuck deleting for ${RRC_AGE}s (typical: <1 min) — early exit" | tee -a "$LOGFILE"
+            echo "#AGENT_CONTEXT: resource_name=$ROLE_CONFIG_NAME status=stuck_deleting age_seconds=$RRC_AGE" | tee -a "$LOGFILE"
+            exit 1
+          fi
+
+          # Check for DELETE_FAILED phase
+          RRC_PHASE=$(echo "$OUTPUT" | jq -r '.status.phase // empty' 2>/dev/null)
+          if [ "$RRC_PHASE" = "DELETE_FAILED" ]; then
+            echo "⚠️  ROSARoleConfig in DELETE_FAILED phase — early exit" | tee -a "$LOGFILE"
+            echo "#AGENT_CONTEXT: resource_name=$ROLE_CONFIG_NAME status=delete_failed_phase" | tee -a "$LOGFILE"
+            exit 1
+          fi
+        fi  # End of age threshold checks (only if RRC_DELETION_EPOCH > 0)
+      fi
+
+      # Calculate sleep time with proper ternary operator (no MIN function in bash)
+      EXPONENT=$(echo "scale=0; ($i - 1) / 20" | bc 2>/dev/null || echo 0)
+      SLEEP_BASE=$((2 ** EXPONENT))
+      SLEEP_TIME=$([ $SLEEP_BASE -gt 30 ] && echo 30 || echo $SLEEP_BASE)
+
+      echo "PROGRESS: Attempt $i/$RETRIES (${ELAPSED}s elapsed) — ROSARoleConfig still deleting, retrying in ${SLEEP_TIME}s..." | tee -a "$LOGFILE"
+      sleep "$SLEEP_TIME"
     done
-    echo "Timed out waiting for ROSARoleConfig deletion" | tee -a "$LOGFILE"
+    TOTAL_ELAPSED=$(($(date +%s) - START_TIME))
+    echo "Timed out waiting for ROSARoleConfig deletion after ${TOTAL_ELAPSED}s ($RETRIES attempts)" | tee -a "$LOGFILE"
     exit 1
   environment:
     LOGFILE: "{{ agent_monitor_log }}"
@@ -678,20 +832,30 @@
 
 - name: Final check - verify ROSARoleConfig is actually gone
   shell: |
-    for i in $(seq 1 18); do
+    START_TIME=$(date +%s)
+    FINAL_RETRIES=18
+    for i in $(seq 1 $FINAL_RETRIES); do
       OUTPUT=$(oc get rosaroleconfig "$ROLE_CONFIG_NAME" -n "$NAMESPACE" 2>&1)
       RC=$?
+      ELAPSED=$(($(date +%s) - START_TIME))
       if [ $RC -ne 0 ]; then
         if echo "$OUTPUT" | grep -qi "not found\|NotFound\|no resources found"; then
-          echo "ROSARoleConfig confirmed deleted" | tee -a "$LOGFILE"
+          echo "✓ ROSARoleConfig confirmed deleted (final check attempt $i/$FINAL_RETRIES, ${ELAPSED}s elapsed)" | tee -a "$LOGFILE"
           exit 0
         fi
         echo "WARNING: oc get failed unexpectedly (rc=$RC): $OUTPUT" | tee -a "$LOGFILE"
       fi
-      echo "FAILED - RETRYING: [localhost]: Final check rosaroleconfig $ROLE_CONFIG_NAME deletion ($((18 - i)) retries left)." | tee -a "$LOGFILE"
-      sleep 10
+
+      # Calculate sleep time with proper ternary operator (no MIN function in bash)
+      EXPONENT=$(echo "scale=0; ($i - 1) / 20" | bc 2>/dev/null || echo 0)
+      SLEEP_BASE=$((2 ** EXPONENT))
+      SLEEP_TIME=$([ $SLEEP_BASE -gt 30 ] && echo 30 || echo $SLEEP_BASE)
+
+      echo "PROGRESS: Final check attempt $i/$FINAL_RETRIES (${ELAPSED}s elapsed) — retrying in ${SLEEP_TIME}s..." | tee -a "$LOGFILE"
+      sleep "$SLEEP_TIME"
     done
-    echo "ROSARoleConfig still exists after final check" | tee -a "$LOGFILE"
+    TOTAL_ELAPSED=$(($(date +%s) - START_TIME))
+    echo "ROSARoleConfig still exists after final check (${TOTAL_ELAPSED}s, $FINAL_RETRIES attempts)" | tee -a "$LOGFILE"
     exit 1
   environment:
     LOGFILE: "{{ agent_monitor_log }}"
@@ -704,21 +868,27 @@
     - wait_for_deletion | bool
     - delete_roles | bool
     - discovered_rosa_role_config_name != 'not-found'
-    - wait_rrc.rc != 0
+    - (wait_rrc | default({'rc': 1})).get('rc', 1) != 0
 
 - name: Display ROSARoleConfig deletion result
   debug:
-    msg: |
-      {% if wait_rrc.rc == 0 or (final_rrc_check.rc | default(1)) == 0 %}
-      ✅ ROSARoleConfig successfully deleted: {{ discovered_rosa_role_config_name }}
-      {% else %}
-      ⚠️  ROSARoleConfig still exists (IAM roles may still be deleting)
-      Check status: oc get rosaroleconfig {{ discovered_rosa_role_config_name }} -n {{ rosa_hcp_namespace }}
-      {% endif %}
+    msg: "✅ ROSARoleConfig successfully deleted: {{ discovered_rosa_role_config_name }}"
   when:
     - wait_for_deletion | bool
     - delete_roles | bool
     - discovered_rosa_role_config_name != 'not-found'
+    - "wait_rrc is defined and wait_rrc.rc == 0 or final_rrc_check is defined and final_rrc_check.rc == 0"
+
+- name: Display ROSARoleConfig still exists warning
+  debug:
+    msg: |
+      ⚠️  ROSARoleConfig still exists (IAM roles may still be deleting)
+      Check status: oc get rosaroleconfig {{ discovered_rosa_role_config_name }} -n {{ rosa_hcp_namespace }}
+  when:
+    - wait_for_deletion | bool
+    - delete_roles | bool
+    - discovered_rosa_role_config_name != 'not-found'
+    - "not (wait_rrc is defined and wait_rrc.rc == 0 or final_rrc_check is defined and final_rrc_check.rc == 0)"
 
 - name: Set deletion summary
   set_fact:
@@ -727,16 +897,16 @@
       • Core Cluster: {{ '✅ Deleted' if delete_all is defined and delete_all.rc == 0 else '⏳ Deletion initiated' }}
       {% endif %}
       {% if 'not-found' not in rcp_exists.stdout %}
-      • ROSAControlPlane: {{ '✅ Deleted' if (wait_for_deletion and (wait_rcp.rc == 0 or (final_rcp_check.rc | default(1)) == 0)) else '⏳ Deletion initiated' }}
+      • ROSAControlPlane: {{ '✅ Deleted' if (wait_for_deletion and ((wait_rcp | default({'rc': -1})).get('rc', -1) == 0 or (final_rcp_check | default({'rc': -1})).get('rc', -1) == 0)) else '⏳ Deletion initiated' }}
       {% endif %}
       {% if 'not-found' not in rmp_exists.stdout %}
       • ROSAMachinePool: ✅ Auto-deleted (cascade)
       {% endif %}
       {% if delete_network | bool and discovered_rosa_network_name != 'not-found' %}
-      • ROSANetwork: {{ '✅ Deleted' if (wait_for_deletion and (wait_rn.rc == 0 or (final_rn_check.rc | default(1)) == 0)) else '⏳ Deletion initiated' }}
+      • ROSANetwork: {{ '✅ Deleted' if (wait_for_deletion and ((wait_rn | default({'rc': -1})).get('rc', -1) == 0 or (final_rn_check | default({'rc': -1})).get('rc', -1) == 0)) else '⏳ Deletion initiated' }}
       {% endif %}
       {% if delete_roles | bool and discovered_rosa_role_config_name != 'not-found' %}
-      • ROSARoleConfig: {{ '✅ Deleted' if (wait_for_deletion and (wait_rrc.rc == 0 or (final_rrc_check.rc | default(1)) == 0)) else '⏳ Deletion initiated' }}
+      • ROSARoleConfig: {{ '✅ Deleted' if (wait_for_deletion and ((wait_rrc | default({'rc': -1})).get('rc', -1) == 0 or (final_rrc_check | default({'rc': -1})).get('rc', -1) == 0)) else '⏳ Deletion initiated' }}
       {% endif %}
 
 - name: Display deletion summary

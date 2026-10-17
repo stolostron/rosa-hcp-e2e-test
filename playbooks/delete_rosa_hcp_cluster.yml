@@ -28,6 +28,18 @@
 #
 # 5. Via test suite (recommended):
 #    ./run-test-suite.py 04-rosa-hcp-delete -e name_prefix=qe6
+#
+# 6. With custom deletion timeouts:
+#    ansible-playbook delete_rosa_hcp_cluster.yml \
+#      -e cluster_name=my-cluster \
+#      -e rosanetwork_timeout=600 \
+#      -e rosacontrolplane_timeout=2400
+#
+# Configurable Timeouts (all in seconds):
+#   - rosanetwork_timeout: Network resource deletion (default: 300 = 5 min)
+#   - rosacontrolplane_timeout: Control plane deletion (default: 1800 = 30 min)
+#   - rosaroleconfig_timeout: Role config deletion (default: 600 = 10 min)
+#   - deletion_timeout: Global fallback if specific timeout not set (default: 3600 = 60 min)
 # ================================================================
 
 - name: Delete ROSA HCP cluster and automation resources
@@ -45,7 +57,14 @@
     delete_network: true
     delete_roles: true
     wait_for_deletion: true
-    deletion_timeout: 2400  # 40 minutes (AWS resource cleanup can be slow)
+    # Per-resource deletion timeouts (seconds). Each resource has different typical completion times:
+    # - ROSANetwork: usually 2-5 min (fast, mostly CloudFormation cleanup)
+    # - ROSAControlPlane: usually 15-25 min (slower, API reconciliation)
+    # - ROSARoleConfig: usually <1 min (fast, just IAM role deletion)
+    rosanetwork_timeout: 300        # 5 minutes
+    rosacontrolplane_timeout: 1800  # 30 minutes
+    rosaroleconfig_timeout: 600     # 10 minutes
+    deletion_timeout: 3600          # 60 minutes (fallback if specific timeout not set)
 
   tasks:
     - name: Load user variables
@@ -146,7 +165,12 @@
 
           Settings:
           • Wait for Deletion: {{ '✓ Yes' if (wait_for_deletion | bool) else '✗ No' }}
-          • Timeout: {{ deletion_timeout }}s ({{ (deletion_timeout | int / 60) | int }} minutes)
+
+          Deletion Timeouts:
+          • ROSANetwork: {{ (rosanetwork_timeout | int / 60) | int }} min
+          • ROSAControlPlane: {{ (rosacontrolplane_timeout | int / 60) | int }} min
+          • ROSARoleConfig: {{ (rosaroleconfig_timeout | int / 60) | int }} min
+          • Fallback (if timeout not set): {{ (deletion_timeout | int / 60) | int }} min
 
     - name: Delete ROSA HCP cluster resources
       include_tasks: ../tasks/delete_rosa_hcp_resources.yml
