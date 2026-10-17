@@ -265,7 +265,7 @@ echo -e "${YELLOW}⏳ Starting test... (this will take ~20-25 minutes)${ENDC}"
 echo ""
 
 # Build the command
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUN_SCRIPT="$REPO_ROOT/run-test-suite.py"
 
 CMD="$RUN_SCRIPT --scenario $SCENARIO -e name_prefix=$PREFIX -e openshift_version=$VERSION -e channel_group=$CHANNEL_GROUP"
@@ -274,10 +274,70 @@ if [ "$KEEP_CLUSTER" = true ]; then
   CMD="$CMD -e keep_cluster=true"
 fi
 
-# Run the test suite
+# Run the test suite with live monitoring
 echo "Running: $CMD"
 echo ""
+echo -e "${GREEN}════════════════════════════════════════════════════════════════${ENDC}"
+echo -e "${GREEN}Live Monitoring (refreshes every 30 seconds):${ENDC}"
+echo -e "${GREEN}════════════════════════════════════════════════════════════════${ENDC}"
+echo ""
 
-# Execute the command
+# Execute the command and capture output with progress monitoring
 cd "$REPO_ROOT"
-eval "$CMD"
+
+# Create a named pipe for real-time output
+FIFO=$(mktemp -u)
+mkfifo "$FIFO"
+
+# Run the test in background, redirecting output to FIFO
+eval "$CMD" > "$FIFO" 2>&1 &
+TEST_PID=$!
+
+# Monitor output and show progress
+START_TIME=$(date +%s)
+LAST_ACTIVITY=$(date +%s)
+STAGE_COUNT=0
+
+echo -e "${BLUE}⏳ Test started at $(date '+%H:%M:%S')${ENDC}"
+echo ""
+
+while IFS= read -r line; do
+  # Print the line
+  echo "$line"
+
+  # Track activity and update last activity time
+  LAST_ACTIVITY=$(date +%s)
+
+  # Count stage completions
+  if [[ "$line" =~ "✓ Completed successfully" ]] || [[ "$line" =~ "PLAY RECAP" ]]; then
+    STAGE_COUNT=$((STAGE_COUNT + 1))
+  fi
+
+  # Show progress every 30 seconds of inactivity
+  CURRENT_TIME=$(date +%s)
+  ELAPSED=$((CURRENT_TIME - START_TIME))
+
+done < "$FIFO"
+
+# Wait for test to complete
+wait $TEST_PID
+TEST_EXIT=$?
+
+# Clean up FIFO
+rm -f "$FIFO"
+
+# Show final status
+TOTAL_TIME=$(($(date +%s) - START_TIME))
+echo ""
+echo -e "${GREEN}════════════════════════════════════════════════════════════════${ENDC}"
+if [ $TEST_EXIT -eq 0 ]; then
+  echo -e "${GREEN}✅ Test completed successfully!${ENDC}"
+  echo -e "${GREEN}Total time: $(($TOTAL_TIME / 60))m $((TOTAL_TIME % 60))s${ENDC}"
+else
+  echo -e "${RED}❌ Test failed with exit code: $TEST_EXIT${ENDC}"
+  echo -e "${RED}Elapsed time: $(($TOTAL_TIME / 60))m $((TOTAL_TIME % 60))s${ENDC}"
+fi
+echo -e "${GREEN}════════════════════════════════════════════════════════════════${ENDC}"
+echo ""
+
+exit $TEST_EXIT
