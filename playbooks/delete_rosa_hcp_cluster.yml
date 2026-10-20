@@ -45,7 +45,7 @@
     delete_network: true
     delete_roles: true
     wait_for_deletion: true
-    deletion_timeout: 2400  # 40 minutes (AWS resource cleanup can be slow)
+    deletion_timeout: 3600  # 60 minutes (AWS resource cleanup can be slow)
 
   tasks:
     - name: Load user variables

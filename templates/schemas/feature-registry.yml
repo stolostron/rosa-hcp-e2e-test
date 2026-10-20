@@ -608,7 +608,7 @@ suites:
         applies_to: [delete]
         default: null
         playbook: playbooks/delete_rosa_hcp_cluster.yml
-        wait_timeout: 2400
+        wait_timeout: 3600
         destructive: true
 
       - id: audit_logging
