@@ -723,13 +723,13 @@
 - name: Set deletion summary
   set_fact:
     deletion_summary: |
-      {% if 'not-found' not in cluster_exists.stdout %}
+      {% if ('cluster/' + cluster_name) in (resources_to_delete | default([])) %}
       • Core Cluster: {{ '✅ Deleted' if (delete_all is defined and (delete_all.rc | default(1)) == 0) else '⏳ Deletion initiated' }}
       {% endif %}
-      {% if 'not-found' not in rcp_exists.stdout %}
+      {% if (rcp_exists.stdout | trim) not in ['__NOTFOUND__', 'not-found'] %}
       • ROSAControlPlane: {{ '✅ Deleted' if (wait_for_deletion and ((wait_rcp.rc | default(1)) == 0 or (final_rcp_check.rc | default(1)) == 0)) else '⏳ Deletion initiated' }}
       {% endif %}
-      {% if 'not-found' not in rmp_exists.stdout %}
+      {% if (rmp_exists.stdout | trim) not in ['__NOTFOUND__', 'not-found'] %}
       • ROSAMachinePool: ✅ Auto-deleted (cascade)
       {% endif %}
       {% if delete_network | bool and discovered_rosa_network_name != 'not-found' %}
