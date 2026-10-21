@@ -246,6 +246,10 @@ scenarios:
     feature_group: day1-networking
     extra_vars:
       log_forward_s3_bucket: "${CAPI_TEST_LOG_S3_BUCKET}"
+      log_forward_applications:
+        - audit
+        - oauth
+        - general
     estimated_minutes: 85
 
 suites:
