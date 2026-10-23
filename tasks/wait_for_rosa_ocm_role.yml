@@ -1,0 +1,87 @@
+---
+# Wait for ROSAOCMRoleConfig to be Ready and verify status fields
+# Polls K8s status, verifies AWS IAM role existence, and verifies OCM link
+
+- name: Set wait parameters for ROSAOCMRoleConfig
+  ansible.builtin.set_fact:
+    ocm_role_config_name: "{{ ocm_role_config_name | default('shared-ocm-role') }}"
+    max_wait_time: "{{ ocm_role_wait_timeout | default(300) | int }}"  # 5 minutes
+    poll_interval: "{{ ocm_role_poll_interval | default(10) | int }}"  # 10 seconds
+
+- name: Wait for ROSAOCMRoleConfig to reach Ready status
+  ansible.builtin.shell:
+    cmd: |
+      oc get rosaocmroleconfig "{{ ocm_role_config_name }}" -o json 2>/dev/null || echo '{}'
+  register: ocm_role_status_raw
+  until:
+    - (ocm_role_status_raw.stdout | from_json).status is defined
+    - (
+        (
+          (ocm_role_status_raw.stdout | from_json).status.conditions | default([])
+          | selectattr('type', 'defined')
+          | selectattr('status', 'equalto', 'True')
+          | selectattr('type', 'in', ['Ready', 'ROSAOCMRoleConfigReady'])
+          | list | length
+        ) > 0
+      )
+  retries: "{{ (max_wait_time | int / poll_interval | int) | int }}"
+  delay: "{{ poll_interval | int }}"
+  changed_when: false
+
+- name: Parse ROSAOCMRoleConfig status
+  ansible.builtin.set_fact:
+    ocm_role_cr: "{{ ocm_role_status_raw.stdout | from_json }}"
+    ocm_role_arn: "{{ (ocm_role_status_raw.stdout | from_json).status.roleARN | default('') }}"
+    ocm_org_id: "{{ (ocm_role_status_raw.stdout | from_json).status.organizationID | default('') }}"
+
+- name: Validate populated status fields
+  ansible.builtin.assert:
+    that:
+      - ocm_role_arn is defined
+      - ocm_role_arn | length > 0
+      - ocm_role_arn is match('^arn:aws:iam::[0-9]{12}:role/.*')
+      - ocm_org_id is defined
+      - ocm_org_id | length > 0
+    fail_msg: "FAIL: ROSAOCMRoleConfig status incomplete (roleARN or organizationID missing or invalid)"
+    success_msg: "PASS: ROSAOCMRoleConfig Ready with valid roleARN and organizationID"
+
+- name: Display OCM Role verification summary
+  ansible.builtin.debug:
+    msg: |
+      ✅ ROSAOCMRoleConfig successfully verified!
+      - Resource Name: {{ ocm_role_config_name }}
+      - Role Prefix: {{ ocm_role_prefix }}
+      - Ready Condition: True
+      - Status: roleARN and organizationID successfully populated
+
+- name: Verify AWS IAM role exists (when AWS credentials available)
+  when:
+    - (AWS_ACCESS_KEY_ID is defined and AWS_ACCESS_KEY_ID | length > 0) or (lookup('env', 'AWS_ACCESS_KEY_ID') | length > 0)
+  block:
+    - name: Extract IAM role name
+      ansible.builtin.set_fact:
+        target_role_name: "{{ ocm_role_arn.split('/')[-1] }}"
+      no_log: true
+
+    - name: Query AWS IAM for role
+      ansible.builtin.command:
+        argv:
+          - aws
+          - iam
+          - get-role
+          - --role-name
+          - "{{ target_role_name }}"
+          - --output
+          - json
+      register: aws_role_check
+      changed_when: false
+      no_log: true
+
+    - name: Assert AWS IAM role is present, active, and matches ocm_role_arn
+      ansible.builtin.assert:
+        that:
+          - aws_role_check.rc == 0
+          - (aws_role_check.stdout | from_json).Role.Arn == ocm_role_arn
+        fail_msg: "FAIL: Role not found in AWS IAM or ARN does not match ROSAOCMRoleConfig status"
+        success_msg: "PASS: Role confirmed active in AWS IAM and matches ROSAOCMRoleConfig status"
+      no_log: true

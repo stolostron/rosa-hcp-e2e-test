@@ -30,6 +30,7 @@ ALL_PLAYBOOKS = [
     "disable_capi_enable_hypershift.yml",
     "add_rosa_machine_pool.yml",
     "delete_rosa_machine_pool.yml",
+    "verify_rosa_ocm_role.yml",
 ]
 
 # These playbooks do NOT set connection: local

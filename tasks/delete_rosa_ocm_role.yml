@@ -1,0 +1,73 @@
+---
+# Delete ROSAOCMRoleConfig and verify safe deletionPolicy behavior
+
+- name: Set deletion variables
+  ansible.builtin.set_fact:
+    ocm_role_config_name: "{{ ocm_role_config_name | default('shared-ocm-role') }}"
+    ocm_role_arn: "{{ ocm_role_arn | default('') }}"
+    ocm_role_deletion_policy: "{{ ocm_role_deletion_policy | default('Retain') }}"
+
+- name: Delete ROSAOCMRoleConfig CR
+  ansible.builtin.shell:
+    cmd: oc delete rosaocmroleconfig "{{ ocm_role_config_name }}" --wait=true --timeout=120s
+  register: delete_cr
+  failed_when: false
+  changed_when: delete_cr.rc == 0
+
+- name: Verify ROSAOCMRoleConfig CR is removed from cluster
+  ansible.builtin.shell:
+    cmd: |
+      OUTPUT=$(oc get rosaocmroleconfig "{{ ocm_role_config_name }}" 2>&1)
+      RC=$?
+      if [ $RC -ne 0 ]; then
+        if echo "$OUTPUT" | grep -qi "not found\|NotFound\|no resources found"; then
+          exit 0
+        fi
+        echo "Unexpected oc get error (rc=$RC): $OUTPUT" >&2
+        exit $RC
+      fi
+      echo "Resource still exists: $OUTPUT" >&2
+      exit 1
+  register: cr_gone_check
+  until: cr_gone_check.rc == 0
+  retries: 12
+  delay: 5
+  changed_when: false
+
+- name: Confirm CR deletion success
+  ansible.builtin.debug:
+    msg: "✅ ROSAOCMRoleConfig CR {{ ocm_role_config_name }} successfully deleted (finalizer removed)."
+
+- name: Verify AWS IAM role retained when deletionPolicy is Retain
+  when:
+    - ocm_role_deletion_policy == 'Retain'
+    - ocm_role_arn | length > 0
+    - (AWS_ACCESS_KEY_ID is defined and AWS_ACCESS_KEY_ID | length > 0) or (lookup('env', 'AWS_ACCESS_KEY_ID') | length > 0)
+  block:
+    - name: Extract IAM role name
+      ansible.builtin.set_fact:
+        retained_role_name: "{{ ocm_role_arn.split('/')[-1] }}"
+      no_log: true
+
+    - name: Verify role remains in AWS IAM (retained for shared account)
+      ansible.builtin.command:
+        argv:
+          - aws
+          - iam
+          - get-role
+          - --role-name
+          - "{{ retained_role_name }}"
+          - --output
+          - json
+      register: aws_retained_check
+      changed_when: false
+      no_log: true
+
+    - name: Assert retained role was not deleted from AWS and matches ocm_role_arn
+      ansible.builtin.assert:
+        that:
+          - aws_retained_check.rc == 0
+          - (aws_retained_check.stdout | from_json).Role.Arn == ocm_role_arn
+        fail_msg: "FAIL: Role was deleted or changed in AWS despite deletionPolicy: Retain!"
+        success_msg: "PASS: Role remains in AWS IAM as expected with deletionPolicy: Retain"
+      no_log: true

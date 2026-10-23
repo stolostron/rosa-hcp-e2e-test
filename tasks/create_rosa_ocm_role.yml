@@ -1,0 +1,52 @@
+---
+# Create or reconcile ROSAOCMRoleConfig
+# Automates AWS IAM OCM role creation/adoption and OCM org link verification
+
+- name: Set ROSAOCMRoleConfig variables
+  ansible.builtin.set_fact:
+    ocm_role_config_name: "{{ ocm_role_config_name | default('shared-ocm-role') }}"
+    ocm_role_prefix: "{{ ocm_role_prefix | default('CAPA') }}"
+    ocm_role_profile: "{{ ocm_role_profile | default('Admin') }}"
+    ocm_role_deletion_policy: "{{ ocm_role_deletion_policy | default('Retain') }}"
+    output_dir: "{{ output_dir | default('/tmp/rosa-hcp-output') }}"
+
+- name: Create output directory
+  ansible.builtin.file:
+    path: "{{ output_dir }}"
+    state: directory
+    mode: '0755'
+
+- name: Check if ROSAOCMRoleConfig CRD is registered on cluster
+  ansible.builtin.shell:
+    cmd: oc get crd rosaocmroleconfigs.infrastructure.cluster.x-k8s.io -o name 2>/dev/null || echo "__NOTFOUND__"
+  register: ocm_role_crd_check
+  changed_when: false
+
+- name: Fail if ROSAOCMRoleConfig CRD is missing
+  ansible.builtin.fail:
+    msg: >
+      CRD 'rosaocmroleconfigs.infrastructure.cluster.x-k8s.io' not found on the cluster.
+      Ensure CAPA controller with ROSAOCMRoleConfig support is installed.
+  when: "'__NOTFOUND__' in ocm_role_crd_check.stdout"
+
+- name: Render ROSAOCMRoleConfig template
+  ansible.builtin.template:
+    src: "{{ playbook_dir }}/../templates/common/rosa-ocm-role.yaml.j2"
+    dest: "{{ output_dir }}/{{ ocm_role_config_name }}.yaml"
+    mode: '0644'
+
+- name: Display ROSAOCMRoleConfig manifest info
+  ansible.builtin.debug:
+    msg: |
+      Applying ROSAOCMRoleConfig:
+      - Name: {{ ocm_role_config_name }}
+      - Role Prefix: {{ ocm_role_prefix }}
+      - Profile: {{ ocm_role_profile }}
+      - Deletion Policy: {{ ocm_role_deletion_policy }}
+      - Manifest: {{ output_dir }}/{{ ocm_role_config_name }}.yaml
+
+- name: Apply ROSAOCMRoleConfig to cluster
+  ansible.builtin.shell:
+    cmd: oc apply -f "{{ output_dir }}/{{ ocm_role_config_name }}.yaml"
+  register: apply_ocm_role
+  changed_when: apply_ocm_role.rc == 0
