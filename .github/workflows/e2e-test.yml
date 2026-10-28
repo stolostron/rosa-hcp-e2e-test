@@ -26,7 +26,7 @@ jobs:
   e2e-smoke:
     name: E2E Smoke (CRC)
     if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.test-suite == 'smoke')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     timeout-minutes: 120
     steps:
       - name: Free disk space
@@ -91,7 +91,7 @@ jobs:
   e2e-full:
     name: E2E Full Lifecycle (CRC)
     if: github.event_name == 'workflow_dispatch' && inputs.test-suite == 'full'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     timeout-minutes: 180
     steps:
       - name: Free disk space
