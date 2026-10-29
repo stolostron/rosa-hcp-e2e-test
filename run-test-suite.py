@@ -726,7 +726,106 @@ class TestSuiteRunner:
                     json.dump(feature_data, f, indent=2)
                 self._artifact_archived = True
 
+        # Generate markdown feature report
+        feature_data = self.load_feature_verification()
+        if feature_data:
+            self._save_feature_report_markdown(feature_data, label_part, timestamp)
+
         return output_file
+
+    def _save_feature_report_markdown(self, feature_data: Dict, label_part: str, timestamp: str) -> None:
+        """Generate and save a markdown summary of feature verification results."""
+        features = feature_data.get("features", [])
+        if not features:
+            return
+
+        passed = sum(1 for f in features if f.get("status") == "passed")
+        failed = sum(1 for f in features if f.get("status") == "failed")
+        warned = sum(1 for f in features if f.get("status") == "warned")
+        total = len(features)
+
+        env = feature_data.get("environment", {})
+        is_degraded = env.get("degraded") is True
+        degraded_reason = env.get("degraded_reason", "")
+
+        # Build markdown content
+        md_lines = [
+            "# Feature Verification Report",
+            "",
+            f"**Generated**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            "",
+        ]
+
+        # Status summary
+        if is_degraded:
+            md_lines.extend([
+                "⚠️  **Degraded Mode**",
+                f"*{degraded_reason}*",
+                "",
+            ])
+
+        md_lines.extend([
+            "## Summary",
+            "",
+            f"| Status | Count |",
+            f"|--------|-------|",
+            f"| ✅ Passed | {passed}/{total} |",
+            f"| ❌ Failed | {failed}/{total} |",
+            f"| ⚠️  Warned | {warned}/{total} |",
+            "",
+        ])
+
+        # Passed features
+        if passed > 0:
+            md_lines.extend([
+                "## ✅ Passed Features",
+                "",
+            ])
+            for feat in features:
+                if feat.get("status") == "passed":
+                    md_lines.append(f"- **{feat.get('id', 'unknown')}**")
+            md_lines.append("")
+
+        # Failed features
+        if failed > 0:
+            md_lines.extend([
+                "## ❌ Failed Features",
+                "",
+            ])
+            for feat in features:
+                if feat.get("status") == "failed":
+                    feature_id = feat.get("id", "unknown")
+                    detail = feat.get("detail", "No detail provided")
+                    md_lines.append(f"- **{feature_id}**: {detail}")
+            md_lines.append("")
+
+        # Warned features
+        if warned > 0:
+            md_lines.extend([
+                "## ⚠️  Warned Features",
+                "",
+            ])
+            for feat in features:
+                if feat.get("status") == "warned":
+                    feature_id = feat.get("id", "unknown")
+                    field = feat.get("field", "unknown")
+                    detail = feat.get("detail", f"CRD has no field '{field}' — platform limitation")
+                    md_lines.append(f"- **{feature_id}**: {detail}")
+            md_lines.append("")
+
+        md_content = "\n".join(md_lines)
+
+        # Save dated and latest copies
+        results_date_dir = self.results_dir / datetime.now().strftime("%Y-%m-%d")
+        results_date_dir.mkdir(exist_ok=True)
+
+        dated_file = results_date_dir / f"feature-report{label_part}-{timestamp}.md"
+        with open(dated_file, 'w') as f:
+            f.write(md_content)
+
+        latest_file = self.results_dir / f"latest-feature-report{label_part}.md"
+        with open(latest_file, 'w') as f:
+            f.write(md_content)
 
     def _extract_environment_info(self, playbook_output: str) -> dict:
         """Extract environment information from playbook output."""
