@@ -722,6 +722,8 @@ class TestSuiteRunner:
             feature_data = self.load_feature_verification()
             if feature_data:
                 archived = results_date_dir / f"feature-verification{label_part}-{timestamp}.json"
+                archived.touch(mode=0o600, exist_ok=True)
+                os.chmod(archived, 0o600)
                 with open(archived, 'w') as f:
                     json.dump(feature_data, f, indent=2)
                 self._artifact_archived = True

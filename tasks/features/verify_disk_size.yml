@@ -1,0 +1,47 @@
+---
+# Feature Check: Disk Volume Size (via OCM API + CRD)
+
+- name: Verify Disk Volume Size
+  vars:
+    expected_volume_size: "{{ root_volume_size | default(300) | int }}"
+  block:
+    - name: Query OCM node pools for volume size
+      ansible.builtin.uri:
+        url: "{{ ocm_api_url }}/api/clusters_mgmt/v1/clusters/{{ ocm_cluster.id }}/node_pools"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ ocm_token_result.json.access_token }}"
+          Accept: application/json
+        status_code: 200
+        timeout: 15
+      register: ocm_disk_node_pools
+      failed_when: false
+      changed_when: false
+      no_log: true
+      when: ocm_available and ocm_cluster.id is defined
+
+    - name: Assert volumeSize via CRD
+      ansible.builtin.assert:
+        that:
+          - rmp.spec.volumeSize is defined
+          - rmp.spec.volumeSize | int == expected_volume_size | int
+        fail_msg: "FAIL: CRD volumeSize {{ rmp.spec.volumeSize | default('undefined') }} does not match expected {{ expected_volume_size }}"
+        success_msg: "PASS: CRD volumeSize matches expected {{ expected_volume_size }}"
+
+    - name: Cross-check volume size via OCM node pool (if available)
+      ansible.builtin.assert:
+        that:
+          - ocm_disk_node_pools.json['items'] | length > 0
+          - ocm_disk_node_pools.json['items'][0].root_volume is defined
+          - ocm_disk_node_pools.json['items'][0].root_volume | length > 0
+        success_msg: "PASS: OCM node pool root_volume data available for cross-check"
+      when: ocm_available and ocm_disk_node_pools is defined and ocm_disk_node_pools.json is defined
+      ignore_errors: true
+
+    - ansible.builtin.set_fact:
+        features_passed: "{{ features_passed | int + 1 }}"
+  rescue:
+    - ansible.builtin.include_tasks: "{{ playbook_dir }}/../tasks/verify_feature_rescue.yml"
+      vars:
+        feature_id: disk_size
+        fail_detail: "volume size does not match expected"

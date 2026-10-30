@@ -1,0 +1,98 @@
+---
+# Feature Check: FIPS Mode (via OCM API + CRD + boto3)
+
+- name: Verify FIPS Mode
+  vars:
+    verify_region: "{{ aws_region | default(rcp.spec.region | default('us-west-2')) }}"
+  block:
+    - name: Assert FIPS via OCM
+      ansible.builtin.assert:
+        that:
+          - ocm_cluster.fips is defined
+          - ocm_cluster.fips | bool
+        fail_msg: "FAIL: OCM reports FIPS is not enabled"
+        success_msg: "PASS: OCM confirms FIPS is enabled"
+      when: ocm_available
+
+    - name: Assert FIPS via CRD (fallback)
+      ansible.builtin.assert:
+        that:
+          - rcp.spec.fips is defined
+          - rcp.spec.fips == 'Enabled'
+        fail_msg: "FAIL: CRD fips is not 'Enabled'"
+        success_msg: "PASS: CRD confirms fips = Enabled (CRD fallback)"
+      when: not ocm_available
+
+    - name: Get worker AMI details via boto3
+      ansible.builtin.command:
+        argv:
+          - python3
+          - -c
+          - |
+            import boto3, json, os
+            ec2 = boto3.client('ec2', region_name=os.environ['VERIFY_REGION'])
+            r = ec2.describe_instances(Filters=[
+                {'Name': 'tag:kubernetes.io/cluster/' + os.environ['CLUSTER_NAME'], 'Values': ['owned']},
+                {'Name': 'instance-state-name', 'Values': ['running']}
+            ])
+            ami_ids = list(set(
+                inst['ImageId']
+                for res in r.get('Reservations', [])
+                for inst in res.get('Instances', [])
+            ))
+            if not ami_ids:
+                print(json.dumps({'images': [], 'error': 'no instances found'}))
+            else:
+                imgs = ec2.describe_images(ImageIds=ami_ids)
+                by_id = {img['ImageId']: img for img in imgs['Images']}
+                results = [{'ami_id': aid, 'name': by_id.get(aid, {}).get('Name', ''), 'description': by_id.get(aid, {}).get('Description', '')} for aid in ami_ids]
+                print(json.dumps({'images': results}))
+      environment:
+        VERIFY_REGION: "{{ verify_region }}"
+        CLUSTER_NAME: "{{ cluster_name }}"
+      register: boto3_fips_check
+      changed_when: false
+      failed_when: false
+      no_log: true
+
+    - name: Parse FIPS AMI result
+      ansible.builtin.set_fact:
+        fips_ami_result: "{{ boto3_fips_check.stdout | default('{\"images\":[]}') | from_json }}"
+      when: boto3_fips_check.rc == 0
+
+    - name: Assert worker AMIs were found
+      ansible.builtin.assert:
+        that:
+          - boto3_fips_check.rc == 0
+          - fips_ami_result.images | length > 0
+        fail_msg: "FAIL: No running worker instances found for cluster (boto3)"
+        success_msg: "PASS: Found {{ fips_ami_result.images | length }} unique worker AMI(s)"
+      when: boto3_fips_check.rc == 0
+
+    - name: Check worker AMIs for FIPS marker
+      ansible.builtin.set_fact:
+        fips_ami_has_marker: "{{ (item.name | default('') | lower) is search('\\bfips\\b') or (item.description | default('') | lower) is search('\\bfips\\b') }}"
+      loop: "{{ fips_ami_result.images }}"
+      register: fips_ami_marker_results
+      when: boto3_fips_check.rc == 0 and fips_ami_result.images | length > 0
+
+    - name: Report FIPS AMI marker result
+      ansible.builtin.debug:
+        msg: >-
+          {{ 'PASS: Worker AMI(s) contain FIPS marker'
+             if (fips_ami_marker_results.results | default([]) | selectattr('ansible_facts.fips_ami_has_marker', 'equalto', true) | list | length > 0)
+             else 'INFO: Worker AMI(s) do not contain FIPS marker in name/description — ROSA HCP enables FIPS at cluster level, not via separate AMI. Verified via CRD/OCM.' }}
+      when: boto3_fips_check.rc == 0 and fips_ami_result.images | length > 0
+
+    - name: Skip FIPS AMI check (boto3 failed)
+      ansible.builtin.debug:
+        msg: "WARN: boto3 AMI lookup failed — FIPS verified via CRD/OCM only"
+      when: boto3_fips_check.rc != 0
+
+    - ansible.builtin.set_fact:
+        features_passed: "{{ features_passed | int + 1 }}"
+  rescue:
+    - ansible.builtin.include_tasks: "{{ playbook_dir }}/../tasks/verify_feature_rescue.yml"
+      vars:
+        feature_id: fips
+        fail_detail: "FIPS not enabled via OCM/CRD or worker AMI is not FIPS-enabled"

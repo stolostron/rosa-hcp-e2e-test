@@ -1,0 +1,75 @@
+---
+# Feature Check: Bring Your Own Network (via CRD subnet comparison)
+
+- name: Verify Bring Your Own Network
+  vars:
+    verify_region: "{{ aws_region | default(rcp.spec.region | default('us-west-2')) }}"
+    expected_subnets: "{{ byon_subnet_ids | default([]) }}"
+  block:
+    - name: Assert subnets are user-provided (not from ROSANetwork)
+      ansible.builtin.assert:
+        that:
+          - rcp.spec.subnets is defined
+          - rcp.spec.subnets | length > 0
+        fail_msg: "FAIL: No subnets set on ROSAControlPlane"
+        success_msg: "PASS: Subnets present on ROSAControlPlane"
+
+    - name: Check ROSANetwork does not exist (BYON skips network creation)
+      ansible.builtin.shell: >
+        oc get rosanetwork "{{ cluster_name }}-network" -n "{{ rosa_hcp_namespace }}"
+        -o name 2>/dev/null
+      register: byon_network_check
+      failed_when: false
+      changed_when: false
+
+    - name: Assert no ROSANetwork was created
+      ansible.builtin.assert:
+        that:
+          - byon_network_check.rc != 0 or byon_network_check.stdout | trim | length == 0
+        fail_msg: "FAIL: ROSANetwork exists — cluster used auto-created network instead of BYON"
+        success_msg: "PASS: No ROSANetwork — cluster is using BYON subnets"
+
+    - name: Assert BYON subnets match expected (if provided)
+      ansible.builtin.assert:
+        that:
+          - rcp.spec.subnets | sort == expected_subnets | sort
+        fail_msg: "FAIL: Cluster subnets do not match provided BYON subnet IDs"
+        success_msg: "PASS: Cluster subnets match provided BYON subnet IDs"
+      when: expected_subnets | length > 0
+
+    - name: Verify BYON subnets exist in AWS (boto3)
+      ansible.builtin.command:
+        argv:
+          - python3
+          - -c
+          - |
+            import boto3, json, os
+            ec2 = boto3.client('ec2', region_name=os.environ['VERIFY_REGION'])
+            subnet_ids = json.loads(os.environ['SUBNET_IDS'])
+            r = ec2.describe_subnets(SubnetIds=subnet_ids)
+            print(json.dumps(sorted([s['SubnetId'] for s in r['Subnets']])))
+      environment:
+        VERIFY_REGION: "{{ verify_region }}"
+        SUBNET_IDS: "{{ rcp.spec.subnets | to_json }}"
+      register: boto3_byon_subnets_raw
+      changed_when: false
+      failed_when: false
+      no_log: true
+      when: boto3_check.rc == 0
+
+    - name: Assert all BYON subnets exist in AWS
+      ansible.builtin.assert:
+        that:
+          - boto3_byon_subnets_raw.rc == 0
+          - (boto3_byon_subnets_raw.stdout | from_json | sort) == (rcp.spec.subnets | sort)
+        fail_msg: "FAIL: Some BYON subnets do not exist in AWS"
+        success_msg: "PASS: All BYON subnets exist in AWS"
+      when: boto3_check.rc == 0
+
+    - ansible.builtin.set_fact:
+        features_passed: "{{ features_passed | int + 1 }}"
+  rescue:
+    - ansible.builtin.include_tasks: "{{ playbook_dir }}/../tasks/verify_feature_rescue.yml"
+      vars:
+        feature_id: byon
+        fail_detail: "BYON subnets not set or ROSANetwork was created instead"

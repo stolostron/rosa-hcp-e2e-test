@@ -1,0 +1,113 @@
+---
+# Feature Check: External OIDC (via OCM API + CRD + status)
+
+- name: Verify External OIDC
+  block:
+    - name: Assert external auth via OCM
+      ansible.builtin.assert:
+        that:
+          - ocm_cluster.external_auth_config is defined
+          - ocm_cluster.external_auth_config.enabled | default(false) | bool
+        fail_msg: "FAIL: OCM external_auth_config not enabled"
+        success_msg: "PASS: OCM confirms external auth is enabled"
+      when: ocm_available
+
+    - name: Assert enableExternalAuthProviders via CRD
+      ansible.builtin.assert:
+        that:
+          - rcp.spec.enableExternalAuthProviders is defined
+          - rcp.spec.enableExternalAuthProviders | bool
+        fail_msg: "FAIL: enableExternalAuthProviders not set or false"
+        success_msg: "PASS: enableExternalAuthProviders = true"
+      when: not ocm_available
+
+    - name: Assert ROSAControlPlane status is populated
+      ansible.builtin.assert:
+        that:
+          - rcp.status is defined
+          - rcp.status.conditions is defined
+          - rcp.status.conditions | length > 0
+        fail_msg: "FAIL: ROSAControlPlane status or conditions not populated — cluster may still be provisioning"
+        success_msg: "PASS: ROSAControlPlane status conditions present"
+
+    - name: Assert ExternalAuthConfigured status condition
+      ansible.builtin.assert:
+        that:
+          - rcp.status.conditions | selectattr('type', 'equalto', 'ExternalAuthConfigured') | list | length > 0
+          - (rcp.status.conditions | selectattr('type', 'equalto', 'ExternalAuthConfigured') | first).status == 'True'
+        fail_msg: "FAIL: ExternalAuthConfigured status condition is not True"
+        success_msg: "PASS: ExternalAuthConfigured status condition is True"
+
+    - name: Validate OIDC endpoint URL from status
+      ansible.builtin.assert:
+        that:
+          - rcp.status.oidcEndpointURL is defined
+          - rcp.status.oidcEndpointURL | length > 0
+          - rcp.status.oidcEndpointURL is match('^https://')
+        fail_msg: "FAIL: oidcEndpointURL missing or not HTTPS in status"
+        success_msg: "PASS: oidcEndpointURL present in status and uses HTTPS"
+
+    - name: Validate externalAuthProviders details (if configured in spec)
+      when: rcp.spec.externalAuthProviders is defined and rcp.spec.externalAuthProviders | length > 0
+      block:
+        - name: Extract and normalize OIDC issuer URL from CRD
+          ansible.builtin.set_fact:
+            oidc_issuer_url: "{{ (rcp.spec.externalAuthProviders[0].issuer | default({})).issuerURL | default('') | regex_replace('/$', '') }}"
+
+        - name: Assert OIDC issuer URL is present
+          ansible.builtin.assert:
+            that:
+              - oidc_issuer_url | length > 0
+              - oidc_issuer_url is match('^https://')
+            fail_msg: "FAIL: OIDC issuer URL is missing or not HTTPS in externalAuthProviders[0]"
+            success_msg: "PASS: OIDC issuer URL is present and uses HTTPS"
+
+        - name: Validate OIDC issuer URL is reachable
+          ansible.builtin.uri:
+            url: "{{ oidc_issuer_url }}/.well-known/openid-configuration"
+            method: GET
+            status_code: 200
+            timeout: 10
+            validate_certs: true
+          register: oidc_discovery_result
+          failed_when: false
+          changed_when: false
+          when: oidc_issuer_url | length > 0
+
+        - name: Assert OIDC discovery document is valid
+          ansible.builtin.assert:
+            that:
+              - oidc_discovery_result.status | int == 200
+              - oidc_discovery_result.json.issuer is defined
+              - (oidc_discovery_result.json.issuer | regex_replace('/$', '')) == oidc_issuer_url
+            fail_msg: "FAIL: OIDC issuer is not reachable or returned invalid discovery document"
+            success_msg: "PASS: OIDC issuer validated — returns valid OpenID configuration"
+          when:
+            - oidc_issuer_url | length > 0
+            - oidc_discovery_result is defined
+            - oidc_discovery_result.status is defined
+
+        - name: Assert OIDC audiences configured
+          ansible.builtin.assert:
+            that:
+              - rcp.spec.externalAuthProviders[0].issuer.audiences is defined
+              - rcp.spec.externalAuthProviders[0].issuer.audiences | length > 0
+            fail_msg: "FAIL: OIDC audiences not configured"
+            success_msg: "PASS: OIDC audiences configured"
+
+        - name: Assert OIDC claim mappings configured
+          ansible.builtin.assert:
+            that:
+              - rcp.spec.externalAuthProviders[0].claimMappings is defined
+              - rcp.spec.externalAuthProviders[0].claimMappings.username is defined
+              - rcp.spec.externalAuthProviders[0].claimMappings.username.claim is defined
+            fail_msg: "FAIL: OIDC claim mappings not configured"
+            success_msg: "PASS: OIDC claim mappings configured"
+
+    - ansible.builtin.set_fact:
+        features_passed: "{{ features_passed | int + 1 }}"
+  rescue:
+    - ansible.builtin.include_tasks: "{{ playbook_dir }}/../tasks/verify_feature_rescue.yml"
+      vars:
+        feature_id: external_oidc
+        fail_detail: "external OIDC auth not enabled or issuer validation failed"
