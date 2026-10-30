@@ -1,0 +1,61 @@
+---
+# Feature Check: Parallel Node Upgrade (via OCM API)
+
+- name: Verify Parallel Node Upgrade
+  vars:
+    expected_max_surge: "{{ max_surge | default(1) | int }}"
+    expected_max_unavailable: "{{ max_unavailable | default(0) | int }}"
+  block:
+    - name: Query OCM node pools for upgrade config
+      ansible.builtin.uri:
+        url: "{{ ocm_api_url }}/api/clusters_mgmt/v1/clusters/{{ ocm_cluster.id }}/node_pools"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ ocm_token_result.json.access_token }}"
+          Accept: application/json
+        status_code: 200
+        timeout: 15
+      register: ocm_node_pools_result
+      failed_when: false
+      changed_when: false
+      no_log: true
+      when: ocm_available and ocm_cluster.id is defined
+
+    - name: Assert node pool upgrade config via OCM
+      ansible.builtin.assert:
+        that:
+          - ocm_node_pools_result.json['items'] | length > 0
+          - ocm_node_pools_result.json['items'][0].management_upgrade is defined
+          - ocm_node_pools_result.json['items'][0].management_upgrade.max_surge is defined
+          - >-
+            ocm_node_pools_result.json['items'][0].management_upgrade.max_surge
+            | string == expected_max_surge | string
+          - >-
+            ocm_node_pools_result.json['items'][0].management_upgrade.max_unavailable
+            | default(0) | string == expected_max_unavailable | string
+        fail_msg: >-
+          FAIL: OCM node pool upgrade config does not match expected
+          maxSurge={{ expected_max_surge }}
+          maxUnavailable={{ expected_max_unavailable }}
+        success_msg: >-
+          PASS: OCM node pool upgrade config matches expected
+      when: ocm_available and ocm_node_pools_result is defined and ocm_node_pools_result.json is defined
+
+    - name: Assert updateConfig via CRD (fallback)
+      ansible.builtin.assert:
+        that:
+          - rmp.spec.updateConfig is defined
+          - rmp.spec.updateConfig.rollingUpdate is defined
+          - rmp.spec.updateConfig.rollingUpdate.maxSurge | int == expected_max_surge | int
+          - rmp.spec.updateConfig.rollingUpdate.maxUnavailable | int == expected_max_unavailable | int
+        fail_msg: "FAIL: rollingUpdate does not match expected"
+        success_msg: "PASS: rollingUpdate matches expected (CRD fallback)"
+      when: not ocm_available or ocm_node_pools_result is not defined or ocm_node_pools_result.json is not defined
+
+    - ansible.builtin.set_fact:
+        features_passed: "{{ features_passed | int + 1 }}"
+  rescue:
+    - ansible.builtin.include_tasks: "{{ playbook_dir }}/../tasks/verify_feature_rescue.yml"
+      vars:
+        feature_id: parallel_upgrade
+        fail_detail: "node pool upgrade config not set"

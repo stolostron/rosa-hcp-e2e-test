@@ -1,0 +1,79 @@
+---
+# Feature Check: Default MachinePool Autoscaling (via OCM API + CRD)
+
+- name: Verify Default MachinePool Autoscaling
+  vars:
+    expected_min: "{{ mp_min_replicas | default(2) | int }}"
+    expected_max: "{{ mp_max_replicas | default(4 if (default_autoscaling | default(false) | bool) else 2) | int }}"
+  block:
+    - name: Assert autoscaling via OCM
+      ansible.builtin.assert:
+        that:
+          - ocm_cluster.nodes.autoscale_compute is defined
+          - ocm_cluster.nodes.autoscale_compute.min_replicas is defined
+          - ocm_cluster.nodes.autoscale_compute.max_replicas is defined
+          - ocm_cluster.nodes.autoscale_compute.min_replicas | int >= expected_min | int
+          - ocm_cluster.nodes.autoscale_compute.max_replicas | int >= ocm_cluster.nodes.autoscale_compute.min_replicas | int
+        fail_msg: "FAIL: OCM autoscale_compute not configured or range invalid"
+        success_msg: "PASS: OCM confirms autoscaling enabled (min={{ ocm_cluster.nodes.autoscale_compute.min_replicas }}, max={{ ocm_cluster.nodes.autoscale_compute.max_replicas }})"
+      when: ocm_available
+
+    - name: Assert autoscaling via CRD
+      ansible.builtin.assert:
+        that:
+          - rcp.spec.defaultMachinePoolSpec is defined
+          - rcp.spec.defaultMachinePoolSpec.autoscaling is defined
+          - rcp.spec.defaultMachinePoolSpec.autoscaling.minReplicas | int == expected_min | int
+          - rcp.spec.defaultMachinePoolSpec.autoscaling.maxReplicas | int == expected_max | int
+          - rcp.spec.defaultMachinePoolSpec.autoscaling.maxReplicas | int >= rcp.spec.defaultMachinePoolSpec.autoscaling.minReplicas | int
+        fail_msg: "FAIL: CRD defaultMachinePoolSpec.autoscaling does not match expected (min={{ expected_min }}, max={{ expected_max }})"
+        success_msg: "PASS: CRD autoscaling matches expected (min={{ expected_min }}, max={{ expected_max }})"
+
+    - name: Query OCM node pools for default pool autoscaling
+      ansible.builtin.uri:
+        url: "{{ ocm_api_url }}/api/clusters_mgmt/v1/clusters/{{ ocm_cluster.id }}/node_pools"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ ocm_token_result.json.access_token }}"
+          Accept: application/json
+        status_code: 200
+        timeout: 15
+      register: ocm_autoscale_node_pools
+      failed_when: false
+      changed_when: false
+      no_log: true
+      when: ocm_available and ocm_cluster.id is defined
+
+    - name: Assert default pool autoscaling sums to the requested range
+      vars:
+        autoscaling_pools: >-
+          {{ (ocm_autoscale_node_pools.json | default({})).get('items', [])
+             | selectattr('autoscaling', 'defined')
+             | rejectattr('autoscaling', 'none')
+             | list }}
+        pool_min_total: "{{ autoscaling_pools | map(attribute='autoscaling.min_replica') | map('int') | sum }}"
+        pool_max_total: "{{ autoscaling_pools | map(attribute='autoscaling.max_replica') | map('int') | sum }}"
+      ansible.builtin.assert:
+        that:
+          - ocm_autoscale_node_pools.status | default(0) == 200
+          - autoscaling_pools | length > 0
+          - pool_min_total | int == expected_min | int
+          - pool_max_total | int == expected_max | int
+        fail_msg: >-
+          FAIL: OCM node_pools returned
+          HTTP {{ ocm_autoscale_node_pools.status | default('none') }};
+          {{ autoscaling_pools | length }} autoscaling node pool(s) sum to
+          min={{ pool_min_total }}, max={{ pool_max_total }} but the default pool
+          requested min={{ expected_min }}, max={{ expected_max }}
+        success_msg: >-
+          PASS: {{ autoscaling_pools | length }} autoscaling node pool(s) sum to the
+          requested min={{ expected_min }}, max={{ expected_max }}
+      when: ocm_available
+
+    - ansible.builtin.set_fact:
+        features_passed: "{{ features_passed | int + 1 }}"
+  rescue:
+    - ansible.builtin.include_tasks: "{{ playbook_dir }}/../tasks/verify_feature_rescue.yml"
+      vars:
+        feature_id: default_autoscaling
+        fail_detail: "autoscaling not configured or min/max do not match expected"

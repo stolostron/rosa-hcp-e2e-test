@@ -1,0 +1,30 @@
+---
+# Feature Check: Long Cluster Name (not a registry feature, always SKIP on failure)
+
+- name: Verify Long Cluster Name
+  block:
+    - name: Assert cluster name matches and check length
+      ansible.builtin.assert:
+        that:
+          - rcp.spec.rosaClusterName is defined
+          - rcp.spec.rosaClusterName == cluster_name
+          - rcp.spec.rosaClusterName | length > 20
+        fail_msg: >-
+          SKIP: cluster name is {{ rcp.spec.rosaClusterName | default('') | length }} chars (needs >20)
+        success_msg: >-
+          PASS: rosaClusterName length = {{ rcp.spec.rosaClusterName | default('') | length }} chars
+
+    - ansible.builtin.set_fact:
+        features_passed: "{{ features_passed | int + 1 }}"
+  rescue:
+    - name: Fail if long_cluster_name was explicitly requested but cluster name is short
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../tasks/verify_feature_rescue.yml"
+      vars:
+        feature_id: long_cluster_name
+        fail_detail: "cluster name length is {{ (rcp.spec.rosaClusterName | default(cluster_name | default(''))) | length }} chars (needs >20)"
+      when: "'long_cluster_name' in requested_features_list"
+
+    - name: Skip when cluster name is short and long_cluster_name was not requested
+      ansible.builtin.debug:
+        msg: "SKIP: cluster name is not long (not explicitly requested)"
+      when: "'long_cluster_name' not in requested_features_list"

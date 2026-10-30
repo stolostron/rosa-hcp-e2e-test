@@ -722,7 +722,8 @@ class TestSuiteRunner:
             feature_data = self.load_feature_verification()
             if feature_data:
                 archived = results_date_dir / f"feature-verification{label_part}-{timestamp}.json"
-                with open(archived, 'w') as f:
+                # Created 0600 in one step: the spec snapshot can hold cluster details.
+                with open(archived, 'w', opener=lambda p, flags: os.open(p, flags, 0o600)) as f:
                     json.dump(feature_data, f, indent=2)
                 self._artifact_archived = True
 
