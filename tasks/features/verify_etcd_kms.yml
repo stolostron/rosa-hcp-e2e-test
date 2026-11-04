@@ -1,0 +1,57 @@
+---
+# Feature Check: ETCD KMS Encryption (via AWS CLI)
+
+- name: Verify ETCD KMS Encryption
+  vars:
+    verify_region: "{{ aws_region | default(rcp.spec.region | default('us-west-2')) }}"
+    kms_arn: "{{ etcd_encryption_kms_arn | default(rcp.spec.etcdEncryptionKMSARN | default('')) }}"
+  block:
+    - name: Assert KMS ARN is provided
+      ansible.builtin.assert:
+        that:
+          - kms_arn | length > 0
+          - "kms_arn is match('^arn:aws:kms:')"
+        fail_msg: "FAIL: etcdEncryptionKMSARN not set or not a valid KMS ARN"
+        success_msg: "PASS: KMS ARN format valid"
+
+    - name: Verify KMS key exists and is enabled (boto3)
+      ansible.builtin.command:
+        argv:
+          - python3
+          - -c
+          - |
+            import boto3, json, os
+            kms = boto3.client('kms', region_name=os.environ['VERIFY_REGION'])
+            r = kms.describe_key(KeyId=os.environ['KMS_ARN'])
+            m = r['KeyMetadata']
+            print(json.dumps({'Arn': m['Arn'], 'Enabled': m['Enabled'], 'State': m['KeyState']}))
+      environment:
+        VERIFY_REGION: "{{ verify_region }}"
+        KMS_ARN: "{{ kms_arn }}"
+      register: boto3_kms_check
+      changed_when: false
+      no_log: true
+      when: boto3_check.rc == 0
+
+    - name: Parse KMS key response
+      ansible.builtin.set_fact:
+        aws_kms_key: "{{ boto3_kms_check.stdout | from_json }}"
+      when: boto3_check.rc == 0
+
+    - name: Assert KMS key is enabled and ARN matches
+      ansible.builtin.assert:
+        that:
+          - aws_kms_key.Arn == kms_arn
+          - aws_kms_key.Enabled | bool
+          - aws_kms_key.State == 'Enabled'
+        fail_msg: "FAIL: KMS key not found, disabled, or ARN mismatch"
+        success_msg: "PASS: KMS key exists and is enabled"
+      when: boto3_check.rc == 0
+
+    - ansible.builtin.set_fact:
+        features_passed: "{{ features_passed | int + 1 }}"
+  rescue:
+    - ansible.builtin.include_tasks: "{{ playbook_dir }}/../tasks/verify_feature_rescue.yml"
+      vars:
+        feature_id: etcd_kms
+        fail_detail: "KMS key not found or not enabled in AWS"

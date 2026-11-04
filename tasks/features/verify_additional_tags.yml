@@ -1,0 +1,49 @@
+---
+# Feature Check: Additional Tags (via CRD + OCM API)
+
+- name: Verify Additional Tags
+  block:
+    - name: Assert additionalTags present in CRD
+      ansible.builtin.assert:
+        that:
+          - rcp.spec.additionalTags is defined
+          - rcp.spec.additionalTags | length > 0
+        fail_msg: "FAIL: additionalTags not set on ROSAControlPlane"
+        success_msg: "PASS: additionalTags present on ROSAControlPlane"
+
+    - name: Assert default tags in CRD
+      ansible.builtin.assert:
+        that:
+          - "'env' in rcp.spec.additionalTags"
+          - "'purpose' in rcp.spec.additionalTags"
+          - "'automated' in rcp.spec.additionalTags"
+        fail_msg: "FAIL: Default tags (env, purpose, automated) not found in CRD additionalTags"
+        success_msg: "PASS: Default tags present in CRD additionalTags"
+
+    - name: Assert custom tags in CRD
+      ansible.builtin.assert:
+        that:
+          - item.key in rcp.spec.additionalTags
+          - rcp.spec.additionalTags[item.key] | string == item.value | string
+        fail_msg: "FAIL: Custom tag '{{ item.key }}' not found in CRD additionalTags"
+        success_msg: "PASS: Custom tag '{{ item.key }}' found in CRD additionalTags"
+      loop: "{{ additional_tags | default({}) | dict2items }}"
+      when: additional_tags is defined and (additional_tags | length > 0)
+
+    - name: Cross-check tags via OCM API
+      ansible.builtin.assert:
+        that:
+          - ocm_cluster.aws.tags is defined
+          - "'env' in ocm_cluster.aws.tags"
+          - "'automated' in ocm_cluster.aws.tags"
+        fail_msg: "FAIL: OCM aws.tags missing default tags"
+        success_msg: "PASS: OCM aws.tags confirm default tags"
+      when: ocm_available
+
+    - ansible.builtin.set_fact:
+        features_passed: "{{ features_passed | int + 1 }}"
+  rescue:
+    - ansible.builtin.include_tasks: "{{ playbook_dir }}/../tasks/verify_feature_rescue.yml"
+      vars:
+        feature_id: additional_tags
+        fail_detail: "default or custom tags not found in CRD or OCM"

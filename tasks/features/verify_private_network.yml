@@ -1,0 +1,132 @@
+---
+# Feature Check: Private Cluster (via CRD + OCM API)
+
+- name: Verify Private Cluster
+  vars:
+    verify_region: "{{ aws_region | default(rcp.spec.region | default('us-west-2')) }}"
+    stack_name: "{{ cluster_name }}-rosa-network-stack"
+  block:
+    - name: Assert endpointAccess via OCM
+      ansible.builtin.assert:
+        that:
+          - ocm_cluster.api is defined
+          - ocm_cluster.api.listening is defined
+          - ocm_cluster.api.listening == 'internal'
+        fail_msg: "FAIL: OCM API listening mode is not 'internal'"
+        success_msg: "PASS: OCM confirms cluster API is internal (private)"
+      when: ocm_available
+
+    - name: Assert endpointAccess via CRD (fallback)
+      ansible.builtin.assert:
+        that:
+          - rcp.spec.endpointAccess is defined
+          - rcp.spec.endpointAccess == 'Private'
+        fail_msg: "FAIL: CRD endpointAccess is not 'Private'"
+        success_msg: "PASS: CRD confirms endpointAccess = Private"
+      when: not ocm_available
+
+    - name: Query VPC ID from CloudFormation stack subnets (boto3)
+      ansible.builtin.command:
+        argv:
+          - python3
+          - -c
+          - |
+            import boto3, os
+            ec2 = boto3.client('ec2', region_name=os.environ['VERIFY_REGION'])
+            r = ec2.describe_subnets(Filters=[{'Name': 'tag:aws:cloudformation:stack-name', 'Values': [os.environ['STACK_NAME']]}])
+            print(r['Subnets'][0]['VpcId'] if r['Subnets'] else '')
+      environment:
+        VERIFY_REGION: "{{ verify_region }}"
+        STACK_NAME: "{{ stack_name }}"
+      register: boto3_vpc_id_cfn
+      changed_when: false
+      failed_when: false
+      no_log: true
+      when: boto3_check.rc == 0
+
+    - name: Query VPC ID from cluster-tagged instances (boto3 BYON fallback)
+      ansible.builtin.command:
+        argv:
+          - python3
+          - -c
+          - |
+            import boto3, os
+            ec2 = boto3.client('ec2', region_name=os.environ['VERIFY_REGION'])
+            r = ec2.describe_instances(Filters=[
+                {'Name': 'tag:kubernetes.io/cluster/' + os.environ['CLUSTER_NAME'], 'Values': ['owned']},
+                {'Name': 'instance-state-name', 'Values': ['running']}
+            ])
+            reservations = r.get('Reservations', [])
+            print(reservations[0]['Instances'][0]['VpcId'] if reservations and reservations[0].get('Instances') else '')
+      environment:
+        VERIFY_REGION: "{{ verify_region }}"
+        CLUSTER_NAME: "{{ cluster_name }}"
+      register: boto3_vpc_id_instance
+      changed_when: false
+      failed_when: false
+      no_log: true
+      when:
+        - boto3_check.rc == 0
+        - boto3_vpc_id_cfn.stdout | default('') | trim is not match('^vpc-')
+
+    - name: Set resolved VPC ID
+      ansible.builtin.set_fact:
+        aws_vpc_id: >-
+          {{ (boto3_vpc_id_cfn.stdout | trim)
+             if (boto3_vpc_id_cfn.stdout | default('') | trim) is match('^vpc-')
+             else (boto3_vpc_id_instance.stdout | default('') | trim) }}
+      when: boto3_check.rc == 0
+
+    - name: Log VPC resolution result
+      ansible.builtin.debug:
+        msg: "{{ 'VPC ID resolved — proceeding with LB check' if (aws_vpc_id | default('')) is match('^vpc-') else 'VPC ID not resolved — skipping deeper AWS checks' }}"
+      when: boto3_check.rc == 0
+
+    - name: Query load balancers in the VPC (boto3)
+      ansible.builtin.command:
+        argv:
+          - python3
+          - -c
+          - |
+            import boto3, json, os
+            elbv2 = boto3.client('elbv2', region_name=os.environ['VERIFY_REGION'])
+            lbs = []
+            for page in elbv2.get_paginator('describe_load_balancers').paginate():
+                lbs += [{'Name': lb['LoadBalancerName'], 'Scheme': lb['Scheme']}
+                        for lb in page['LoadBalancers']
+                        if lb.get('VpcId') == os.environ['VPC_ID']]
+            print(json.dumps(lbs))
+      environment:
+        VERIFY_REGION: "{{ verify_region }}"
+        VPC_ID: "{{ aws_vpc_id | default('') }}"
+      register: boto3_nlb_raw
+      changed_when: false
+      failed_when: false
+      no_log: true
+      when: boto3_check.rc == 0 and (aws_vpc_id | default('')) is match('^vpc-')
+
+    - name: Parse NLB response
+      ansible.builtin.set_fact:
+        aws_nlbs: "{{ boto3_nlb_raw.stdout | from_json }}"
+      when: boto3_check.rc == 0 and boto3_nlb_raw.rc | default(1) == 0
+
+    - name: Assert cluster is private (no internet-facing LBs)
+      ansible.builtin.assert:
+        that:
+          - aws_nlbs | selectattr('Scheme', 'equalto', 'internet-facing') | list | length == 0
+        fail_msg: "FAIL: Found internet-facing load balancer(s) in VPC — cluster is not private"
+        success_msg: "PASS: All load balancers are internal — cluster is private"
+      when: boto3_check.rc == 0 and aws_nlbs is defined
+
+    - name: Skip AWS verification (boto3 not available)
+      ansible.builtin.debug:
+        msg: "INFO: boto3 not available — private_network verified via CRD endpointAccess only"
+      when: boto3_check.rc != 0
+
+    - ansible.builtin.set_fact:
+        features_passed: "{{ features_passed | int + 1 }}"
+  rescue:
+    - ansible.builtin.include_tasks: "{{ playbook_dir }}/../tasks/verify_feature_rescue.yml"
+      vars:
+        feature_id: private_network
+        fail_detail: "cluster is not private or could not verify VPC/LB configuration"

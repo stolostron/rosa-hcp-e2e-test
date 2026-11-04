@@ -1,0 +1,36 @@
+---
+# Feature Check: Domain Prefix (via OCM API)
+
+- name: Verify Domain Prefix
+  vars:
+    expected_prefix: "{{ domain_prefix | default(name_prefix | default(cluster_name | regex_replace('-rosa-hcp$', ''))) }}"
+  block:
+    - name: Assert domainPrefix via OCM
+      ansible.builtin.assert:
+        that:
+          - ocm_cluster.domain_prefix is defined
+          - ocm_cluster.domain_prefix | length > 0
+          - ocm_cluster.domain_prefix | length <= 15
+          - ocm_cluster.domain_prefix == expected_prefix
+        fail_msg: "FAIL: OCM domain_prefix does not match expected"
+        success_msg: "PASS: OCM confirms domain_prefix matches expected"
+      when: ocm_available
+
+    - name: Assert domainPrefix via CRD (fallback)
+      ansible.builtin.assert:
+        that:
+          - rcp.spec.domainPrefix is defined
+          - rcp.spec.domainPrefix | length > 0
+          - rcp.spec.domainPrefix | length <= 15
+          - rcp.spec.domainPrefix == expected_prefix
+        fail_msg: "FAIL: domainPrefix does not match expected"
+        success_msg: "PASS: domainPrefix matches expected (CRD fallback)"
+      when: not ocm_available
+
+    - ansible.builtin.set_fact:
+        features_passed: "{{ features_passed | int + 1 }}"
+  rescue:
+    - ansible.builtin.include_tasks: "{{ playbook_dir }}/../tasks/verify_feature_rescue.yml"
+      vars:
+        feature_id: domain_prefix
+        fail_detail: "domainPrefix does not match expected value"

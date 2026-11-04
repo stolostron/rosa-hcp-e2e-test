@@ -1,0 +1,43 @@
+---
+# Feature Check: Availability Zones (via OCM API + CRD)
+
+- name: Verify Availability Zones
+  vars:
+    expected_az_count: "{{ availability_zone_count | default(2) | int }}"
+  block:
+    - name: Assert availability zones via OCM
+      ansible.builtin.assert:
+        that:
+          - ocm_cluster.nodes.availability_zones is defined
+          - ocm_cluster.nodes.availability_zones | length | int == expected_az_count | int
+        fail_msg: "FAIL: OCM reports {{ ocm_cluster.nodes.availability_zones | default([]) | length }} AZs, expected {{ expected_az_count }}"
+        success_msg: "PASS: OCM confirms {{ expected_az_count }} availability zones"
+      when: ocm_available
+
+    - name: Assert availability zones via ROSANetwork CRD
+      ansible.builtin.assert:
+        that:
+          - rnet is defined
+          - rnet.spec.availabilityZones is defined
+          - rnet.spec.availabilityZones | length | int == expected_az_count | int
+        fail_msg: "FAIL: ROSANetwork has {{ rnet.spec.availabilityZones | default([]) | length }} AZs, expected {{ expected_az_count }}"
+        success_msg: "PASS: ROSANetwork CRD confirms {{ expected_az_count }} availability zones"
+      when: rnet is defined
+
+    - name: Assert availability zones via ROSANetwork status subnets
+      ansible.builtin.assert:
+        that:
+          - rnet is defined
+          - rnet.status.subnets is defined
+          - rnet.status.subnets | length | int == expected_az_count | int
+        fail_msg: "FAIL: ROSANetwork status shows {{ rnet.status.subnets | default([]) | length }} subnet pairs, expected {{ expected_az_count }}"
+        success_msg: "PASS: ROSANetwork status confirms {{ expected_az_count }} subnet pairs"
+      when: rnet is defined and rnet.status is defined and rnet.status.subnets is defined
+
+    - ansible.builtin.set_fact:
+        features_passed: "{{ features_passed | int + 1 }}"
+  rescue:
+    - ansible.builtin.include_tasks: "{{ playbook_dir }}/../tasks/verify_feature_rescue.yml"
+      vars:
+        feature_id: availability_zones
+        fail_detail: "availability zones do not match expected count"
