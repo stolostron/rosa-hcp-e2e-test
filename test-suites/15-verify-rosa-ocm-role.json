@@ -1,0 +1,34 @@
+{
+  "name": "Verify ROSAOCMRoleConfig",
+  "description": "Verify ROSAOCMRoleConfig lifecycle: creation, reconciliation, status field population, and safe Retain deletion policy on shared AWS account",
+  "version": "1.0.0",
+  "tags": [
+    "rosa",
+    "ocm-role",
+    "iam",
+    "lifecycle"
+  ],
+  "environment": "any",
+  "playbooks": [
+    {
+      "name": "Verify ROSAOCMRoleConfig",
+      "file": "playbooks/verify_rosa_ocm_role.yml",
+      "description": "Tests ROSAOCMRoleConfig creation, readiness polling, status verification, and safe teardown with Retain policy",
+      "test_case_id": "ROSA-OCM-ROLE-RECONCILIATION",
+      "extra_vars": {
+        "ocm_role_config_name": "shared-ocm-role",
+        "ocm_role_prefix": "CAPA",
+        "ocm_role_profile": "Admin",
+        "ocm_role_deletion_policy": "Retain"
+      }
+    }
+  ],
+  "documentation": {
+    "overview": "This test suite verifies the ROSAOCMRoleConfig CRD and controller. It validates that the controller reconciles existing account roles, queries OCM organization linkage, marks the CR Ready, populates roleARN and organizationID, and safely removes finalizers on deletion without unlinking the shared account.",
+    "prerequisites": [
+      "OpenShift hub cluster with CAPA controller supporting ROSAOCMRoleConfig",
+      "Valid OpenShift cluster login credentials configured in vars/user_vars.yml or environment",
+      "OCM credentials configured in rosa-creds-secret"
+    ]
+  }
+}

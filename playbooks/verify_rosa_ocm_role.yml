@@ -1,0 +1,56 @@
+---
+- name: Verify ROSAOCMRoleConfig Lifecycle
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  any_errors_fatal: true
+  environment:
+    AWS_ACCESS_KEY_ID: "{{ AWS_ACCESS_KEY_ID | default(lookup('env', 'AWS_ACCESS_KEY_ID'), true) }}"
+    AWS_SECRET_ACCESS_KEY: "{{ AWS_SECRET_ACCESS_KEY | default(lookup('env', 'AWS_SECRET_ACCESS_KEY'), true) }}"
+    AWS_DEFAULT_REGION: "{{ aws_region | default(lookup('env', 'AWS_DEFAULT_REGION') | default('us-east-1', true), true) }}"
+  vars_files:
+    - ../vars/vars.yml
+  vars:
+    ocm_role_config_name: "shared-ocm-role"
+    ocm_role_prefix: "CAPA"
+    ocm_role_profile: "Admin"
+    ocm_role_deletion_policy: "Retain"
+
+  tasks:
+    - name: Load user variables
+      ansible.builtin.include_vars: "{{ item }}"
+      with_first_found:
+        - files:
+            - ../vars/user_vars.yml
+          skip: true
+      no_log: true
+
+    - name: Set AWS credentials
+      ansible.builtin.set_fact:
+        AWS_ACCESS_KEY_ID: "{{ lookup('env', 'AWS_ACCESS_KEY_ID') | default(AWS_ACCESS_KEY_ID | default(''), true) }}"
+        AWS_SECRET_ACCESS_KEY: "{{ lookup('env', 'AWS_SECRET_ACCESS_KEY') | default(AWS_SECRET_ACCESS_KEY | default(''), true) }}"
+        aws_region: "{{ lookup('env', 'AWS_REGION') | default(aws_region | default('us-east-1', true), true) }}"
+      no_log: true
+
+    - name: Set cluster credentials
+      ansible.builtin.set_fact:
+        ocp_user: "{{ lookup('env', 'OCP_HUB_CLUSTER_USER') | default(OCP_HUB_CLUSTER_USER | default(''), true) }}"
+        ocp_password: "{{ lookup('env', 'OCP_HUB_CLUSTER_PASSWORD') | default(OCP_HUB_CLUSTER_PASSWORD | default(''), true) }}"
+        api_url: "{{ lookup('env', 'OCP_HUB_API_URL') | default(OCP_HUB_API_URL | default(''), true) }}"
+      no_log: true
+      when: deployment_mode != 'standalone'
+
+    - name: Login to OpenShift Hub Cluster
+      ansible.builtin.include_tasks: ../tasks/login_ocp.yml
+      when: deployment_mode != 'standalone'
+
+    - name: Execute ROSAOCMRoleConfig test lifecycle
+      block:
+        - name: Create ROSAOCMRoleConfig
+          ansible.builtin.include_tasks: ../tasks/create_rosa_ocm_role.yml
+
+        - name: Wait for ROSAOCMRoleConfig readiness and verify status
+          ansible.builtin.include_tasks: ../tasks/wait_for_rosa_ocm_role.yml
+      always:
+        - name: Delete ROSAOCMRoleConfig and verify Retain policy
+          ansible.builtin.include_tasks: ../tasks/delete_rosa_ocm_role.yml

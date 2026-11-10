@@ -1,0 +1,13 @@
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+kind: ROSAOCMRoleConfig
+metadata:
+  name: "{{ ocm_role_config_name | default('shared-ocm-role') }}"
+  labels:
+    automation.acm.redhat.com/test-case: "ROSA-OCM-ROLE-TEST"
+spec:
+  rolePrefix: "{{ ocm_role_prefix | default('CAPA') }}"
+  profile: "{{ ocm_role_profile | default('Admin') }}"
+  identityRef:
+    kind: "{{ ocm_role_identity_kind | default('AWSClusterControllerIdentity') }}"
+    name: "{{ ocm_role_identity_name | default('default') }}"
+  deletionPolicy: "{{ ocm_role_deletion_policy | default('Retain') }}"

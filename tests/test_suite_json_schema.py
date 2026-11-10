@@ -22,6 +22,7 @@ SUITE_FILES = [
     "05-verify-mce-environment.json",
     "10-configure-mce-environment.json",
     "10-install-capi-standalone.json",
+    "15-verify-rosa-ocm-role.json",
     "20-rosa-hcp-provision.json",
     "27-rosa-hcp-add-machinepool.json",
     "28-rosa-hcp-delete-machinepool.json",
@@ -33,6 +34,7 @@ SUITE_FILES = [
 # 10-configure-mce-environment.json does not have a documentation section
 SUITES_WITH_DOCUMENTATION = [
     "05-verify-mce-environment.json",
+    "15-verify-rosa-ocm-role.json",
     "20-rosa-hcp-provision.json",
     "27-rosa-hcp-add-machinepool.json",
     "28-rosa-hcp-delete-machinepool.json",

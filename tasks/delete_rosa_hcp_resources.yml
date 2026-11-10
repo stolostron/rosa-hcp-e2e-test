@@ -923,20 +923,20 @@
 - name: Set deletion summary
   set_fact:
     deletion_summary: |
-      {% if 'not-found' not in cluster_exists.stdout %}
-      • Core Cluster: {{ '✅ Deleted' if delete_all is defined and delete_all.rc == 0 else '⏳ Deletion initiated' }}
+      {% if ('cluster/' + cluster_name) in (resources_to_delete | default([])) %}
+      • Core Cluster: {{ '✅ Deleted' if (delete_all is defined and (delete_all.rc | default(1)) == 0) else '⏳ Deletion initiated' }}
       {% endif %}
-      {% if 'not-found' not in rcp_exists.stdout %}
-      • ROSAControlPlane: {{ '✅ Deleted' if (wait_for_deletion and ((wait_rcp | default({'rc': -1})).rc == 0 or (final_rcp_check | default({'rc': -1})).rc == 0)) else '⏳ Deletion initiated' }}
+      {% if (rcp_exists.stdout | trim) not in ['__NOTFOUND__', 'not-found'] %}
+      • ROSAControlPlane: {{ '✅ Deleted' if (wait_for_deletion and ((wait_rcp is defined and wait_rcp.rc | default(1) == 0) or (final_rcp_check is defined and final_rcp_check.rc | default(1) == 0))) else '⏳ Deletion initiated' }}
       {% endif %}
-      {% if 'not-found' not in rmp_exists.stdout %}
+      {% if (rmp_exists.stdout | trim) not in ['__NOTFOUND__', 'not-found'] %}
       • ROSAMachinePool: ✅ Auto-deleted (cascade)
       {% endif %}
       {% if delete_network | bool and discovered_rosa_network_name != 'not-found' %}
-      • ROSANetwork: {{ '✅ Deleted' if (wait_for_deletion and ((wait_rn | default({'rc': -1})).rc == 0 or (final_rn_check | default({'rc': -1})).rc == 0)) else '⏳ Deletion initiated' }}
+      • ROSANetwork: {{ '✅ Deleted' if (wait_for_deletion and ((wait_rn is defined and wait_rn.rc | default(1) == 0) or (final_rn_check is defined and final_rn_check.rc | default(1) == 0))) else '⏳ Deletion initiated' }}
       {% endif %}
       {% if delete_roles | bool and discovered_rosa_role_config_name != 'not-found' %}
-      • ROSARoleConfig: {{ '✅ Deleted' if (wait_for_deletion and ((wait_rrc | default({'rc': -1})).rc == 0 or (final_rrc_check | default({'rc': -1})).rc == 0)) else '⏳ Deletion initiated' }}
+      • ROSARoleConfig: {{ '✅ Deleted' if (wait_for_deletion and ((wait_rrc is defined and wait_rrc.rc | default(1) == 0) or (final_rrc_check is defined and final_rrc_check.rc | default(1) == 0))) else '⏳ Deletion initiated' }}
       {% endif %}
 
 - name: Display deletion summary

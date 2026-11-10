@@ -298,6 +298,43 @@ class TestSuiteRunner:
                 })
         return suites
 
+    def _build_ansible_cmd(self, playbook_path: Path, playbook: Dict) -> List[str]:
+        """Build the ansible-playbook command with appropriate variables."""
+        cmd = ["ansible-playbook", str(playbook_path)]
+
+        # Add verbosity flags
+        if self.verbosity > 0:
+            cmd.append("-" + "v" * min(self.verbosity, 4))  # Max -vvvv
+
+        # Merge playbook vars with extra vars (extra vars take precedence)
+        all_vars = {}
+        if "extra_vars" in playbook:
+            all_vars.update(playbook["extra_vars"])
+        all_vars.update(self.extra_vars)  # Command-line overrides JSON
+
+        # Add dry_run variable for playbooks to use
+        if self.dry_run:
+            all_vars["dry_run"] = "true"
+
+        # Add merged variables to command
+        # Complex types (dicts/lists) are passed as a JSON blob so ansible
+        # parses them correctly; simple types use key=value form.
+        complex_vars = {}
+        for key, value in all_vars.items():
+            if isinstance(value, (dict, list)):
+                complex_vars[key] = value
+            elif isinstance(value, str) and (value.startswith('{') or value.startswith('[')):
+                try:
+                    complex_vars[key] = json.loads(value)
+                except json.JSONDecodeError:
+                    cmd.extend(["-e", f"{key}={value}"])
+            else:
+                cmd.extend(["-e", f"{key}={value}"])
+        if complex_vars:
+            cmd.extend(["-e", json.dumps(complex_vars)])
+
+        return cmd
+
     def run_playbook(self, playbook: Dict, suite_name: str) -> Dict:
         """Execute a single Ansible playbook."""
         playbook_name = playbook.get("name")
@@ -322,38 +359,7 @@ class TestSuiteRunner:
         start_time = time.time()
 
         try:
-            # Build ansible-playbook command
-            cmd = ["ansible-playbook", str(playbook_path)]
-
-            # Add verbosity flags
-            if self.verbosity > 0:
-                cmd.append("-" + "v" * min(self.verbosity, 4))  # Max -vvvv
-
-            # Merge playbook vars with extra vars (extra vars take precedence)
-            all_vars = {}
-            if "extra_vars" in playbook:
-                all_vars.update(playbook["extra_vars"])
-            all_vars.update(self.extra_vars)  # Command-line overrides JSON
-
-            # Add dry_run variable for playbooks to use
-            if self.dry_run:
-                all_vars["dry_run"] = "true"
-
-            # Add merged variables to command
-            # Complex types (dicts/lists) are passed as a JSON blob so ansible
-            # parses them correctly; simple types use key=value form.
-            complex_vars = {}
-            for key, value in all_vars.items():
-                val_str = str(value)
-                if val_str.startswith('{') or val_str.startswith('['):
-                    try:
-                        complex_vars[key] = json.loads(val_str)
-                    except json.JSONDecodeError:
-                        cmd.extend(["-e", f"{key}={value}"])
-                else:
-                    cmd.extend(["-e", f"{key}={value}"])
-            if complex_vars:
-                cmd.extend(["-e", json.dumps(complex_vars)])
+            cmd = self._build_ansible_cmd(playbook_path, playbook)
 
             # Set timeout if specified
             timeout = playbook.get("timeout", None)

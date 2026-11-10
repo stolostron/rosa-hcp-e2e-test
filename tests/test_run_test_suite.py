@@ -120,6 +120,52 @@ def test_extra_vars_override_automation_path():
         "Extra vars should be able to override AUTOMATION_PATH"
 
 
+def test_build_ansible_cmd_complex_list():
+    import json
+    apps = ["audit", "oauth", "general"]
+    runner = _make_runner(extra_vars={"log_forward_applications": apps})
+    cmd = runner._build_ansible_cmd(Path("playbooks/test.yml"), {})
+
+    # The list should NOT be passed as a single-quoted Python string: key=['...']
+    assert not any(arg.startswith("log_forward_applications=[") for arg in cmd)
+
+    # It should be serialized inside a JSON extra_vars blob
+    json_args = [cmd[i + 1] for i, arg in enumerate(cmd) if arg == "-e" and i + 1 < len(cmd)]
+    parsed_json = {}
+    for j_arg in json_args:
+        try:
+            parsed_json.update(json.loads(j_arg))
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    assert "log_forward_applications" in parsed_json
+    assert parsed_json["log_forward_applications"] == apps
+
+
+def test_build_ansible_cmd_complex_dict():
+    import json
+    tags = {"env": "test", "owner": "ci"}
+    runner = _make_runner(extra_vars={"custom_tags": tags})
+    cmd = runner._build_ansible_cmd(Path("playbooks/test.yml"), {})
+
+    json_args = [cmd[i + 1] for i, arg in enumerate(cmd) if arg == "-e" and i + 1 < len(cmd)]
+    parsed_json = {}
+    for j_arg in json_args:
+        try:
+            parsed_json.update(json.loads(j_arg))
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    assert "custom_tags" in parsed_json
+    assert parsed_json["custom_tags"] == tags
+
+
+def test_build_ansible_cmd_simple_vars():
+    runner = _make_runner(extra_vars={"simple_key": "simple_value"})
+    cmd = runner._build_ansible_cmd(Path("playbooks/test.yml"), {})
+    assert "simple_key=simple_value" in cmd
+
+
 # ================================================================
 # Suite Label Extraction
 # ================================================================
