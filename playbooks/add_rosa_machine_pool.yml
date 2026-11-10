@@ -153,6 +153,21 @@
     - name: Detect core CAPI API version
       ansible.builtin.include_tasks: ../tasks/detect_capi_core_api_version.yml
 
+    - name: Validate machine pool parameters are safe
+      ansible.builtin.fail:
+        msg: "pool_name must contain only alphanumeric characters, hyphens, and underscores (got: {{ pool_name }})"
+      when: pool_name is not regex('^[a-zA-Z0-9_-]+$')
+
+    - name: Validate instance type is safe
+      ansible.builtin.fail:
+        msg: "instance_type must be a valid AWS instance type format (got: {{ instance_type }})"
+      when: instance_type is not regex('^[a-z0-9]+\.[a-z0-9]+$')
+
+    - name: Validate availability zone format
+      ansible.builtin.fail:
+        msg: "availability_zone must be empty or a valid AWS AZ format (got: {{ availability_zone }})"
+      when: availability_zone != '' and availability_zone is not regex('^[a-z]{2}-[a-z]+-[0-9][a-z]?$')
+
     - name: Create MachinePool resource
       ansible.builtin.shell: |
         cat <<'YAML' | oc apply -f -
