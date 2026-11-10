@@ -1,17 +1,17 @@
-# run-capa-rc-tests Skill — Enhanced with Live Monitoring & User Guidance
+# run-capa-rc-tests Skill — Test ROSA/OpenShift Features
 
 ## Quick Start
 
 ### Basic Usage
 ```bash
-/run-capa-rc-tests day1-basic rs2 5.0.0-rc.6
+/run-capa-rc-tests day1-basic rs2 5.0.0
 ```
 
 ### What You'll See
 
 **Minute 0:** Test starts
 ```
-🚀 Starting day1-basic scenario with rs2 prefix (5.0.0-rc.6)
+🚀 Starting day1-basic scenario with rs2 prefix (5.0.0)
 ```
 
 **Minutes 0-1:** MCE configuration
@@ -65,11 +65,11 @@ Options:
 ```
 ✅ TEST PASSED!
 
-Results saved to: RC6_TEST_RESULTS.md
+Results saved to: TEST_RESULTS.md
 Features verified: 5/5 ✅
 Duration: 17m 12s
 
-🎯 Next: /run-capa-rc-tests day1-combo rs3 5.0.0-rc.6
+🎯 Next: /run-capa-rc-tests day1-combo rs3 5.0.0
 ```
 
 ---

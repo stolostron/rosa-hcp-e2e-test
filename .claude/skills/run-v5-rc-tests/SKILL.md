@@ -21,7 +21,7 @@ Executes end-to-end scenario-based CAPA testing for ROSA HCP clusters across ROS
 
 ### Simple: scenario, prefix, version
 ```bash
-/run-capa-rc-tests day1-basic rs3 5.0.0-rc.6
+/run-capa-rc-tests day1-basic rs3 5.0.0
 ```
 
 ### Interactive: prompt-driven
@@ -32,18 +32,18 @@ Executes end-to-end scenario-based CAPA testing for ROSA HCP clusters across ROS
 
 ### Command-line style: flags
 ```bash
-/run-capa-rc-tests --scenario day1-basic --prefix rs3 --version 5.0.0-rc.6
+/run-capa-rc-tests --scenario day1-basic --prefix rs3 --version 5.0.0
 ```
 
 ### Keep cluster for inspection
 ```bash
-/run-capa-rc-tests day1-basic rs3 5.0.0-rc.6 --keep-cluster
+/run-capa-rc-tests day1-basic rs3 5.0.0 --keep-cluster
 # Skips delete stage, leaves cluster running
 ```
 
 ### Dry-run mode (validate configuration without running)
 ```bash
-/run-capa-rc-tests day1-basic rs3 5.0.0-rc.6 --dry-run
+/run-capa-rc-tests day1-basic rs3 5.0.0 --dry-run
 # Validates credentials and configuration, shows what would execute
 ```
 
