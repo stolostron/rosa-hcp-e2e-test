@@ -100,7 +100,7 @@
       {{ requested_features_list | intersect(aws_dependent_features)
          if (boto3_check.rc | default(1)) != 0 else [] }}
   vars:
-    aws_dependent_features: [audit_logging, etcd_kms, byon, private_network]
+    aws_dependent_features: [audit_logging, etcd_kms, byon, private_network, spot_market_options]
 
 - name: Warn about features verified without AWS
   ansible.builtin.debug:

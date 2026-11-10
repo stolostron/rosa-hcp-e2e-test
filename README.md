@@ -333,6 +333,7 @@ Each feature has detailed documentation in [`docs/features/`](docs/features/):
 | Parallel Upgrade | [parallel-upgrade.md](docs/features/parallel-upgrade.md) |
 | Private Network | [private-network.md](docs/features/private-network.md) |
 | Security Groups | [security-groups.md](docs/features/security-groups.md) |
+| Spot Instances | [spot-instances.md](docs/features/spot-instances.md) |
 
 ## Version-Specific Templates
 
@@ -570,13 +571,33 @@ playbook-level testcase carrying the raw error.
 
 ### Adding a New Feature
 
+See **[SKILLS.md](SKILLS.md)** for the full procedure. It is built around a feature
+intake form — CRD resource, field path, validation rules, OCM field, verification
+assertions — plus the step-by-step changes below, copy-paste skeletons, and the
+validation commands.
+
+Fill the form in yourself, or let an agent draft it from whatever source exists and
+just confirm it:
+
+- **From an upstream PR** — *"Add a feature test for X. Upstream PR:
+  `kubernetes-sigs/cluster-api-provider-aws#6334`"*. The agent reads the merged diff
+  for the field shape, immutability rules and OCM mapping.
+- **No PR** — most features here never had one. Name the CRD field, or just the
+  feature, and the agent reads the installed CRD schema instead.
+- **Form in hand** — copy the form from SKILLS.md §3, fill it, hand it over.
+
+`spot_market_options` is the worked example. The summary:
+
 1. Add the feature definition to `templates/schemas/feature-registry.yml`
 2. Add a CLI alias under `cli_aliases`
 3. Add the feature ID to `cli_features` if it's a Day 1 creation feature
-4. Add version-specific template conditionals under `templates/versions/`
-5. Add a feature doc to `docs/features/`
-6. Add the feature to a feature group if applicable
-7. Run `./run-test-suite.py --list-features` to verify
+4. Add a `feature_availability` entry to `templates/schemas/version-compatibility.yml`
+5. Add version-specific template conditionals under `templates/versions/`
+6. Add a `crd_field_map` entry and a `CHECK:` include to `playbooks/verify_feature_flags.yml`
+7. Add the verification task `tasks/features/verify_<feature_id>.yml`
+8. Add a feature doc to `docs/features/` and a row to the table above
+9. Add the feature to a feature group if applicable
+10. Run `./run-test-suite.py --list-features` and `python3 -m pytest tests/ -q` to verify
 
 ## Support
 

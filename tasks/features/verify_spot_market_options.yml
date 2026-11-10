@@ -1,0 +1,150 @@
+---
+# Feature Check: Spot Instances (via CRD + OCM node pools API + boto3)
+#
+# The field lives on ROSAMachinePool, not on the cluster object OCM returns for
+# /clusters?search=, so the OCM cross-check queries the cluster's node_pools
+# sub-resource — same approach as verify_disk_size.yml.
+
+- name: Verify Spot Instances
+  vars:
+    # Mirrors the template default in rosa-controlplane-only.yaml.j2: when the
+    # caller sets no bid cap we ask for "on-demand", so that is what must come back.
+    expected_max_price: "{{ spot_max_price | default('on-demand') }}"
+    verify_region: "{{ aws_region | default(rcp.spec.region | default('us-west-2')) }}"
+    # Same pattern the CRD enforces (kubebuilder:validation:Pattern on MaxPrice):
+    # a price greater than zero, or the on-demand sentinel.
+    max_price_pattern: '^([1-9][0-9]*(\.[0-9]+)?|0\.[0-9]*[1-9][0-9]*|on-demand)$'
+  block:
+    - name: Assert the requested bid is one the CRD would accept
+      ansible.builtin.assert:
+        that:
+          - expected_max_price is match(max_price_pattern)
+        fail_msg: >-
+          FAIL: spot_max_price '{{ expected_max_price }}' is not a valid maxPrice.
+          Use a price greater than zero (e.g. 0.5) or 'on-demand'.
+        success_msg: "PASS: requested maxPrice '{{ expected_max_price }}' is a valid bid"
+
+    - name: Assert spotMarketOptions via CRD
+      ansible.builtin.assert:
+        that:
+          - rmp.spec.spotMarketOptions is defined
+          - rmp.spec.spotMarketOptions.maxPrice is defined
+          - rmp.spec.spotMarketOptions.maxPrice | string == expected_max_price | string
+        fail_msg: >-
+          FAIL: CRD spotMarketOptions.maxPrice is
+          '{{ (rmp.spec.spotMarketOptions | default({})).maxPrice | default('undefined') }}',
+          expected '{{ expected_max_price }}'
+        success_msg: "PASS: CRD spotMarketOptions.maxPrice = {{ expected_max_price }}"
+
+    - name: Query OCM node pools for spot market options
+      ansible.builtin.uri:
+        url: "{{ ocm_api_url }}/api/clusters_mgmt/v1/clusters/{{ ocm_cluster.id }}/node_pools"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ ocm_token_result.json.access_token }}"
+          Accept: application/json
+        status_code: 200
+        timeout: 15
+      register: ocm_spot_node_pools
+      failed_when: false
+      changed_when: false
+      no_log: true
+      when: ocm_available and ocm_cluster.id is defined
+
+    # The ROSA API stores no max_price for an on-demand-priced spot pool, so an
+    # absent max_price there means the same thing as the "on-demand" sentinel —
+    # matching NodePoolToRosaMachinePoolSpec in the CAPA provider. Only a numeric
+    # bid is cross-checked for equality.
+    - name: Cross-check spot market options via OCM node pool
+      ansible.builtin.assert:
+        that:
+          - ocm_spot_pools | length > 0
+          - >-
+            ocm_spot_pools
+            | selectattr('aws_node_pool.spot_market_options', 'defined')
+            | list | length > 0
+          - >-
+            expected_max_price == 'on-demand'
+            or (ocm_spot_pools
+                | selectattr('aws_node_pool.spot_market_options.max_price', 'defined')
+                | map(attribute='aws_node_pool.spot_market_options.max_price')
+                | map('string') | select('equalto', expected_max_price | string)
+                | list | length > 0)
+        fail_msg: >-
+          FAIL: no OCM node pool reports spot_market_options matching
+          maxPrice '{{ expected_max_price }}'
+        success_msg: "PASS: OCM node pool confirms spot_market_options"
+      vars:
+        # .get(), not ['items'] — on an empty dict the subscript resolves to the
+        # dict.items *method* rather than a missing key, so | default([]) would
+        # never fire and the asserts above would run against a bound method.
+        ocm_spot_pools: "{{ (ocm_spot_node_pools.json | default({})).get('items', []) }}"
+      when:
+        - ocm_available
+        - ocm_spot_node_pools is defined
+        - ocm_spot_node_pools.json is defined
+
+    # The CRD and OCM both only prove the request was accepted. This proves AWS
+    # actually launched Spot capacity: on-demand instances have no
+    # InstanceLifecycle, Spot instances report 'spot'.
+    - name: Check worker instance lifecycle via boto3
+      ansible.builtin.command:
+        argv:
+          - python3
+          - -c
+          - |
+            import boto3, json, os
+            ec2 = boto3.client('ec2', region_name=os.environ['VERIFY_REGION'])
+            r = ec2.describe_instances(Filters=[
+                {'Name': 'tag:kubernetes.io/cluster/' + os.environ['CLUSTER_NAME'], 'Values': ['owned']},
+                {'Name': 'instance-state-name', 'Values': ['running']}
+            ])
+            instances = [
+                inst
+                for res in r.get('Reservations', [])
+                for inst in res.get('Instances', [])
+            ]
+            print(json.dumps({
+                'total': len(instances),
+                'spot': sum(1 for i in instances
+                            if i.get('InstanceLifecycle') == 'spot'),
+            }))
+      environment:
+        VERIFY_REGION: "{{ verify_region }}"
+        CLUSTER_NAME: "{{ cluster_name }}"
+      register: boto3_spot_check
+      changed_when: false
+      failed_when: false
+      no_log: true
+
+    - name: Parse worker instance lifecycle result
+      ansible.builtin.set_fact:
+        spot_instance_result: "{{ boto3_spot_check.stdout | default('{\"total\":0,\"spot\":0}') | from_json }}"
+      when: boto3_spot_check.rc == 0
+
+    - name: Assert AWS launched Spot workers
+      ansible.builtin.assert:
+        that:
+          - spot_instance_result.total | int > 0
+          - spot_instance_result.spot | int > 0
+        fail_msg: >-
+          FAIL: none of the {{ spot_instance_result.total | default(0) }} running
+          worker instance(s) report InstanceLifecycle=spot
+        success_msg: >-
+          PASS: {{ spot_instance_result.spot | default(0) }} of
+          {{ spot_instance_result.total | default(0) }} running worker instance(s)
+          are Spot
+      when: boto3_spot_check.rc == 0
+
+    - name: Skip Spot lifecycle check (boto3 failed)
+      ansible.builtin.debug:
+        msg: "WARN: boto3 instance lookup failed — spot verified via CRD/OCM only"
+      when: boto3_spot_check.rc != 0
+
+    - ansible.builtin.set_fact:
+        features_passed: "{{ features_passed | int + 1 }}"
+  rescue:
+    - ansible.builtin.include_tasks: "{{ playbook_dir }}/../tasks/verify_feature_rescue.yml"
+      vars:
+        feature_id: spot_market_options
+        fail_detail: "spotMarketOptions not set on ROSAMachinePool or workers are not Spot instances"
