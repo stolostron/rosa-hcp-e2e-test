@@ -34,6 +34,9 @@ var_map:
   cluster_autoscaler_expander: cluster_autoscaler_expander
   audit_logging: log_forward_enabled
   fips: fips
+  # Enable flag only. The optional bid cap is spot_max_price, which has a
+  # working default ("on-demand"), so it is not a required_vars entry.
+  spot_market_options: spot_instances
 
 # CLI aliases: user-friendly short names -> feature_id
 # These are the names users pass to --feature on the command line
@@ -56,6 +59,7 @@ cli_aliases:
   image-registry: image_registry
   security-groups: security_groups
   autoscaling: default_autoscaling
+  spot: spot_market_options
 
 # Features valid for --feature CLI flag (Day1 creation features).
 # Only features with working template conditionals are listed here.
@@ -90,6 +94,7 @@ cli_features:
   - audit_logging
   - fips
   - default_autoscaling
+  - spot_market_options
 
 # Dependency rules: feature_id -> list of prerequisites
 dependencies:
@@ -101,6 +106,12 @@ dependencies:
     - etcd_kms
 
 # Mutual exclusion rules: features that cannot be combined
+#
+# spot_market_options and a capacity reservation are mutually exclusive upstream
+# (the ROSAMachinePool webhook rejects spotMarketOptions together with
+# capacityReservationID, since a reservation applies to on-demand instances).
+# No capacity_reservation feature exists here yet, so there is nothing to pair
+# it with — add the pair when one is introduced.
 mutual_exclusions: []
 
 # Feature groups: named presets for --feature-group
@@ -123,6 +134,11 @@ feature_groups:
       - image_registry
       - parallel_upgrade
       - disk_size
+      # spot_market_options raises this group's floor from 4.19 to 4.22, because
+      # a scenario is only valid on versions where every one of its features is.
+      # Run day1-combo on an older version by dropping to explicit flags:
+      #   --feature autoscaler --feature image-registry --feature parallel-upgrade --feature disk-size
+      - spot_market_options
 
   day1-security:
     description: "Security features (requires AWS KMS key and security group IDs)"
@@ -195,7 +211,7 @@ scenarios:
     estimated_minutes: 75
 
   day1-combo:
-    description: "Non-default Day1 features: autoscaler expander, image registry, parallel upgrade, disk size"
+    description: "Non-default Day1 features: autoscaler expander, image registry, parallel upgrade, disk size, spot instances"
     feature_group: day1-combo
     estimated_minutes: 75
 
@@ -512,6 +528,25 @@ suites:
         ci_default: 500
         k8s_field: ".spec.volumeSize"
         resource: ROSAMachinePool
+
+      - id: spot_market_options
+        name: Spot Instances
+        description: >-
+          Run the machine pool's worker nodes on AWS Spot instances. Bids the on-demand
+          price by default; cap the hourly bid with -e spot_max_price=<USD/hour>.
+          Cannot be added to or removed from a pool after it is created.
+        type: boolean
+        # The field itself is immutable: a pool created with spotMarketOptions
+        # cannot drop it, and an on-demand pool cannot gain it. Only maxPrice is
+        # changeable afterwards, and only in one direction (on-demand -> price,
+        # price -> price; never price -> on-demand). Day-2 price changes are not
+        # exercised by this feature — they belong to the machinepool suites.
+        mutable: false
+        applies_to: [create]
+        default: false
+        k8s_field: ".spec.spotMarketOptions"
+        resource: ROSAMachinePool
+        min_version: "4.22"
 
       - id: node_taints
         name: Node Taints
