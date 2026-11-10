@@ -28,6 +28,12 @@
   vars_files:
     - ../vars/vars.yml
 
+  vars:
+    # Machine pool readiness timeout (configurable via -e flag)
+    # Example: ansible-playbook add_rosa_machine_pool.yml -e machine_pool_readiness_timeout_minutes=60
+    machine_pool_readiness_timeout_minutes: 30  # minutes
+    machine_pool_readiness_poll_interval: 30  # seconds
+
   tasks:
     - name: Load user variables
       ansible.builtin.include_vars: "{{ item }}"
