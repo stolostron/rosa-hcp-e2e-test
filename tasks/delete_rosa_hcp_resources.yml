@@ -73,7 +73,7 @@
         FOUND=$(oc get rosanetwork "$NETWORK_NAME" -n "$NAMESPACE" \
           -o jsonpath='{.metadata.name}' 2>/dev/null)
       fi
-      echo "${FOUND:-not-found}"
+      echo "${FOUND:-__NOTFOUND__}"
   environment:
     NAMESPACE: "{{ rosa_hcp_namespace }}"
     CLUSTER_NAME: "{{ cluster_name }}"
@@ -96,7 +96,7 @@
     NAMESPACE: "{{ rosa_hcp_namespace }}"
   register: rn_stack_name_raw
   changed_when: false
-  when: discovered_rosa_network_name != 'not-found'
+  when: discovered_rosa_network_name != '__NOTFOUND__'
 
 - name: Set discovered CF stack name
   # NOTE: Jinja2 does NOT short-circuit, but | default('') makes rn_stack_name_raw.stdout safe when the task was skipped.
@@ -105,7 +105,7 @@
   ansible.builtin.set_fact:
     discovered_cf_stack_name: >-
       {{ rn_stack_name_raw.stdout | default('') | trim
-         if (discovered_rosa_network_name != 'not-found' and rn_stack_name_raw.stdout | default('') | trim != '')
+         if (discovered_rosa_network_name != '__NOTFOUND__' and rn_stack_name_raw.stdout | default('') | trim != '')
          else cluster_name + '-rosa-network-stack' }}
 
 - name: Discover ROSARoleConfig by label or name
@@ -126,7 +126,7 @@
         FOUND=$(oc get rosaroleconfig "$ROLE_CONFIG_NAME" -n "$NAMESPACE" \
           -o jsonpath='{.metadata.name}' 2>/dev/null)
       fi
-      echo "${FOUND:-not-found}"
+      echo "${FOUND:-__NOTFOUND__}"
   environment:
     NAMESPACE: "{{ rosa_hcp_namespace }}"
     CLUSTER_NAME: "{{ cluster_name }}"
@@ -145,8 +145,8 @@
       • Cluster: {{ 'Found' if '__NOTFOUND__' not in cluster_exists.stdout else 'Not Found' }}
       • ROSAControlPlane: {{ 'Found' if '__NOTFOUND__' not in rcp_exists.stdout else 'Not Found' }}
       • ROSAMachinePool: {{ 'Found' if '__NOTFOUND__' not in rmp_exists.stdout else 'Not Found' }}
-      • ROSANetwork: {{ 'Found (' + discovered_rosa_network_name + ')' if discovered_rosa_network_name != 'not-found' else 'Not Found' }}
-      • ROSARoleConfig: {{ 'Found (' + discovered_rosa_role_config_name + ')' if discovered_rosa_role_config_name != 'not-found' else 'Not Found' }}
+      • ROSANetwork: {{ 'Found (' + discovered_rosa_network_name + ')' if discovered_rosa_network_name != '__NOTFOUND__' else 'Not Found' }}
+      • ROSARoleConfig: {{ 'Found (' + discovered_rosa_role_config_name + ')' if discovered_rosa_role_config_name != '__NOTFOUND__' else 'Not Found' }}
 
 - name: Build list of resources to delete
   ansible.builtin.set_fact:
@@ -206,7 +206,7 @@
   changed_when: false
   when:
     - wait_for_deletion | bool
-    - "'not-found' not in rcp_exists.stdout"
+    - "'__NOTFOUND__' not in rcp_exists.stdout"
 
 - name: Wait for ROSAControlPlane deletion to complete
   shell: |
@@ -305,7 +305,7 @@
   changed_when: false
   when:
     - wait_for_deletion | bool
-    - "'not-found' not in rcp_exists.stdout"
+    - "'__NOTFOUND__' not in rcp_exists.stdout"
     - wait_rcp.rc != 0
 
 - name: Display ROSAControlPlane deletion result
@@ -319,14 +319,14 @@
       {% endif %}
   when:
     - wait_for_deletion | bool
-    - "'not-found' not in rcp_exists.stdout"
+    - "'__NOTFOUND__' not in rcp_exists.stdout"
 
 - name: Warn if ROSAControlPlane still exists after all retries
   set_fact:
     rcp_deletion_failed: true
   when:
     - wait_for_deletion | bool
-    - "'not-found' not in rcp_exists.stdout"
+    - "'__NOTFOUND__' not in rcp_exists.stdout"
     - wait_rcp.rc != 0
     - (final_rcp_check.rc | default(1)) != 0
 
@@ -351,7 +351,7 @@
   failed_when: false
   when:
     - delete_network | bool
-    - discovered_rosa_network_name != 'not-found'
+    - discovered_rosa_network_name != '__NOTFOUND__'
 
 - name: Delete ManagedCluster (if exists)
   shell: |
@@ -540,7 +540,7 @@
   when:
     - wait_for_deletion | bool
     - delete_network | bool
-    - discovered_rosa_network_name != 'not-found'
+    - discovered_rosa_network_name != '__NOTFOUND__'
 
 - name: Final check - verify ROSANetwork is actually gone
   shell: |
@@ -569,7 +569,7 @@
   when:
     - wait_for_deletion | bool
     - delete_network | bool
-    - discovered_rosa_network_name != 'not-found'
+    - discovered_rosa_network_name != '__NOTFOUND__'
     - wait_rn.rc != 0
 
 - name: Display ROSANetwork deletion result
@@ -584,7 +584,7 @@
   when:
     - wait_for_deletion | bool
     - delete_network | bool
-    - discovered_rosa_network_name != 'not-found'
+    - discovered_rosa_network_name != '__NOTFOUND__'
 
 - name: Warn if ROSANetwork still exists after all retries
   set_fact:
@@ -592,7 +592,7 @@
   when:
     - wait_for_deletion | bool
     - delete_network | bool
-    - discovered_rosa_network_name != 'not-found'
+    - discovered_rosa_network_name != '__NOTFOUND__'
     - wait_rn.rc != 0
     - (final_rn_check.rc | default(1)) != 0
 
@@ -626,7 +626,7 @@
   when:
     - wait_for_deletion | bool
     - delete_network | bool
-    - discovered_rosa_network_name != 'not-found'
+    - discovered_rosa_network_name != '__NOTFOUND__'
 
 # This task is a final confirmation check that runs after the inline CF recovery
 # in the "Wait for ROSANetwork deletion" task above. If the inline recovery succeeded,
@@ -693,7 +693,7 @@
   when:
     - wait_for_deletion | bool
     - delete_network | bool
-    - discovered_rosa_network_name != 'not-found'
+    - discovered_rosa_network_name != '__NOTFOUND__'
 
 - name: Display CloudFormation verification result
   debug:
@@ -707,7 +707,7 @@
   when:
     - wait_for_deletion | bool
     - delete_network | bool
-    - discovered_rosa_network_name != 'not-found'
+    - discovered_rosa_network_name != '__NOTFOUND__'
     - cfn_verify is defined
 
 - name: Delete ROSARoleConfig (after ROSANetwork deletion completes)
@@ -717,7 +717,7 @@
   failed_when: false
   when:
     - delete_roles | bool
-    - discovered_rosa_role_config_name != 'not-found'
+    - discovered_rosa_role_config_name != '__NOTFOUND__'
 
 - name: Emit agent context for ROSARoleConfig deletion wait
   shell: |
@@ -854,16 +854,16 @@
       {% if ('cluster/' + cluster_name) in (resources_to_delete | default([])) %}
       • Core Cluster: {{ '✅ Deleted' if (delete_all is defined and (delete_all.rc | default(1)) == 0) else '⏳ Deletion initiated' }}
       {% endif %}
-      {% if (rcp_exists.stdout | trim) not in ['__NOTFOUND__', 'not-found'] %}
+      {% if '__NOTFOUND__' not in rcp_exists.stdout %}
       • ROSAControlPlane: {{ '✅ Deleted' if (wait_for_deletion and ((wait_rcp.rc | default(1)) == 0 or (final_rcp_check.rc | default(1)) == 0)) else '⏳ Deletion initiated' }}
       {% endif %}
-      {% if (rmp_exists.stdout | trim) not in ['__NOTFOUND__', 'not-found'] %}
+      {% if '__NOTFOUND__' not in rmp_exists.stdout %}
       • ROSAMachinePool: ✅ Auto-deleted (cascade)
       {% endif %}
-      {% if delete_network | bool and discovered_rosa_network_name != 'not-found' %}
+      {% if delete_network | bool and discovered_rosa_network_name != '__NOTFOUND__' %}
       • ROSANetwork: {{ '✅ Deleted' if (wait_for_deletion and ((wait_rn.rc | default(1)) == 0 or (final_rn_check.rc | default(1)) == 0)) else '⏳ Deletion initiated' }}
       {% endif %}
-      {% if delete_roles | bool and discovered_rosa_role_config_name != 'not-found' %}
+      {% if delete_roles | bool and discovered_rosa_role_config_name != '__NOTFOUND__' %}
       • ROSARoleConfig: {{ '✅ Deleted' if (wait_for_deletion and ((wait_rrc.rc | default(1)) == 0 or (final_rrc_check.rc | default(1)) == 0)) else '⏳ Deletion initiated' }}
       {% endif %}
 
