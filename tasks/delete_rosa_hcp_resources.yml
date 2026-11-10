@@ -6,6 +6,11 @@
 # in the correct order with proper error handling and waiting.
 # ================================================================
 
+- name: Validate cluster_name is safe (no path traversal)
+  ansible.builtin.fail:
+    msg: "cluster_name must contain only alphanumeric characters, hyphens, and underscores (got: {{ cluster_name }})"
+  when: cluster_name is not regex('^[a-zA-Z0-9_-]+$')
+
 - name: Set agent monitor log file for real-time monitoring
   ansible.builtin.set_fact:
     agent_monitor_log: "/tmp/deletion-agent-{{ cluster_name }}.log"
