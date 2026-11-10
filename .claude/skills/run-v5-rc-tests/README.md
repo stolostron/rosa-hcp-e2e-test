@@ -1,10 +1,10 @@
-# run-v5-feature-tests Skill — Enhanced with Live Monitoring & User Guidance
+# run-capa-rc-tests Skill — Enhanced with Live Monitoring & User Guidance
 
 ## Quick Start
 
 ### Basic Usage
 ```bash
-/run-v5-rc-tests day1-basic rs2 5.0.0-rc.6
+/run-capa-rc-tests day1-basic rs2 5.0.0-rc.6
 ```
 
 ### What You'll See
@@ -69,7 +69,7 @@ Results saved to: RC6_TEST_RESULTS.md
 Features verified: 5/5 ✅
 Duration: 17m 12s
 
-🎯 Next: /run-v5-rc-tests day1-combo rs3 5.0.0-rc.6
+🎯 Next: /run-capa-rc-tests day1-combo rs3 5.0.0-rc.6
 ```
 
 ---
@@ -147,10 +147,10 @@ After each test, RC6_TEST_RESULTS.md is automatically updated:
 **Old:** You'd run each test manually, track results by hand
 **New:**
 ```bash
-/run-v5-rc-tests day1-basic rs1 5.0.0-rc.6
+/run-capa-rc-tests day1-basic rs1 5.0.0-rc.6
 # ✅ Test 1 complete, results saved
 
-/run-v5-rc-tests day1-basic rs2 5.0.0-rc.6
+/run-capa-rc-tests day1-basic rs2 5.0.0-rc.6
 # ✅ Test 2 complete, results saved
 
 # ... continue with rs3-rs6 ...
@@ -223,12 +223,12 @@ On test completion:
 
 ### Option 1: Direct Command
 ```bash
-/run-v5-rc-tests day1-basic rs2 5.0.0-rc.6
+/run-capa-rc-tests day1-basic rs2 5.0.0-rc.6
 ```
 
 ### Option 2: Interactive Prompts
 ```bash
-/run-v5-rc-tests
+/run-capa-rc-tests
 ? Which scenario? day1-basic
 ? Cluster prefix? rs2
 ? OpenShift version? 5.0.0-rc.6
@@ -237,7 +237,7 @@ On test completion:
 
 ### Option 3: With Flags
 ```bash
-/run-v5-rc-tests \
+/run-capa-rc-tests \
   --scenario day1-basic \
   --prefix rs2 \
   --version 5.0.0-rc.6 \
@@ -246,10 +246,10 @@ On test completion:
 
 ### Option 4: Special Modes
 ```bash
-/run-v5-rc-tests day1-basic rs2 5.0.0-rc.6 --keep-cluster
+/run-capa-rc-tests day1-basic rs2 5.0.0-rc.6 --keep-cluster
 # Leaves cluster running after test (for inspection)
 
-/run-v5-rc-tests day1-basic rs2 5.0.0-rc.6 --verbose
+/run-capa-rc-tests day1-basic rs2 5.0.0-rc.6 --verbose
 # Shows detailed logs during execution
 ```
 

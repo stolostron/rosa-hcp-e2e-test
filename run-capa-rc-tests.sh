@@ -19,10 +19,11 @@ PREFIX=""
 VERSION=""
 CHANNEL_GROUP=""
 KEEP_CLUSTER=false
+DRY_RUN=false
 
 # Check if --help requested
 if [[ "$1" == "--help" || "$1" == "-h" ]]; then
-  echo "Usage: /run-capa-rc-tests [SCENARIO] [PREFIX] [VERSION] [--keep-cluster]"
+  echo "Usage: /run-capa-rc-tests [SCENARIO] [PREFIX] [VERSION] [--keep-cluster] [--dry-run]"
   echo ""
   echo "Interactive mode (prompts for inputs):"
   echo "  /run-capa-rc-tests"
@@ -32,6 +33,9 @@ if [[ "$1" == "--help" || "$1" == "-h" ]]; then
   echo ""
   echo "Keep cluster for debugging:"
   echo "  /run-capa-rc-tests day1-basic rs1 5.0.0-rc.6 --keep-cluster"
+  echo ""
+  echo "Validate configuration without running test:"
+  echo "  /run-capa-rc-tests day1-basic rs1 5.0.0-rc.6 --dry-run"
   exit 0
 fi
 
@@ -40,6 +44,10 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --keep-cluster)
       KEEP_CLUSTER=true
+      shift
+      ;;
+    --dry-run)
+      DRY_RUN=true
       shift
       ;;
     --scenario)
@@ -167,16 +175,33 @@ case "$SCENARIO" in
     ;;
 esac
 
+# Function to parse YAML values robustly
+parse_yaml_value() {
+  local key="$1"
+  local file="$2"
+
+  # Try yq first if available (most robust)
+  if command -v yq &> /dev/null; then
+    yq eval ".${key}" "$file" 2>/dev/null | grep -v "null"
+    return $?
+  fi
+
+  # Fallback to grep with YAML-aware parsing
+  # Handles: key: value, key: "value", key: 'value', key: "value with spaces"
+  local value=$(grep "^${key}:" "$file" | sed -E 's/^[^:]*:[[:space:]]*//; s/^["'"'"']//; s/["'"'"']$//')
+  echo "$value"
+}
+
 # Load credentials from vars/user_vars.yml if not already set in environment
 if [ -f "vars/user_vars.yml" ] && [ -z "$OCP_HUB_API_URL" ]; then
   echo -e "${YELLOW}Loading credentials from vars/user_vars.yml...${ENDC}"
-  export OCP_HUB_API_URL=$(grep "^OCP_HUB_API_URL:" vars/user_vars.yml | cut -d' ' -f2 | tr -d '"')
-  export OCP_HUB_CLUSTER_USER=$(grep "^OCP_HUB_CLUSTER_USER:" vars/user_vars.yml | cut -d' ' -f2 | tr -d '"')
-  export OCP_HUB_CLUSTER_PASSWORD=$(grep "^OCP_HUB_CLUSTER_PASSWORD:" vars/user_vars.yml | cut -d' ' -f2 | tr -d '"')
-  export AWS_ACCESS_KEY_ID=$(grep "^AWS_ACCESS_KEY_ID:" vars/user_vars.yml | cut -d' ' -f2 | tr -d '"')
-  export AWS_SECRET_ACCESS_KEY=$(grep "^AWS_SECRET_ACCESS_KEY:" vars/user_vars.yml | cut -d' ' -f2 | tr -d '"')
-  export OCM_CLIENT_ID=$(grep "^OCM_CLIENT_ID:" vars/user_vars.yml | cut -d' ' -f2 | tr -d '"')
-  export OCM_CLIENT_SECRET=$(grep "^OCM_CLIENT_SECRET:" vars/user_vars.yml | cut -d' ' -f2 | tr -d '"')
+  export OCP_HUB_API_URL=$(parse_yaml_value "OCP_HUB_API_URL" "vars/user_vars.yml")
+  export OCP_HUB_CLUSTER_USER=$(parse_yaml_value "OCP_HUB_CLUSTER_USER" "vars/user_vars.yml")
+  export OCP_HUB_CLUSTER_PASSWORD=$(parse_yaml_value "OCP_HUB_CLUSTER_PASSWORD" "vars/user_vars.yml")
+  export AWS_ACCESS_KEY_ID=$(parse_yaml_value "AWS_ACCESS_KEY_ID" "vars/user_vars.yml")
+  export AWS_SECRET_ACCESS_KEY=$(parse_yaml_value "AWS_SECRET_ACCESS_KEY" "vars/user_vars.yml")
+  export OCM_CLIENT_ID=$(parse_yaml_value "OCM_CLIENT_ID" "vars/user_vars.yml")
+  export OCM_CLIENT_SECRET=$(parse_yaml_value "OCM_CLIENT_SECRET" "vars/user_vars.yml")
 fi
 
 # Validate credentials before running test
@@ -217,6 +242,42 @@ if [ -z "$OCM_CLIENT_SECRET" ]; then
   MISSING_CREDS+=("OCM_CLIENT_SECRET (OCM API client secret)")
 fi
 
+# Validate credential formats
+validate_credentials() {
+  local validation_failed=false
+
+  # Validate OCP_HUB_API_URL format
+  if ! [[ "$OCP_HUB_API_URL" =~ ^https:// ]]; then
+    echo -e "${RED}✗ OCP_HUB_API_URL: Must start with https://${ENDC}"
+    validation_failed=true
+  fi
+
+  if ! [[ "$OCP_HUB_API_URL" =~ :[0-9]+$ ]]; then
+    echo -e "${RED}✗ OCP_HUB_API_URL: Must include port (e.g., :6443)${ENDC}"
+    validation_failed=true
+  fi
+
+  # Validate AWS_ACCESS_KEY_ID format
+  if [ ${#AWS_ACCESS_KEY_ID} -lt 20 ]; then
+    echo -e "${RED}✗ AWS_ACCESS_KEY_ID: Invalid format (too short, expected ~20 characters)${ENDC}"
+    validation_failed=true
+  fi
+
+  # Validate AWS_SECRET_ACCESS_KEY format
+  if [ ${#AWS_SECRET_ACCESS_KEY} -lt 40 ]; then
+    echo -e "${RED}✗ AWS_SECRET_ACCESS_KEY: Invalid format (too short, expected ~40 characters)${ENDC}"
+    validation_failed=true
+  fi
+
+  if [ "$validation_failed" = true ]; then
+    echo ""
+    echo -e "${YELLOW}Credential format validation failed. Please check your credentials.${ENDC}"
+    return 1
+  fi
+
+  return 0
+}
+
 # Report missing credentials
 if [ ${#MISSING_CREDS[@]} -gt 0 ]; then
   echo -e "${RED}❌ Missing required credentials:${ENDC}"
@@ -228,7 +289,7 @@ if [ ${#MISSING_CREDS[@]} -gt 0 ]; then
   echo -e "${YELLOW}Set credentials using one of these methods:${ENDC}"
   echo ""
   echo "Option 1: Environment variables"
-  echo "  export OCP_HUB_API_URL=\"https://...\""
+  echo "  export OCP_HUB_API_URL=\"https://...:6443\""
   echo "  export OCP_HUB_CLUSTER_USER=\"kubeadmin\""
   echo "  export OCP_HUB_CLUSTER_PASSWORD=\"...\""
   echo "  export AWS_ACCESS_KEY_ID=\"...\""
@@ -239,6 +300,12 @@ if [ ${#MISSING_CREDS[@]} -gt 0 ]; then
   echo "Option 2: vars/user_vars.yml"
   echo "  Create vars/user_vars.yml with all required variables"
   echo ""
+  exit 1
+fi
+
+# Validate credential formats
+echo -e "${YELLOW}Validating credential formats...${ENDC}"
+if ! validate_credentials; then
   exit 1
 fi
 
@@ -261,6 +328,27 @@ echo "   Version: $VERSION"
 echo "   Channel: $CHANNEL_GROUP"
 echo "   Keep cluster: $([ "$KEEP_CLUSTER" = true ] && echo "yes" || echo "no")"
 echo ""
+
+# Handle --dry-run mode
+if [ "$DRY_RUN" = true ]; then
+  echo -e "${GREEN}✅ Configuration is valid.${ENDC}"
+  echo ""
+
+  # Build the command (same as normal)
+  REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+  RUN_SCRIPT="$REPO_ROOT/run-test-suite.py"
+  CMD="$RUN_SCRIPT --scenario $SCENARIO -e name_prefix=$PREFIX -e openshift_version=$VERSION -e channel_group=$CHANNEL_GROUP"
+
+  if [ "$KEEP_CLUSTER" = true ]; then
+    CMD="$CMD -e keep_cluster=true"
+  fi
+
+  echo -e "${YELLOW}Would execute:${ENDC}"
+  echo "  $CMD"
+  echo ""
+  exit 0
+fi
+
 echo -e "${YELLOW}⏳ Starting test... (this will take ~20-25 minutes)${ENDC}"
 echo ""
 

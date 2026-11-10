@@ -1,15 +1,15 @@
-# run-v5-rc-tests
+# run-capa-rc-tests
 
-Test OCM 5.0 Release Candidate Testing — Run ROSA HCP scenario-based tests with live monitoring, user guidance, and auto-tracking
+Run ROSA HCP scenario-based tests with live monitoring, user guidance, and auto-tracking
 
 ## What this skill does
 
-Executes end-to-end scenario-based CAPA testing for ROSA HCP clusters:
+Executes end-to-end scenario-based CAPA testing for ROSA HCP clusters across ROSA 5.0 Release Candidates and other OpenShift versions:
 - Configures MCE environment
 - Provisions ROSA HCP cluster with specified features
 - Verifies all features applied correctly
 - Cleans up and deletes cluster
-- Automatically tracks results to RC6_TEST_RESULTS.md
+- Automatically tracks results to test results document
 
 **NEW: Live Monitoring & User Guidance**
 - Shows real-time progress every 30 seconds (no silent waits)
@@ -21,24 +21,30 @@ Executes end-to-end scenario-based CAPA testing for ROSA HCP clusters:
 
 ### Simple: scenario, prefix, version
 ```bash
-/run-scenario day1-basic rs3 5.0.0-rc.6
+/run-capa-rc-tests day1-basic rs3 5.0.0-rc.6
 ```
 
 ### Interactive: prompt-driven
 ```bash
-/run-scenario
+/run-capa-rc-tests
 # Prompts: Which scenario? What prefix? What version?
 ```
 
 ### Command-line style: flags
 ```bash
-/run-scenario --scenario day1-basic --prefix rs3 --version 5.0.0-rc.6
+/run-capa-rc-tests --scenario day1-basic --prefix rs3 --version 5.0.0-rc.6
 ```
 
 ### Keep cluster for inspection
 ```bash
-/run-scenario day1-basic rs3 5.0.0-rc.6 --keep-cluster
+/run-capa-rc-tests day1-basic rs3 5.0.0-rc.6 --keep-cluster
 # Skips delete stage, leaves cluster running
+```
+
+### Dry-run mode (validate configuration without running)
+```bash
+/run-capa-rc-tests day1-basic rs3 5.0.0-rc.6 --dry-run
+# Validates credentials and configuration, shows what would execute
 ```
 
 ## Available Scenarios
@@ -53,9 +59,9 @@ Executes end-to-end scenario-based CAPA testing for ROSA HCP clusters:
 
 ## Examples
 
-### Run day1-basic with RC6
+### Run day1-basic with ROSA 5.0.0-rc.6
 ```bash
-/run-scenario day1-basic rs2 5.0.0-rc.6
+/run-capa-rc-tests day1-basic rs2 5.0.0-rc.6
 ```
 
 Output:
@@ -85,7 +91,7 @@ Output:
 
 ⏳ STAGE 4/4: Delete Cluster...
 
-✅ Test Complete! Results added to RC6_TEST_RESULTS.md
+✅ Test Complete! Results added to test results.md
 
 📊 Summary:
    Scenario: day1-basic
@@ -98,7 +104,7 @@ Output:
 
 ### Interactive mode
 ```bash
-/run-scenario
+/run-capa-rc-tests
 
 ? Which scenario? (day1-basic, day1-combo, day1-networking, day1-security, day2-machinepool)
 > day1-combo
@@ -117,7 +123,7 @@ Output:
 
 ### Keep cluster for debugging
 ```bash
-/run-scenario day1-basic rs4 5.0.0-rc.6 --keep-cluster
+/run-capa-rc-tests day1-basic rs4 5.0.0-rc.6 --keep-cluster
 
 # Test runs through verify, but skips delete
 # Cluster stays running: oc get rosacontrolplane rs4-rosa-hcp -n ns-rosa-hcp
@@ -141,7 +147,7 @@ Shows:
 
 ### Automatic tracking
 Results automatically appended to:  
-`/rosa-hcp-e2e/RC6_TEST_RESULTS.md`
+`/rosa-hcp-e2e/test results.md`
 
 Format:
 ```markdown
@@ -157,7 +163,7 @@ Format:
 3. **Runs test suite** — Execute `run-test-suite.py --scenario <name> -e name_prefix=<prefix> -e openshift_version=<version>`
 4. **Monitors progress** — Stream output, extract stage completions
 5. **Parses results** — Extract feature verification results, cluster status
-6. **Updates tracking** — Append row to RC6_TEST_RESULTS.md
+6. **Updates tracking** — Append row to test results.md
 7. **Cleanup** — Delete cluster (unless --keep-cluster)
 8. **Reports summary** — Show final results table
 
@@ -272,7 +278,7 @@ oc logs -n multicluster-engine deployment/capa-controller-manager --tail=100
 ### "Feature verification failed"
 Run with verbose output:
 ```bash
-/run-scenario day1-basic rs5 5.0.0-rc.6 -v
+/run-capa-rc-tests day1-basic rs5 5.0.0-rc.6 -v
 
 # Shows detailed OCM API calls and CRD checks
 ```
@@ -290,17 +296,17 @@ Or just use `rosa delete cluster` from CLI.
 ## Results tracking
 
 All test results automatically appended to:  
-📄 `/rosa-hcp-e2e/RC6_TEST_RESULTS.md`
+📄 `/rosa-hcp-e2e/test results.md`
 
 View progress:
 ```bash
-cat RC6_TEST_RESULTS.md
+cat test results.md
 # Shows all tests run, pass/fail status, features, durations
 ```
 
 Share with team:
 ```bash
-# Copy RC6_TEST_RESULTS.md to team repo or Slack
+# Copy test results.md to team repo or Slack
 # Contains full testing history + findings
 ```
 
@@ -319,7 +325,7 @@ Most of the time is AWS provisioning. Ansible automation takes ~1-2 minutes tota
 ## Related files & Documentation
 
 ### Test Execution & Results
-- **Tracking:** `/rosa-hcp-e2e/RC6_TEST_RESULTS.md` — Test results history
+- **Tracking:** `/rosa-hcp-e2e/test results.md` — Test results history
 - **Plan:** `/rosa-hcp-e2e/RC6_SCENARIO_TESTING_PLAN.md` — Testing strategy
 - **Runner:** `/rosa-hcp-e2e/run-test-suite.py` — Core test execution
 - **MCE Guide:** `/rosa-hcp-e2e/MCE_UPGRADE_AND_CLUSTER_ATTACHMENT.md` — Architecture reference
@@ -334,7 +340,7 @@ Most of the time is AWS provisioning. Ansible automation takes ~1-2 minutes tota
 
 ## Team context
 
-This skill automates the RC6 CAPA testing campaign:
+This skill automates the CAPA testing campaign for ROSA 5.0 Release Candidates and other OpenShift versions:
 - 6 scenarios to validate (4/6 complete as of Oct 16)
 - Results tracked for team visibility
 - Automatic cleanup prevents resource sprawl

@@ -1,13 +1,13 @@
-# Quick Start: run-v5-rc-tests
+# Quick Start: run-capa-rc-tests
 
-**Run a complete RC6 test in one command.**
+**Run a complete ROSA/OpenShift scenario test in one command.**
 
 ---
 
 ## 30-Second Test
 
 ```bash
-/run-v5-rc-tests day1-basic rs1 5.0.0-rc.6
+/run-capa-rc-tests day1-basic rs1 5.0.0
 ```
 
 That's it! The skill handles everything:
@@ -15,7 +15,7 @@ That's it! The skill handles everything:
 - ✅ Provisions ROSA HCP cluster in AWS
 - ✅ Verifies all features applied correctly
 - ✅ Cleans up and deletes cluster
-- 📊 Auto-updates RC6_TEST_RESULTS.md
+- 📊 Auto-updates TEST_RESULTS.md
 
 **Runtime:** ~17 minutes (mostly AWS provisioning)
 
@@ -32,7 +32,7 @@ export OCP_HUB_CLUSTER_USER="kubeadmin"
 export OCP_HUB_CLUSTER_PASSWORD="your-password-here"
 
 # Now run tests
-/run-v5-rc-tests day1-basic rs1 5.0.0-rc.6
+/run-capa-rc-tests day1-basic rs1 5.0.0
 ```
 
 ### Option 2: vars/user_vars.yml (Persistent)
@@ -62,25 +62,24 @@ Pick any scenario, prefix, and OpenShift version:
 
 ### By Scenario
 ```bash
-/run-v5-rc-tests day1-basic rs1 5.0.0-rc.6      # Core features (17 min)
-/run-v5-rc-tests day1-combo rs2 5.0.0-rc.6      # + Networking (20 min)
-/run-v5-rc-tests day1-networking rs3 5.0.0-rc.6 # Advanced networking (22 min)
-/run-v5-rc-tests day1-security rs4 5.0.0-rc.6   # + OIDC (18 min)
-/run-v5-rc-tests day2-machinepool rs5 5.0.0-rc.6 # Multi-pool (25 min)
+/run-capa-rc-tests day1-basic rs1 5.0.0-rc.6      # Core features (17 min)
+/run-capa-rc-tests day1-combo rs2 5.0.0-rc.6      # + Networking (20 min)
+/run-capa-rc-tests day1-networking rs3 5.0.0-rc.6 # Advanced networking (22 min)
+/run-capa-rc-tests day1-security rs4 5.0.0-rc.6   # + OIDC (18 min)
+/run-capa-rc-tests day2-machinepool rs5 5.0.0-rc.6 # Multi-pool (25 min)
 ```
 
 ### By OpenShift Version
 ```bash
-# RC6 (latest)
-/run-v5-rc-tests day1-basic rs1 5.0.0-rc.6
+# ROSA 5.0 Release Candidates
+/run-capa-rc-tests day1-basic rs1 5.0.0-rc.8
+/run-capa-rc-tests day1-basic rs1 5.0.0-rc.7
+/run-capa-rc-tests day1-basic rs1 5.0.0-rc.6
 
-# RC5
-/run-v5-rc-tests day1-basic rs1 5.0.0-rc.5
-
-# Release versions
-/run-v5-rc-tests day1-basic rs1 5.0.0
-/run-v5-rc-tests day1-basic rs1 4.22.6
-/run-v5-rc-tests day1-basic rs1 4.22.0
+# ROSA Release versions
+/run-capa-rc-tests day1-basic rs1 5.0.0
+/run-capa-rc-tests day1-basic rs1 4.22.6
+/run-capa-rc-tests day1-basic rs1 4.22.0
 ```
 
 ---
@@ -90,7 +89,7 @@ Pick any scenario, prefix, and OpenShift version:
 Don't remember the syntax? Let the skill prompt you:
 
 ```bash
-/run-v5-rc-tests
+/run-capa-rc-tests
 
 ? Which scenario? (day1-basic, day1-combo, day1-networking, day1-security, day2-machinepool)
 > day1-basic
@@ -114,7 +113,7 @@ Don't remember the syntax? Let the skill prompt you:
 Skip deletion and leave cluster running for inspection:
 
 ```bash
-/run-v5-rc-tests day1-basic rs3 5.0.0-rc.6 --keep-cluster
+/run-capa-rc-tests day1-basic rs3 5.0.0-rc.6 --keep-cluster
 
 # Cluster stays running: rs3-rosa-hcp
 # Inspect with: oc get rosacontrolplane rs3-rosa-hcp -n ns-rosa-hcp
@@ -206,13 +205,13 @@ Tracking includes:
 ### View Results
 ```bash
 # View all tests
-cat RC6_TEST_RESULTS.md
+cat TEST_RESULTS.md
 
 # View latest test only
-tail -5 RC6_TEST_RESULTS.md
+tail -5 TEST_RESULTS.md
 
 # View HTML report (if available)
-open reports/rc6-feature-coverage.html
+open reports/feature-coverage.html
 ```
 
 ### Share with Team
@@ -283,5 +282,5 @@ See **SKILL.md** for full reference and **README.md** for intermediate guide.
 
 **Ready? Go!**
 ```bash
-/run-v5-rc-tests day1-basic rs1 5.0.0-rc.6
+/run-capa-rc-tests day1-basic rs1 5.0.0-rc.6
 ```
