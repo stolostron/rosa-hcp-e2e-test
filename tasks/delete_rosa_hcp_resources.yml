@@ -372,7 +372,7 @@
   when:
     - wait_for_deletion | bool
     - delete_network | bool
-    - discovered_rosa_network_name != 'not-found'
+    - "'__NOTFOUND__' not in rn_exists.stdout"
 
 - name: Wait for ROSANetwork deletion to complete
   environment:
@@ -381,23 +381,59 @@
     LOGFILE: "{{ agent_monitor_log }}"
     STACK_NAME: "{{ discovered_cf_stack_name | default(cluster_name + '-rosa-network-stack') }}"
     REGION: "{{ aws_region | default('us-west-2') }}"
-    RETRIES: "{{ (rosanetwork_timeout | default(deletion_timeout) | int / 10) | int }}"
+    RETRIES: "{{ [(rosanetwork_timeout | default(deletion_timeout) | int / 10) | int, 1] | max }}"
     NETWORK_NAME: "{{ discovered_rosa_network_name }}"
     NAMESPACE: "{{ rosa_hcp_namespace }}"
   ansible.builtin.shell:
     cmd: |
+      START_TIME=$(date +%s)
+      STUCK_COUNTER=0
       ITERATION_COUNT=0
       MAX_CF_RETRIES=3
       CF_RETRY_COUNT=0
+
       for i in $(seq 1 $RETRIES); do
-        OUTPUT=$(oc get rosanetwork "$NETWORK_NAME" -n "$NAMESPACE" 2>&1)
+        OUTPUT=$(oc get rosanetwork "$NETWORK_NAME" -n "$NAMESPACE" -o json 2>&1)
         RC=$?
+        ELAPSED=$(($(date +%s) - START_TIME))
+
         if [ $RC -ne 0 ]; then
           if echo "$OUTPUT" | grep -qi "not found\|NotFound\|no resources found"; then
-            echo "ROSANetwork deleted successfully" | tee -a "$LOGFILE"
+            echo "✓ ROSANetwork deleted successfully (attempt $i/$RETRIES, ${ELAPSED}s elapsed)" | tee -a "$LOGFILE"
             exit 0
           fi
           echo "WARNING: oc get failed unexpectedly (rc=$RC): $OUTPUT" | tee -a "$LOGFILE"
+        else
+          # Check if resource has deletionTimestamp (deletion initiated)
+          DELETION_TS=$(echo "$OUTPUT" | jq -r '.metadata.deletionTimestamp // empty' 2>/dev/null)
+          if [ -n "$DELETION_TS" ]; then
+            # Parse ISO timestamp to epoch using Python (portable, works on Linux/macOS/BSD)
+            DELETION_EPOCH=$(echo "$DELETION_TS" | python3 -c "import sys,datetime; print(int(datetime.datetime.fromisoformat(sys.stdin.read().strip().replace('Z', '+00:00')).timestamp()))" 2>/dev/null || echo 0)
+
+            if [ -n "$DELETION_EPOCH" ] && [ "$DELETION_EPOCH" -gt 0 ]; then
+              AGE=$(($(date +%s) - DELETION_EPOCH))
+
+              # Stuck detection: if deletion started >20 minutes ago, likely unrecoverable
+              if [ "$AGE" -gt 1200 ]; then
+                STUCK_COUNTER=$((STUCK_COUNTER + 1))
+                if [ $STUCK_COUNTER -ge 3 ]; then
+                  echo "#AGENT_CONTEXT: resource_name=$NETWORK_NAME status=stuck_deleting age_seconds=$AGE" | tee -a "$LOGFILE"
+                  echo "⚠️  ROSANetwork stuck in deletion for ${AGE}s (3 consecutive checks) — early exit" | tee -a "$LOGFILE"
+                  exit 1
+                fi
+              else
+                STUCK_COUNTER=0
+              fi
+
+              # Check for finalizers (stuck on finalizer)
+              FINALIZERS=$(echo "$OUTPUT" | jq -r '.metadata.finalizers | length' 2>/dev/null)
+              if [ "$FINALIZERS" -gt 0 ] && [ "$AGE" -gt 300 ]; then
+                echo "#AGENT_CONTEXT: resource_name=$NETWORK_NAME status=stuck_on_finalizer age_seconds=$AGE" | tee -a "$LOGFILE"
+                echo "⚠️  ROSANetwork stuck on finalizer for ${AGE}s — early exit" | tee -a "$LOGFILE"
+                exit 1
+              fi
+            fi
+          fi
         fi
 
         ITERATION_COUNT=$((ITERATION_COUNT + 1))
@@ -488,10 +524,16 @@
           fi
         fi
 
-        echo "FAILED - RETRYING: [localhost]: Wait for rosanetwork $NETWORK_NAME deletion to complete ($((RETRIES - i)) retries left)." | tee -a "$LOGFILE"
-        sleep 10
+        # Exponential backoff: 1s, 1s, 1s, 2s, 4s, 8s, 16s, 30s (capped)
+        EXPONENT=$(echo "scale=0; ($i - 1) / 20" | bc 2>/dev/null || echo 0)
+        SLEEP_BASE=$((2 ** EXPONENT))
+        SLEEP_TIME=$([ $SLEEP_BASE -gt 30 ] && echo 30 || echo $SLEEP_BASE)
+
+        echo "PROGRESS: Attempt $i/$RETRIES (${ELAPSED}s elapsed) — ROSANetwork still deleting, retrying in ${SLEEP_TIME}s..." | tee -a "$LOGFILE"
+        sleep "$SLEEP_TIME"
       done
-      echo "Timed out waiting for ROSANetwork deletion" | tee -a "$LOGFILE"
+
+      echo "Timed out waiting for ROSANetwork deletion after ${ELAPSED}s" | tee -a "$LOGFILE"
       exit 1
   register: wait_rn
   failed_when: false
