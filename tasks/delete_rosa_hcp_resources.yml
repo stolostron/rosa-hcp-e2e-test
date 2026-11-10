@@ -354,7 +354,7 @@
     - "not ((wait_rcp is defined and wait_rcp.rc == 0) or (final_rcp_check is defined and final_rcp_check.rc == 0))"
 
 - name: Warn if ROSAControlPlane still exists after all retries
-  set_fact:
+  ansible.builtin.set_fact:
     rcp_deletion_failed: true
   when:
     - wait_for_deletion | bool
@@ -363,7 +363,7 @@
     - (final_rcp_check | default({'rc': 1})).rc != 0
 
 - name: Display ROSAControlPlane timeout warning
-  debug:
+  ansible.builtin.debug:
     msg: |
       ⚠️  ROSAControlPlane {{ cluster_name }} still exists after timeout.
       Continuing with remaining resource cleanup...
@@ -634,7 +634,7 @@
     - "not ((wait_rn is defined and wait_rn.rc == 0) or (final_rn_check is defined and final_rn_check.rc == 0))"
 
 - name: Warn if ROSANetwork still exists after all retries
-  set_fact:
+  ansible.builtin.set_fact:
     rosanetwork_deletion_failed: true
   when:
     - wait_for_deletion | bool
@@ -644,7 +644,7 @@
     - (final_rn_check | default({'rc': 1})).rc != 0
 
 - name: Display ROSANetwork timeout warning
-  debug:
+  ansible.builtin.debug:
     msg: |
       ⚠️  ROSANetwork {{ discovered_rosa_network_name }} still exists after timeout.
       Continuing with remaining resource cleanup...
@@ -909,7 +909,7 @@
     - "not ((wait_rrc is defined and wait_rrc.rc == 0) or (final_rrc_check is defined and final_rrc_check.rc == 0))"
 
 - name: Warn if ROSARoleConfig still exists after all retries
-  set_fact:
+  ansible.builtin.set_fact:
     rrc_deletion_failed: true
   when:
     - wait_for_deletion | bool
@@ -919,7 +919,7 @@
     - (final_rrc_check | default({'rc': 1})).rc != 0
 
 - name: Display ROSARoleConfig timeout warning
-  debug:
+  ansible.builtin.debug:
     msg: |
       ⚠️  ROSARoleConfig {{ discovered_rosa_role_config_name }} still exists after timeout.
       Continuing with remaining resource cleanup...
