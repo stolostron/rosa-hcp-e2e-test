@@ -341,7 +341,7 @@
   when:
     - wait_for_deletion | bool
     - "'__NOTFOUND__' not in rcp_exists.stdout"
-    - "wait_rcp is defined and wait_rcp.rc == 0 or final_rcp_check is defined and final_rcp_check.rc == 0"
+    - "(wait_rcp is defined and wait_rcp.rc == 0) or (final_rcp_check is defined and final_rcp_check.rc == 0)"
 
 - name: Display ROSAControlPlane still exists warning
   ansible.builtin.debug:
@@ -351,14 +351,14 @@
   when:
     - wait_for_deletion | bool
     - "'__NOTFOUND__' not in rcp_exists.stdout"
-    - "not (wait_rcp is defined and wait_rcp.rc == 0 or final_rcp_check is defined and final_rcp_check.rc == 0)"
+    - "not ((wait_rcp is defined and wait_rcp.rc == 0) or (final_rcp_check is defined and final_rcp_check.rc == 0))"
 
 - name: Warn if ROSAControlPlane still exists after all retries
   set_fact:
     rcp_deletion_failed: true
   when:
     - wait_for_deletion | bool
-    - "'not-found' not in rcp_exists.stdout"
+    - "'__NOTFOUND__' not in rcp_exists.stdout"
     - (wait_rcp | default({'rc': 1})).rc != 0
     - (final_rcp_check | default({'rc': 1})).rc != 0
 
@@ -620,7 +620,7 @@
     - wait_for_deletion | bool
     - delete_network | bool
     - discovered_rosa_network_name != 'not-found'
-    - "wait_rn is defined and wait_rn.rc == 0 or final_rn_check is defined and final_rn_check.rc == 0"
+    - "(wait_rn is defined and wait_rn.rc == 0) or (final_rn_check is defined and final_rn_check.rc == 0)"
 
 - name: Display ROSANetwork still exists warning
   debug:
@@ -631,7 +631,7 @@
     - wait_for_deletion | bool
     - delete_network | bool
     - discovered_rosa_network_name != 'not-found'
-    - "not (wait_rn is defined and wait_rn.rc == 0 or final_rn_check is defined and final_rn_check.rc == 0)"
+    - "not ((wait_rn is defined and wait_rn.rc == 0) or (final_rn_check is defined and final_rn_check.rc == 0))"
 
 - name: Warn if ROSANetwork still exists after all retries
   set_fact:
@@ -895,7 +895,7 @@
     - wait_for_deletion | bool
     - delete_roles | bool
     - discovered_rosa_role_config_name != 'not-found'
-    - "wait_rrc is defined and wait_rrc.rc == 0 or final_rrc_check is defined and final_rrc_check.rc == 0"
+    - "(wait_rrc is defined and wait_rrc.rc == 0) or (final_rrc_check is defined and final_rrc_check.rc == 0)"
 
 - name: Display ROSARoleConfig still exists warning
   debug:
@@ -906,7 +906,7 @@
     - wait_for_deletion | bool
     - delete_roles | bool
     - discovered_rosa_role_config_name != 'not-found'
-    - "not (wait_rrc is defined and wait_rrc.rc == 0 or final_rrc_check is defined and final_rrc_check.rc == 0)"
+    - "not ((wait_rrc is defined and wait_rrc.rc == 0) or (final_rrc_check is defined and final_rrc_check.rc == 0))"
 
 - name: Warn if ROSARoleConfig still exists after all retries
   set_fact:
