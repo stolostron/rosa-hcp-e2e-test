@@ -24,8 +24,8 @@
   <!-- LEFT COLUMN - BEFORE -->
   <g>
     <!-- Header Box -->
-    <rect x="40" y="120" width="620" height="60" fill="#EF4444" rx="8"/>
-    <text x="350" y="157" text-anchor="middle" class="section-header">BEFORE: FEATURE/FEATURE GROUPS (MANUAL PARAMS)</text>
+    <rect x="40" y="120" width="630" height="60" fill="#EF4444" rx="8"/>
+    <text x="355" y="157" text-anchor="middle" class="section-header">BEFORE: FEATURE/FEATURE GROUPS (MANUAL PARAMS)</text>
 
     <!-- Description -->
     <text x="60" y="210" class="label">Test Engineer assembles features and parameters:</text>
@@ -84,8 +84,8 @@
   <!-- RIGHT COLUMN - AFTER -->
   <g>
     <!-- Header Box -->
-    <rect x="740" y="120" width="620" height="60" fill="#10B981" rx="8"/>
-    <text x="1050" y="157" text-anchor="middle" class="section-header">AFTER: SCENARIO SYSTEM (AUTOMATED RESOLUTION)</text>
+    <rect x="730" y="120" width="630" height="60" fill="#10B981" rx="8"/>
+    <text x="1045" y="157" text-anchor="middle" class="section-header">AFTER: SCENARIO SYSTEM (AUTOMATED RESOLUTION)</text>
 
     <!-- Description -->
     <text x="760" y="210" class="label">Test Engineer picks a scenario:</text>
