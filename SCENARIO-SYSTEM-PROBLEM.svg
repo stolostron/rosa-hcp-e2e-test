@@ -1,0 +1,142 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 1100" width="1400" height="1100">
+  <defs>
+    <style type="text/css">
+      .title { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 42px; font-weight: bold; fill: #1F2937; }
+      .subtitle { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 20px; fill: #6B7280; }
+      .section-header { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 22px; font-weight: bold; fill: #FFFFFF; }
+      .label { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 16px; font-weight: 600; fill: #1F2937; }
+      .description { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 14px; fill: #374151; }
+      .code { font-family: 'Monaco', 'Courier New', monospace; font-size: 12px; fill: #FFFFFF; }
+      .issue-text { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 13px; fill: #374151; }
+      .metric-label { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 12px; fill: #6B7280; }
+      .metric-value { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 18px; font-weight: bold; fill: #1F2937; }
+    </style>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1400" height="1100" fill="#F9FAFB"/>
+
+  <!-- Title Section -->
+  <text x="700" y="50" text-anchor="middle" class="title">The Problem: Testing Without Scenarios</text>
+  <text x="700" y="85" text-anchor="middle" class="subtitle">Before and after: Why we built the scenario system</text>
+
+  <!-- LEFT COLUMN - BEFORE -->
+  <g>
+    <!-- Header Box -->
+    <rect x="40" y="120" width="620" height="60" fill="#EF4444" rx="8"/>
+    <text x="350" y="157" text-anchor="middle" class="section-header">BEFORE: FEATURE/FEATURE GROUPS (MANUAL PARAMS)</text>
+
+    <!-- Description -->
+    <text x="60" y="210" class="label">Test Engineer assembles features and parameters:</text>
+
+    <!-- Code Block -->
+    <rect x="60" y="230" width="600" height="100" fill="#1F2937" rx="6" stroke="#EF4444" stroke-width="2"/>
+    <text x="80" y="255" class="code">./run-test-suite.py --feature-group day1-security \</text>
+    <text x="80" y="275" class="code">  -e ETCD_KMS_ARN=arn:aws:kms:... \</text>
+    <text x="80" y="295" class="code">  -e OIDC_ENDPOINT=https://... \</text>
+    <text x="80" y="315" class="code">  -e SECURITY_GROUPS=sg-12345 (... 5+ more ...)</text>
+
+    <!-- Issues List -->
+    <text x="60" y="365" class="label">Issues with Manual Assembly:</text>
+
+    <g>
+      <circle cx="75" cy="390" r="3" fill="#EF4444"/>
+      <text x="90" y="395" class="issue-text">Missing parameters cause silent failures</text>
+    </g>
+    <g>
+      <circle cx="75" cy="415" r="3" fill="#EF4444"/>
+      <text x="90" y="420" class="issue-text">Inconsistent test environments across runs</text>
+    </g>
+    <g>
+      <circle cx="75" cy="440" r="3" fill="#EF4444"/>
+      <text x="90" y="445" class="issue-text">Manual verification of each deployment step</text>
+    </g>
+    <g>
+      <circle cx="75" cy="465" r="3" fill="#EF4444"/>
+      <text x="90" y="470" class="issue-text">Difficult to reproduce failures in debugging</text>
+    </g>
+    <g>
+      <circle cx="75" cy="490" r="3" fill="#EF4444"/>
+      <text x="90" y="495" class="issue-text">No consistency between test scenarios</text>
+    </g>
+    <g>
+      <circle cx="75" cy="515" r="3" fill="#EF4444"/>
+      <text x="90" y="520" class="issue-text">High cognitive load on test engineers</text>
+    </g>
+    <g>
+      <circle cx="75" cy="540" r="3" fill="#EF4444"/>
+      <text x="90" y="545" class="issue-text">Prone to human error in complex setups</text>
+    </g>
+    <g>
+      <circle cx="75" cy="565" r="3" fill="#EF4444"/>
+      <text x="90" y="570" class="issue-text">Knowledge silos - hard to share test patterns</text>
+    </g>
+
+    <!-- Metrics Box -->
+    <rect x="60" y="600" width="600" height="120" fill="#FEE2E2" rx="8" stroke="#EF4444" stroke-width="2"/>
+    <text x="120" y="635" class="metric-label">Setup Time:</text>
+    <text x="350" y="635" class="metric-value">15 min</text>
+    <text x="120" y="680" class="metric-label">Error Detection:</text>
+    <text x="350" y="680" class="metric-value">40+ min</text>
+  </g>
+
+  <!-- RIGHT COLUMN - AFTER -->
+  <g>
+    <!-- Header Box -->
+    <rect x="740" y="120" width="620" height="60" fill="#10B981" rx="8"/>
+    <text x="1050" y="157" text-anchor="middle" class="section-header">AFTER: SCENARIO SYSTEM (AUTOMATED RESOLUTION)</text>
+
+    <!-- Description -->
+    <text x="760" y="210" class="label">Test Engineer picks a scenario:</text>
+
+    <!-- Code Block -->
+    <rect x="760" y="230" width="600" height="100" fill="#1F2937" rx="6" stroke="#10B981" stroke-width="2"/>
+    <text x="780" y="270" class="code">./run-test-suite.py --scenario day1-security</text>
+    <text x="780" y="305" class="code">(everything else: automated, guaranteed, repeatable)</text>
+
+    <!-- What Happens Automatically -->
+    <text x="760" y="365" class="label">What Happens Automatically:</text>
+
+    <g>
+      <circle cx="775" cy="390" r="3" fill="#10B981"/>
+      <text x="790" y="395" class="issue-text">All parameters validated against schema</text>
+    </g>
+    <g>
+      <circle cx="775" cy="415" r="3" fill="#10B981"/>
+      <text x="790" y="420" class="issue-text">Identical environment for every test run</text>
+    </g>
+    <g>
+      <circle cx="775" cy="440" r="3" fill="#10B981"/>
+      <text x="790" y="445" class="issue-text">Automated assertions at every step</text>
+    </g>
+    <g>
+      <circle cx="775" cy="465" r="3" fill="#10B981"/>
+      <text x="790" y="470" class="issue-text">Reproducible failures with full context</text>
+    </g>
+    <g>
+      <circle cx="775" cy="490" r="3" fill="#10B981"/>
+      <text x="790" y="495" class="issue-text">Consistent test flow across all scenarios</text>
+    </g>
+    <g>
+      <circle cx="775" cy="515" r="3" fill="#10B981"/>
+      <text x="790" y="520" class="issue-text">Low cognitive overhead - engineers focus on logic</text>
+    </g>
+    <g>
+      <circle cx="775" cy="540" r="3" fill="#10B981"/>
+      <text x="790" y="545" class="issue-text">Built-in error handling and recovery</text>
+    </g>
+    <g>
+      <circle cx="775" cy="565" r="3" fill="#10B981"/>
+      <text x="790" y="570" class="issue-text">Scenario definitions are shared, documented code</text>
+    </g>
+
+    <!-- Metrics Box -->
+    <rect x="760" y="600" width="600" height="120" fill="#DCFCE7" rx="8" stroke="#10B981" stroke-width="2"/>
+    <text x="820" y="635" class="metric-label">Setup Time:</text>
+    <text x="1050" y="635" class="metric-value">30 sec</text>
+    <text x="820" y="680" class="metric-label">Error Detection:</text>
+    <text x="1050" y="680" class="metric-value">3 min</text>
+  </g>
+
+</svg>

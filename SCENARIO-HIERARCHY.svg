@@ -1,0 +1,222 @@
+<svg viewBox="0 0 1200 800" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- Gradients for depth with AWS color palette -->
+    <linearGradient id="gradInput" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#FFFBF8;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#FFF7F0;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="gradScenario" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#F2F8FC;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#EBF3FA;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="gradGroup" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#F1FAF8;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#EAF6F3;stop-opacity:1" />
+    </linearGradient>
+
+    <!-- Refined drop shadows -->
+    <filter id="shadowSoft">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="2.5"/>
+      <feOffset dx="0" dy="3" result="offsetblur"/>
+      <feComponentTransfer>
+        <feFuncA type="linear" slope="0.1"/>
+      </feComponentTransfer>
+      <feMerge>
+        <feMergeNode/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <!-- Polished arrow marker -->
+    <marker id="arrowhead" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+      <polygon points="0 0, 12 6, 0 12" fill="#146EB4"/>
+      <style>
+        marker { filter: drop-shadow(0 1px 2px rgba(0,0,0,0.08)); }
+      </style>
+    </marker>
+
+    <!-- Styles -->
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Work+Sans:wght@400;500;600;700&amp;display=swap');
+
+      .title {
+        font-size: 40px;
+        font-weight: 700;
+        fill: #0A1428;
+        font-family: 'Work Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        letter-spacing: -0.8px;
+      }
+
+      .subtitle {
+        font-size: 15px;
+        font-weight: 400;
+        fill: #475569;
+        font-family: 'Work Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        line-height: 1.6;
+      }
+
+      .label {
+        font-size: 10px;
+        font-weight: 700;
+        fill: #D97706;
+        text-transform: uppercase;
+        letter-spacing: 1.2px;
+        font-family: 'Work Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      }
+
+      .box-title {
+        font-size: 20px;
+        font-weight: 600;
+        fill: #0F172A;
+        font-family: 'Work Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        letter-spacing: -0.4px;
+      }
+
+      .box-content {
+        font-size: 14px;
+        font-weight: 400;
+        fill: #334155;
+        font-family: 'Work Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        line-height: 1.7;
+      }
+
+      .example {
+        font-size: 13px;
+        font-weight: 400;
+        fill: #64748B;
+        font-style: italic;
+        font-family: 'Work Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        line-height: 1.6;
+      }
+
+      .box-input {
+        fill: url(#gradInput);
+        stroke: #F59E0B;
+        stroke-width: 3;
+      }
+
+      .box-scenario {
+        fill: url(#gradScenario);
+        stroke: #2563EB;
+        stroke-width: 3;
+      }
+
+      .box-group {
+        fill: url(#gradGroup);
+        stroke: #10B981;
+        stroke-width: 3;
+      }
+
+      .arrow {
+        stroke: #2563EB;
+        stroke-width: 2.5;
+        fill: none;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+
+      .icon-circle {
+        fill: white;
+        stroke-width: 3;
+      }
+
+      .icon-circle-input {
+        stroke: #F59E0B;
+      }
+
+      .icon-circle-scenario {
+        stroke: #2563EB;
+      }
+
+      .icon-circle-group {
+        stroke: #10B981;
+      }
+
+      .icon-symbol {
+        fill: #1F2937;
+        font-size: 18px;
+        font-weight: 700;
+        font-family: 'Work Sans', sans-serif;
+      }
+
+      .footer-box {
+        fill: white;
+        stroke: #E5E7EB;
+        stroke-width: 1.5;
+      }
+
+      .footer-label {
+        font-size: 14px;
+        font-weight: 600;
+        fill: #0F172A;
+        font-family: 'Work Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      }
+    </style>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1200" height="800" fill="#FAFBFC"/>
+
+  <!-- Header area with improved spacing -->
+  <text x="600" y="50" class="title" text-anchor="middle">Scenario System: The Three Layers</text>
+  <text x="600" y="80" class="subtitle" text-anchor="middle">How scenarios, feature groups, and features work together in the AWS environment</text>
+
+  <!-- Layer 1: Input -->
+  <g filter="url(#shadowSoft)">
+    <rect x="50" y="105" width="1100" height="125" class="box-input" rx="8"/>
+  </g>
+
+  <!-- Icon for Layer 1 with improved sizing -->
+  <circle cx="95" cy="172" r="24" class="icon-circle icon-circle-input"/>
+  <text x="95" y="180" class="icon-symbol" text-anchor="middle" dominant-baseline="middle">1</text>
+
+  <text x="135" y="118" class="label">User Input</text>
+  <text x="135" y="155" class="box-title">Scenario Name Selection</text>
+  <text x="135" y="182" class="box-content">User picks one scenario: day1-basic, day1-security, day1-networking, day2-machinepool</text>
+  <text x="135" y="212" class="example">Example: --scenario day1-security</text>
+
+  <!-- Arrow 1 with better positioning -->
+  <path d="M 600 230 L 600 275" class="arrow" marker-end="url(#arrowhead)"/>
+
+  <!-- Layer 2: Scenario -->
+  <g filter="url(#shadowSoft)">
+    <rect x="50" y="275" width="1100" height="160" class="box-scenario" rx="8"/>
+  </g>
+
+  <!-- Icon for Layer 2 -->
+  <circle cx="95" cy="360" r="24" class="icon-circle icon-circle-scenario"/>
+  <text x="95" y="368" class="icon-symbol" text-anchor="middle" dominant-baseline="middle">2</text>
+
+  <text x="135" y="288" class="label">Scenario Definition</text>
+  <text x="135" y="325" class="box-title">day1-security Scenario</text>
+  <text x="135" y="352" class="box-content">• Feature Group: day1-security</text>
+  <text x="135" y="376" class="box-content">• Stages: Configure → Provision → Verify → Cleanup</text>
+  <text x="135" y="400" class="box-content">• OCP Versions: 4.21, 4.22, 4.23, 5.0</text>
+  <text x="135" y="423" class="example">Bundles everything needed for a complete AWS-based test run</text>
+
+  <!-- Arrow 2 -->
+  <path d="M 600 435 L 600 480" class="arrow" marker-end="url(#arrowhead)"/>
+
+  <!-- Layer 3: Feature Group -->
+  <g filter="url(#shadowSoft)">
+    <rect x="50" y="480" width="1100" height="145" class="box-group" rx="8"/>
+  </g>
+
+  <!-- Icon for Layer 3 -->
+  <circle cx="95" cy="552" r="24" class="icon-circle icon-circle-group"/>
+  <text x="95" y="560" class="icon-symbol" text-anchor="middle" dominant-baseline="middle">3</text>
+
+  <text x="135" y="493" class="label">Feature Group</text>
+  <text x="135" y="530" class="box-title">Features in day1-security</text>
+  <text x="135" y="557" class="box-content">• etcd_kms (encryption at rest)</text>
+  <text x="135" y="580" class="box-content">• fips (FIPS compliance)</text>
+  <text x="135" y="603" class="box-content">• security_groups (additional firewall rules)</text>
+
+  <!-- Footer section with refined styling -->
+  <g filter="url(#shadowSoft)">
+    <rect x="50" y="670" width="1100" height="110" class="footer-box" rx="8"/>
+  </g>
+  <text x="75" y="700" class="footer-label">Key Concepts</text>
+  <text x="75" y="730" class="box-content">• Each feature maps to AWS resources (KMS, IAM policies, Security Groups, etc.)</text>
+  <text x="75" y="758" class="box-content">• User picks ONE scenario → system auto-resolves all features and stages → fully automated AWS test</text>
+</svg>
