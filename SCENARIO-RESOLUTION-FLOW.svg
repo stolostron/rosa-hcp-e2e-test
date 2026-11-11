@@ -1,0 +1,150 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg viewBox="0 0 1400 950" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <style>
+      .title { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 36px; font-weight: 700; fill: #1a1a1a; }
+      .subtitle { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 16px; fill: #666; }
+      .layer-label { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 11px; font-weight: 700; fill: #999; text-transform: uppercase; letter-spacing: 1px; }
+      .box-title { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 16px; font-weight: 600; fill: #1a1a1a; }
+      .box-content { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 12px; fill: #555; }
+      .var-name { font-family: 'Monaco', 'Courier New', monospace; font-size: 11px; fill: #c0392b; font-weight: 500; }
+      .aws-label { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 12px; font-weight: 600; fill: white; }
+      .arrow-label { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 11px; fill: #666; font-style: italic; }
+    </style>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1400" height="950" fill="#f8f9fa"/>
+
+  <!-- Title -->
+  <text x="700" y="50" class="title" text-anchor="middle">From Scenario to AWS: The Complete Resolution Flow</text>
+  <text x="700" y="80" class="subtitle" text-anchor="middle">How user selects a scenario, system resolves features, and AWS resources get provisioned</text>
+
+  <!-- LAYER 1: USER INPUT -->
+  <text x="60" y="130" class="layer-label">Layer 1: User Input</text>
+  <rect x="60" y="150" width="280" height="100" fill="white" stroke="#f59e0b" stroke-width="2" rx="8"/>
+  <text x="200" y="175" class="box-title" text-anchor="middle">User Selects Scenario</text>
+  <text x="200" y="200" class="box-content" text-anchor="middle">./run-test-suite.py</text>
+  <text x="200" y="218" class="var-name" text-anchor="middle">--scenario day1-security</text>
+
+  <!-- Arrow 1 -->
+  <path d="M 340 200 L 400 200" stroke="#2c3e50" stroke-width="2" fill="none" marker-end="url(#arrowhead)"/>
+  <text x="365" y="190" class="arrow-label" text-anchor="middle">resolves</text>
+
+  <!-- LAYER 2: SCENARIO DEFINITION -->
+  <text x="410" y="130" class="layer-label">Layer 2: Scenario Definition</text>
+  <rect x="410" y="150" width="280" height="100" fill="white" stroke="#3b82f6" stroke-width="2" rx="8"/>
+  <text x="550" y="175" class="box-title" text-anchor="middle">day1-security</text>
+  <text x="550" y="200" class="box-content" text-anchor="middle">Feature Group: day1-security</text>
+  <text x="550" y="218" class="box-content" text-anchor="middle">Stages: Configure, Provision, Verify, Cleanup</text>
+
+  <!-- Arrow 2 -->
+  <path d="M 690 200 L 750 200" stroke="#2c3e50" stroke-width="2" fill="none" marker-end="url(#arrowhead)"/>
+  <text x="715" y="190" class="arrow-label" text-anchor="middle">contains</text>
+
+  <!-- LAYER 3: FEATURE GROUP -->
+  <text x="760" y="130" class="layer-label">Layer 3: Feature Group</text>
+  <rect x="760" y="150" width="280" height="100" fill="white" stroke="#10b981" stroke-width="2" rx="8"/>
+  <text x="900" y="175" class="box-title" text-anchor="middle">day1-security Features</text>
+  <text x="900" y="200" class="box-content" text-anchor="middle">• etcd_kms</text>
+  <text x="900" y="218" class="box-content" text-anchor="middle">• fips, security_groups</text>
+
+  <!-- Arrow 3 -->
+  <path d="M 1040 200 L 1100 200" stroke="#2c3e50" stroke-width="2" fill="none" marker-end="url(#arrowhead)"/>
+  <text x="1065" y="190" class="arrow-label" text-anchor="middle">expands to</text>
+
+  <!-- LAYER 4: FEATURE DETAILS -->
+  <text x="1110" y="130" class="layer-label">Layer 4: Individual Features</text>
+  <rect x="1110" y="150" width="260" height="100" fill="white" stroke="#8b5cf6" stroke-width="2" rx="8"/>
+  <text x="1240" y="175" class="box-title" text-anchor="middle">Feature Specs</text>
+  <text x="1240" y="200" class="box-content" text-anchor="middle">k8s fields, defaults,</text>
+  <text x="1240" y="218" class="box-content" text-anchor="middle">version constraints</text>
+
+  <!-- DIVIDER -->
+  <line x1="60" y1="310" x2="1340" y2="310" stroke="#e0e0e0" stroke-width="2"/>
+  <text x="60" y="345" class="layer-label">Resolution Phase Complete → Provisioning Phase Begins</text>
+
+  <!-- LAYER 5: EXTRA VARS MAPPING -->
+  <text x="60" y="380" class="layer-label">Layer 5: Extra Vars Mapping</text>
+
+  <!-- etcd_kms -->
+  <rect x="60" y="400" width="200" height="120" fill="white" stroke="#c0392b" stroke-width="2" rx="8"/>
+  <text x="160" y="425" class="box-title" text-anchor="middle">etcd_kms</text>
+  <text x="160" y="450" class="box-content" text-anchor="middle">maps to</text>
+  <text x="160" y="470" class="var-name" text-anchor="middle">etcd_encryption</text>
+  <text x="160" y="485" class="var-name" text-anchor="middle">_kms_arn</text>
+
+  <!-- fips -->
+  <rect x="280" y="400" width="200" height="120" fill="white" stroke="#c0392b" stroke-width="2" rx="8"/>
+  <text x="380" y="425" class="box-title" text-anchor="middle">fips</text>
+  <text x="380" y="450" class="box-content" text-anchor="middle">maps to</text>
+  <text x="380" y="470" class="var-name" text-anchor="middle">fips: true</text>
+
+  <!-- security_groups -->
+  <rect x="500" y="400" width="200" height="120" fill="white" stroke="#c0392b" stroke-width="2" rx="8"/>
+  <text x="600" y="425" class="box-title" text-anchor="middle">security_groups</text>
+  <text x="600" y="450" class="box-content" text-anchor="middle">created during</text>
+  <text x="600" y="470" class="box-content" text-anchor="middle">provisioning</text>
+  <text x="600" y="490" class="box-content" text-anchor="middle">auto-appended</text>
+
+  <!-- Arrows down to AWS -->
+  <path d="M 160 520 L 160 580" stroke="#2c3e50" stroke-width="2" fill="none" marker-end="url(#arrowhead)"/>
+  <path d="M 380 520 L 380 580" stroke="#2c3e50" stroke-width="2" fill="none" marker-end="url(#arrowhead)"/>
+  <path d="M 600 520 L 600 580" stroke="#2c3e50" stroke-width="2" fill="none" marker-end="url(#arrowhead)"/>
+
+  <!-- LAYER 6: AWS PROVISIONING -->
+  <text x="60" y="580" class="layer-label">Layer 6: AWS Resource Provisioning</text>
+
+  <!-- KMS -->
+  <rect x="60" y="600" width="180" height="110" fill="#e8f4f8" stroke="#146eb4" stroke-width="2" rx="8"/>
+  <text x="150" y="625" class="box-title" text-anchor="middle">AWS KMS</text>
+  <text x="150" y="648" class="aws-label" text-anchor="middle" font-size="28">🔐</text>
+  <text x="150" y="685" class="box-content" text-anchor="middle">etcd encryption key</text>
+
+  <!-- IAM -->
+  <rect x="260" y="600" width="180" height="110" fill="#e8f4f8" stroke="#146eb4" stroke-width="2" rx="8"/>
+  <text x="350" y="625" class="box-title" text-anchor="middle">AWS IAM</text>
+  <text x="350" y="648" class="aws-label" text-anchor="middle" font-size="28">👤</text>
+  <text x="350" y="685" class="box-content" text-anchor="middle">roles andpolicies</text>
+
+  <!-- Security Group -->
+  <rect x="460" y="600" width="180" height="110" fill="#e8f4f8" stroke="#146eb4" stroke-width="2" rx="8"/>
+  <text x="550" y="625" class="box-title" text-anchor="middle">Security Group</text>
+  <text x="550" y="648" class="aws-label" text-anchor="middle" font-size="28">🔒</text>
+  <text x="550" y="685" class="box-content" text-anchor="middle">firewall rules</text>
+
+  <!-- VPC -->
+  <rect x="660" y="600" width="180" height="110" fill="#e8f4f8" stroke="#146eb4" stroke-width="2" rx="8"/>
+  <text x="750" y="625" class="box-title" text-anchor="middle">AWS VPC</text>
+  <text x="750" y="648" class="aws-label" text-anchor="middle" font-size="28">🌐</text>
+  <text x="750" y="685" class="box-content" text-anchor="middle">networking</text>
+
+  <!-- EC2 -->
+  <rect x="860" y="600" width="180" height="110" fill="#e8f4f8" stroke="#146eb4" stroke-width="2" rx="8"/>
+  <text x="950" y="625" class="box-title" text-anchor="middle">AWS EC2</text>
+  <text x="950" y="648" class="aws-label" text-anchor="middle" font-size="28">💻</text>
+  <text x="950" y="685" class="box-content" text-anchor="middle">instances</text>
+
+  <!-- CloudWatch -->
+  <rect x="1060" y="600" width="180" height="110" fill="#e8f4f8" stroke="#146eb4" stroke-width="2" rx="8"/>
+  <text x="1150" y="625" class="box-title" text-anchor="middle">CloudWatch</text>
+  <text x="1150" y="648" class="aws-label" text-anchor="middle" font-size="28">📊</text>
+  <text x="1150" y="685" class="box-content" text-anchor="middle">monitoring</text>
+
+  <!-- LAYER 7: RESULT -->
+  <text x="60" y="770" class="layer-label">Layer 7: Provisioned Cluster</text>
+  <rect x="60" y="790" width="1280" height="90" fill="#dcfce7" stroke="#10b981" stroke-width="2" rx="8"/>
+  <text x="700" y="820" class="box-title" text-anchor="middle">ROSA HCP Cluster Ready for Testing</text>
+  <text x="700" y="850" class="box-content" text-anchor="middle">All resources deployed, configured, and interconnected per scenario requirements</text>
+
+  <!-- Legend -->
+  <text x="60" y="920" class="layer-label">Key Insight</text>
+  <text x="60" y="945" class="box-content">One scenario selection triggers automatic resolution of features → extra vars → AWS resources. No manual parameter assembly required.</text>
+
+  <!-- Arrow marker definition -->
+  <defs>
+    <marker id="arrowhead" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
+      <polygon points="0 0, 10 3, 0 6" fill="#2c3e50"/>
+    </marker>
+  </defs>
+</svg>
