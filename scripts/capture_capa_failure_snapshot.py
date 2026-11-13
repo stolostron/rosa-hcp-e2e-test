@@ -1,33 +1,24 @@
 #!/usr/bin/env python3
 """Capture a pre-cleanup CAPA provisioning failure snapshot.
 
-When a ROSA HCP provisioning run fails, the scenario runner still executes its
-`always` cleanup stage, which deletes the RosaControlPlane. Any diagnostic
-gathering that happens after cleanup therefore reads a resource that carries a
-deletionTimestamp and conditions rewritten to "deleting" — the failure-time
-status is gone. This script is invoked at failure time, before cleanup, so the
-status that explains the failure is preserved.
+A failed provisioning run is followed by the scenario's `always` cleanup
+stage, which deletes the ROSAControlPlane; diagnostics gathered after that
+point only show the deleting resource. This runs at failure time instead.
 
-Only an explicit allowlist of non-secret fields is copied. Annotations, labels,
-managedFields, Secrets, kubeconfigs, tokens and every key that is not named
-below are dropped rather than passed through. AWS account IDs are masked and
-long strings are truncated, so an unredacted provider error cannot be written
-out wholesale.
+Only an explicit allowlist of non-secret fields is copied. The freeform
+fields (failureMessage, condition messages, `oc` stderr) hold text an
+external system wrote, which a field allowlist cannot bound, so they are
+*omitted outright* on any hint of credential material rather than being
+patched up and kept — see scrub_message().
 
-Usage:
-  capture_capa_failure_snapshot.py --cluster-name NAME --namespace NS
-                                   [--role-config NAME]
-                                   [--fallback-dir DIR] [--timeout SECONDS]
+Usage: capture_capa_failure_snapshot.py --cluster-name NAME --namespace NS
+       [--role-config NAME] [--fallback-dir DIR] [--timeout SECONDS]
 
-The snapshot is written to $ARTIFACT_DIR when that variable is set and
-non-empty, otherwise to --fallback-dir. The resulting path is printed on
-stdout.
-
-Every capture failure (missing `oc`, non-zero exit, timeout, unparseable
-output, unwritable directory) exits 0: a failed capture must never mask the
-test failure that triggered it, and must never stop the cleanup that follows
-it. Only argparse rejecting the command line itself exits non-zero, and the
-calling task sets `failed_when: false` regardless.
+The snapshot goes to $ARTIFACT_DIR when set and non-empty, else to
+--fallback-dir; the path is printed on stdout. Every capture failure
+(missing `oc`, non-zero exit, timeout, unparseable output, unwritable
+directory) exits 0, so a failed capture can neither mask the test failure
+that triggered it nor stop the cleanup that follows it.
 """
 
 import argparse
@@ -38,14 +29,9 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 
-# Bound every captured string so an external error payload cannot be dumped
-# wholesale into a public CI artifact.
-MAX_STRING_LENGTH = 2000
-# Bound list-valued fields so a pathological resource cannot inflate the file.
-MAX_LIST_ITEMS = 25
-# Per-`oc` invocation timeout. Two resources are read, so the whole capture is
-# bounded by roughly twice this value.
-DEFAULT_TIMEOUT_SECONDS = 30
+MAX_STRING_LENGTH = 2000  # bound on any captured string
+MAX_LIST_ITEMS = 25  # bound on conditions and recorded errors
+DEFAULT_TIMEOUT_SECONDS = 30  # per `oc` call; two calls bound the whole run
 
 ACCOUNT_ID_PLACEHOLDER = "<redacted-account-id>"
 ACCESS_KEY_PLACEHOLDER = "<redacted-access-key-id>"
@@ -53,8 +39,7 @@ TRUNCATION_SUFFIX = "...[truncated]"
 
 _ARN_ACCOUNT_RE = re.compile(r"(arn:aws[a-zA-Z0-9-]*:[^:\s]*:[^:\s]*:)(\d{12})")
 _BARE_ACCOUNT_RE = re.compile(r"(?<![\d.-])\d{12}(?![\d.-])")
-# AWS unique-identifier prefixes (access keys, temporary session keys, role and
-# user ids). Provider error text routinely quotes these back.
+# AWS unique-identifier prefixes: access, session, role and user ids.
 _ACCESS_KEY_RE = re.compile(
     r"\b(?:A3T|ABIA|ACCA|AGPA|AIDA|AIPA|AKIA|ANPA|ANVA|APKA|AROA|ASCA|ASIA)[A-Z0-9]{12,}\b"
 )
@@ -101,25 +86,73 @@ RRC_STATUS_FIELDS = (
 
 CONDITION_FIELDS = ("type", "status", "reason", "message", "lastTransitionTime")
 
+# Freeform provider text: failureMessage, condition messages and `oc` stderr.
+# An allowlist bounds which fields are copied, not what an external system
+# wrote into them, so these get the keyword tier and a tighter length bound.
+FREEFORM_FIELDS = frozenset({"failureMessage", "message"})
+MAX_MESSAGE_LENGTH = 512
+OMITTED_MESSAGE = "<omitted: matched a sensitive-content pattern>"
+OMITTED_QUERY = "?<omitted-query>"
+
+# Shapes that cannot legitimately appear in ANY allowlisted value, so this
+# tier runs on every captured string. A 40+ char unbroken base64/base32 run is
+# an opaque blob, not prose; hyphens are excluded so ordinary resource names
+# and ARNs never match.
+_HIGH_RISK_RE = re.compile(
+    r"bearer\s|authorization\s*:|sha256~|eyj[a-z0-9_-]{10,}|[A-Za-z0-9+/=_]{40,}",
+    re.IGNORECASE,
+)
+# Keyword tier. Freeform fields only: "secret" and friends legitimately occur
+# in resource names such as a credentialsSecretRef of rosa-creds-secret.
+_SENSITIVE_RE = re.compile(
+    r"secret|passw(?:or)?d|credential|token|api[-_]?key|private key|kubeconfig"
+    r"|client[-_]?id|session|cookie|signature="
+    r"|x-amz-(?:security-token|signature|credential)",
+    re.IGNORECASE,
+)
+
 
 def redact(value):
-    """Mask AWS account IDs and key IDs, and bound the length of a string."""
+    """Mask AWS identifiers, drop URL queries, omit anything secret-shaped.
+
+    The high-risk tier runs on every captured string, not only the freeform
+    ones, so no allowlisted field can become a bypass: no legitimate value
+    (name, version, region, ARN, URL, enum, timestamp) contains a bearer
+    header, a sha256~ or JWT token, or a long opaque blob.
+    """
     if not isinstance(value, str):
         return value
+    if _HIGH_RISK_RE.search(value):
+        return OMITTED_MESSAGE
     masked = _ARN_ACCOUNT_RE.sub(r"\g<1>" + ACCOUNT_ID_PLACEHOLDER, value)
     masked = _BARE_ACCOUNT_RE.sub(ACCOUNT_ID_PLACEHOLDER, masked)
     masked = _ACCESS_KEY_RE.sub(ACCESS_KEY_PLACEHOLDER, masked)
+    if masked.startswith(("http://", "https://")) and "?" in masked:
+        masked = masked.split("?", 1)[0] + OMITTED_QUERY
     if len(masked) > MAX_STRING_LENGTH:
         masked = masked[:MAX_STRING_LENGTH] + TRUNCATION_SUFFIX
     return masked
 
 
-def _scalar(value):
-    """Return a redacted scalar, or None for anything that is not a scalar.
+def scrub_message(value):
+    """Return freeform provider text, or omit it when it may carry a secret.
 
-    Dicts and lists are rejected here on purpose: only fields explicitly
-    handled by a nested allowlist may be structured.
+    Omission is deliberate: a redaction list only removes the secret shapes it
+    already knows, while this drops the whole string on any hint of credential
+    material. type/status/reason still say what failed.
     """
+    if not isinstance(value, str):
+        return value
+    if _SENSITIVE_RE.search(value):
+        return OMITTED_MESSAGE
+    masked = redact(value)
+    if len(masked) > MAX_MESSAGE_LENGTH:
+        masked = masked[:MAX_MESSAGE_LENGTH] + TRUNCATION_SUFFIX
+    return masked
+
+
+def _scalar(value):
+    """Redacted scalar, or None for a dict/list (only nested allowlists nest)."""
     if value is None or isinstance(value, bool) or isinstance(value, (int, float)):
         return value
     if isinstance(value, str):
@@ -135,8 +168,12 @@ def _pick(source, fields):
     for field in fields:
         if field not in source:
             continue
-        value = _scalar(source[field])
-        if value is not None or source[field] is None:
+        raw = source[field]
+        if field in FREEFORM_FIELDS and isinstance(raw, str):
+            value = scrub_message(raw)
+        else:
+            value = _scalar(raw)
+        if value is not None or raw is None:
             picked[field] = value
     return picked
 
@@ -150,8 +187,6 @@ def _pick_ref(source, fields):
         ref = source.get(field)
         if isinstance(ref, dict) and "name" in ref:
             picked[field] = {"name": _scalar(ref["name"])}
-        elif isinstance(ref, str):
-            picked[field] = {"name": redact(ref)}
     return picked
 
 
@@ -236,7 +271,7 @@ def fetch_resource(kind, name, namespace, timeout):
 
     if completed.returncode != 0:
         detail = (completed.stderr or "").strip().splitlines()
-        reason = detail[0] if detail else "no stderr"
+        reason = scrub_message(detail[0]) if detail else "no stderr"
         return None, redact(
             f"oc get {kind}/{name} exited {completed.returncode}: {reason}"
         )

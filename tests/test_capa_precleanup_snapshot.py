@@ -1,14 +1,9 @@
 #!/usr/bin/env python3
 """Regression tests for the pre-cleanup CAPA failure snapshot.
 
-A ROSA HCP provisioning failure is followed by the scenario's `always` cleanup
-stage, which deletes the RosaControlPlane; diagnostics gathered after that
-point only show the deleting resource. These tests pin the ordering and the
-non-fatal behavior that keep the failure-time snapshot available:
-
-    capture (inside the provision path) -> fail -> cleanup stage
-
-No cluster, AWS or network access is involved: only repository content is read.
+These pin the ordering and the non-fatal behavior that keep the failure-time
+snapshot available: capture (inside the provision path) -> fail -> cleanup
+stage. Only repository content is read; no cluster, AWS or network access.
 """
 
 from pathlib import Path
@@ -49,16 +44,6 @@ def _fail_index(tasks):
     return _index_of(tasks, lambda t: "fail" in t, "fail")
 
 
-# ================================================================
-# Ordering: capture before fail, and therefore before cleanup
-# ================================================================
-
-
-def test_capture_task_exists():
-    tasks = _tasks()
-    assert _capture_index(tasks) >= 0
-
-
 def test_capture_runs_before_the_fail_task():
     """The fail hands control back to the runner, which then runs cleanup."""
     tasks = _tasks()
@@ -96,11 +81,6 @@ def test_provision_path_includes_the_readiness_wait():
     assert "wait_for_rosa_control_plane_ready.yml" in body
 
 
-# ================================================================
-# The capture must not change the outcome of the run
-# ================================================================
-
-
 def test_capture_is_never_fatal():
     task = _tasks()[_capture_index(_tasks())]
     assert task.get("failed_when") is False
@@ -129,11 +109,6 @@ def test_readiness_wait_timeouts_are_unchanged():
     wait_task = _tasks()[0]
     assert "75 if retry_count is undefined" in str(wait_task["retries"])
     assert "30 if delay is undefined" in str(wait_task["delay"])
-
-
-# ================================================================
-# The capture command itself
-# ================================================================
 
 
 def test_capture_invokes_the_snapshot_script_read_only():

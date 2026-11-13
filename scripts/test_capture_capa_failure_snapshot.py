@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """Tests for capture_capa_failure_snapshot.py.
 
-Every `oc` invocation is mocked: these tests never contact a cluster, an AWS
-account, or any network endpoint.
+Every `oc` invocation is mocked: no cluster, AWS or network access.
 """
 
 import json
@@ -167,23 +166,26 @@ def _both():
     return {"rosacontrolplane": _ok(CONTROL_PLANE), "rosaroleconfig": _ok(ROLE_CONFIG)}
 
 
-# ================================================================
-# Normal capture
-# ================================================================
+# --- normal capture ---
 
 
 def test_captures_failure_time_control_plane_status(capture):
     code, snapshot, _ = capture(_rcp())
     rcp = snapshot["resources"]["rosacontrolplane"]
     assert code == 0
+    assert rcp["spec"]["version"] == "4.22.6" and rcp["spec"]["region"] == "us-west-2"
+    assert rcp["spec"]["rosaRoleConfigRef"] == {"name": ROLES}
+    assert rcp["spec"]["credentialsSecretRef"] == {"name": "rosa-creds-secret"}
     assert snapshot["phase"] == "pre-cleanup"
     assert rcp["status"]["ready"] is False
     assert rcp["status"]["failureReason"] == "ReconciliationError"
     assert "403" in rcp["status"]["failureMessage"]
+    assert "AccessDenied" in rcp["status"]["failureMessage"]
     assert rcp["status"]["oidcEndpointURL"].endswith("2abc3def")
     assert rcp["conditions"][0]["status"] == "False"
     assert rcp["conditions"][0]["reason"] == "ReconciliationError"
     assert snapshot["errors"] == []
+    assert snap.OMITTED_MESSAGE not in json.dumps(snapshot)  # benign text kept
 
 
 def test_captures_state_before_deletion(capture):
@@ -193,15 +195,6 @@ def test_captures_state_before_deletion(capture):
     rcp = snapshot["resources"]["rosacontrolplane"]
     assert "deletionTimestamp" not in rcp["metadata"]
     assert all(c.get("reason") != "deleting" for c in rcp["conditions"])
-
-
-def test_captures_spec_and_references_by_name_only(capture):
-    _, snapshot, _ = capture(_rcp())
-    spec = snapshot["resources"]["rosacontrolplane"]["spec"]
-    assert spec["rosaRoleConfigRef"] == {"name": ROLES}
-    assert spec["credentialsSecretRef"] == {"name": "rosa-creds-secret"}
-    assert spec["version"] == "4.22.6"
-    assert spec["region"] == "us-west-2"
 
 
 def test_captures_role_config_when_requested(capture):
@@ -218,24 +211,25 @@ def test_skips_role_config_when_not_named(capture):
     assert len(fake.calls) == 1
 
 
-def test_reports_the_kind_the_server_returned(capture):
+@pytest.mark.parametrize(
+    "served,expected",
+    [
+        ("RosaControlPlaneRenamed", "RosaControlPlaneRenamed"),
+        (None, "ROSAControlPlane"),
+    ],
+)
+def test_reports_the_kind_the_server_returned(capture, served, expected):
     """The artifact must not assert a kind the cluster never returned."""
-    renamed = dict(CONTROL_PLANE, kind="RosaControlPlaneRenamed")
-    _, snapshot, _ = capture({"rosacontrolplane": _ok(renamed)})
-    assert (
-        snapshot["resources"]["rosacontrolplane"]["kind"] == "RosaControlPlaneRenamed"
-    )
+    payload = dict(CONTROL_PLANE)
+    if served is None:
+        payload.pop("kind")
+    else:
+        payload["kind"] = served
+    _, snapshot, _ = capture({"rosacontrolplane": _ok(payload)})
+    assert snapshot["resources"]["rosacontrolplane"]["kind"] == expected
 
 
-def test_falls_back_to_the_expected_kind_when_absent(capture):
-    kindless = {k: v for k, v in CONTROL_PLANE.items() if k != "kind"}
-    _, snapshot, _ = capture({"rosacontrolplane": _ok(kindless)})
-    assert snapshot["resources"]["rosacontrolplane"]["kind"] == "ROSAControlPlane"
-
-
-# ================================================================
-# Allowlist and redaction
-# ================================================================
+# --- allowlist and redaction ---
 
 
 def test_allowlist_drops_metadata_secrets_and_unknown_fields(capture):
@@ -301,7 +295,7 @@ def test_redacts_bare_account_id_but_leaves_other_text_alone():
 
 
 def test_truncates_long_strings():
-    result = snap.redact("x" * (snap.MAX_STRING_LENGTH + 500))
+    result = snap.redact("stalled. " * 300)
     assert result.endswith(snap.TRUNCATION_SUFFIX)
     assert len(result) == snap.MAX_STRING_LENGTH + len(snap.TRUNCATION_SUFFIX)
 
@@ -313,9 +307,7 @@ def test_bounds_the_number_of_conditions():
     assert len(snap.reduce_conditions(many)) == snap.MAX_LIST_ITEMS
 
 
-# ================================================================
-# Bounded, read-only collection
-# ================================================================
+# --- bounded, read-only collection ---
 
 
 def test_oc_calls_are_read_only_typed_and_namespaced(capture):
@@ -335,9 +327,7 @@ def test_default_timeout_is_not_increased():
     assert snap.DEFAULT_TIMEOUT_SECONDS == 30
 
 
-# ================================================================
-# Failure handling: the capture never breaks the run
-# ================================================================
+# --- failure handling: the capture never breaks the run ---
 
 
 @pytest.mark.parametrize(
@@ -357,17 +347,6 @@ def test_capture_errors_are_recorded_and_exit_zero(capture, response, expected):
     assert code == 0
     assert snapshot["resources"]["rosacontrolplane"] is None
     assert any(expected in err for err in snapshot["errors"])
-
-
-def test_every_missing_resource_is_explained_by_an_error(capture):
-    """A null resource must never appear with an empty error list."""
-    _, snapshot, _ = capture(
-        {"rosacontrolplane": _raw("null"), "rosaroleconfig": _raw("null")},
-        "--role-config",
-        ROLES,
-    )
-    missing = [k for k, v in snapshot["resources"].items() if v is None]
-    assert missing and len(snapshot["errors"]) >= len(missing)
 
 
 def test_role_config_failure_does_not_lose_control_plane_snapshot(capture):
@@ -406,21 +385,18 @@ def test_unexpected_internal_error_exits_zero(monkeypatch, tmp_path, capsys):
     assert "snapshot capture failed" in capsys.readouterr().err
 
 
-# ================================================================
-# Output location
-# ================================================================
+# --- output location ---
 
 
-def test_artifact_dir_is_preferred_when_set(capture):
-    code, snapshot, _ = capture(_rcp())
+@pytest.mark.parametrize("use_artifact_dir", [True, False])
+def test_snapshot_lands_in_artifact_dir_or_the_fallback(capture, use_artifact_dir):
+    code, snapshot, _ = capture(_rcp(), use_artifact_dir=use_artifact_dir)
     assert code == 0 and snapshot is not None
-    assert not capture.fallback_dir.exists()
-
-
-def test_fallback_dir_used_when_artifact_dir_absent(capture):
-    code, snapshot, _ = capture(_rcp(), use_artifact_dir=False)
-    assert code == 0 and snapshot is not None
-    assert list(capture.fallback_dir.glob("capa-failure-snapshot-*.json"))
+    written = (capture.artifact_dir if use_artifact_dir else capture.fallback_dir).glob(
+        "capa-failure-snapshot-*.json"
+    )
+    assert list(written)
+    assert capture.fallback_dir.exists() is not use_artifact_dir
 
 
 def test_blank_artifact_dir_falls_back(monkeypatch):
@@ -435,3 +411,93 @@ def test_snapshot_path_is_printed(monkeypatch, tmp_path, capsys):
     printed = capsys.readouterr().out.strip()
     assert printed.startswith(str(tmp_path))
     assert Path(printed).is_file()
+
+
+# --- freeform provider text is omitted, not patched up ---
+
+SENSITIVE_MESSAGES = [
+    "aws_secret_access_key=wJalrXUtnFEMI/K7MDENG",  # pragma: allowlist secret
+    "GET https://s3/x?X-Amz-Signature=dead&X-Amz-Credential=k",
+    "could not read kubeconfig at /tmp/kubeconfig",
+    "failed to parse the private key material",
+    "password=hunter2 refused",  # pragma: allowlist secret
+]
+
+
+@pytest.mark.parametrize("message", SENSITIVE_MESSAGES)
+def test_sensitive_freeform_text_is_omitted_whole(message):
+    assert snap.scrub_message(message) == snap.OMITTED_MESSAGE
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "denied, Authorization: Bearer abc.def.ghi",
+        "sha256~Zm9vYmFyCg",  # pragma: allowlist secret
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9",  # pragma: allowlist secret
+        "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVowMTIzNDU2Nzg5MDE=",  # pragma: allowlist secret
+    ],
+)
+def test_high_risk_shapes_are_omitted_from_any_field(value):
+    """Not just the freeform ones — redact() itself refuses these."""
+    assert snap.redact(value) == snap.OMITTED_MESSAGE
+
+
+def test_url_query_string_is_dropped(capture):
+    hostile = json.loads(json.dumps(CONTROL_PLANE))
+    hostile["status"][
+        "oidcEndpointURL"
+    ] = "https://oidc.example/2abc?X-Amz-Signature=dead"
+    _, snapshot, _ = capture({"rosacontrolplane": _ok(hostile)})
+    url = snapshot["resources"]["rosacontrolplane"]["status"]["oidcEndpointURL"]
+    assert url == "https://oidc.example/2abc" + snap.OMITTED_QUERY
+    assert "X-Amz-Signature" not in json.dumps(snapshot)
+
+
+@pytest.mark.parametrize(
+    "where,payload,forbidden",
+    [
+        ("status:failureMessage", "denied, Authorization: Bearer abc.def", "Bearer"),
+        ("condition:message", "denied, Authorization: Bearer abc.def", "Bearer"),
+        ("condition:reason", "sha256~Zm9vYmFy", "sha256~"),  # pragma: allowlist secret
+        (
+            "status:id",
+            "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9",
+            "eyJ",
+        ),  # pragma: allowlist secret
+    ],
+)
+def test_secret_shaped_text_never_reaches_the_artifact(
+    capture, where, payload, forbidden
+):
+    """Freeform *and* structured fields are covered, not just the former."""
+    hostile = json.loads(json.dumps(CONTROL_PLANE))
+    scope, field = where.split(":")
+    target = (
+        hostile["status"]["conditions"][0]
+        if scope == "condition"
+        else hostile["status"]
+    )
+    target[field] = payload
+    _, snapshot, _ = capture({"rosacontrolplane": _ok(hostile)})
+    serialized = json.dumps(snapshot)
+    assert forbidden not in serialized
+    assert snap.OMITTED_MESSAGE in serialized
+    # Still diagnosable from the fields that were not omitted.
+    assert snapshot["resources"]["rosacontrolplane"]["status"]["ready"] is False
+
+
+def test_freeform_text_has_a_tighter_length_bound():
+    long_benign = "provisioning stalled. " * 60
+    result = snap.scrub_message(long_benign)
+    assert result.endswith(snap.TRUNCATION_SUFFIX)
+    assert len(result) == snap.MAX_MESSAGE_LENGTH + len(snap.TRUNCATION_SUFFIX)
+    assert snap.MAX_MESSAGE_LENGTH < snap.MAX_STRING_LENGTH
+
+
+def test_oc_stderr_is_scrubbed_before_it_is_recorded(capture):
+    noisy = _raw("", returncode=1, stderr="error: Authorization: Bearer abc.def.ghi")
+    _, snapshot, _ = capture({"rosacontrolplane": noisy})
+    joined = " ".join(snapshot["errors"])
+    assert "Bearer" not in joined and "abc.def.ghi" not in joined
+    assert snap.OMITTED_MESSAGE in joined
