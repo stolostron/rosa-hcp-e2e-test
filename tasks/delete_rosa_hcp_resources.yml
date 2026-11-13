@@ -332,7 +332,7 @@
   when:
     - wait_for_deletion | bool
     - "'__NOTFOUND__' not in rcp_exists.stdout"
-    - (wait_rcp | default({'rc': 1})).rc != 0
+    - "wait_rcp is undefined or (wait_rcp.rc | default(1)) != 0"
 
 - name: Display ROSAControlPlane deletion result
   ansible.builtin.debug:
@@ -358,8 +358,8 @@
   when:
     - wait_for_deletion | bool
     - "'__NOTFOUND__' not in rcp_exists.stdout"
-    - (wait_rcp | default({'rc': 1})).rc != 0
-    - (final_rcp_check | default({'rc': 1})).rc != 0
+    - "wait_rcp is undefined or (wait_rcp.rc | default(1)) != 0"
+    - "final_rcp_check is undefined or (final_rcp_check.rc | default(1)) != 0"
 
 - name: Display ROSAControlPlane timeout warning
   ansible.builtin.debug:
@@ -610,7 +610,7 @@
     - wait_for_deletion | bool
     - delete_network | bool
     - discovered_rosa_network_name != 'not-found'
-    - (wait_rn | default({'rc': 1})).rc != 0
+    - "wait_rn is undefined or (wait_rn.rc | default(1)) != 0"
 
 - name: Display ROSANetwork deletion result
   debug:
@@ -639,8 +639,8 @@
     - wait_for_deletion | bool
     - delete_network | bool
     - discovered_rosa_network_name != 'not-found'
-    - (wait_rn | default({'rc': 1})).rc != 0
-    - (final_rn_check | default({'rc': 1})).rc != 0
+    - "wait_rn is undefined or (wait_rn.rc | default(1)) != 0"
+    - "final_rn_check is undefined or (final_rn_check.rc | default(1)) != 0"
 
 - name: Display ROSANetwork timeout warning
   ansible.builtin.debug:
@@ -885,7 +885,7 @@
     - wait_for_deletion | bool
     - delete_roles | bool
     - discovered_rosa_role_config_name != 'not-found'
-    - (wait_rrc | default({'rc': 1})).rc != 0
+    - "wait_rrc is undefined or (wait_rrc.rc | default(1)) != 0"
 
 - name: Display ROSARoleConfig deletion result
   debug:
@@ -914,8 +914,8 @@
     - wait_for_deletion | bool
     - delete_roles | bool
     - discovered_rosa_role_config_name != 'not-found'
-    - (wait_rrc | default({'rc': 1})).rc != 0
-    - (final_rrc_check | default({'rc': 1})).rc != 0
+    - "wait_rrc is undefined or (wait_rrc.rc | default(1)) != 0"
+    - "final_rrc_check is undefined or (final_rrc_check.rc | default(1)) != 0"
 
 - name: Display ROSARoleConfig timeout warning
   ansible.builtin.debug:
