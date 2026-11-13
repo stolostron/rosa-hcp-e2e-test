@@ -29,6 +29,24 @@
   ignore_errors: true
   when: not (rcp_status.stdout | bool)
 
+# The scenario runner still executes its `always` cleanup stage after this
+# failure, and that stage deletes the RosaControlPlane — after which its
+# conditions read "deleting" and the failure-time status is unrecoverable.
+# Capture the allowlisted snapshot here, before the fail below hands control
+# back to the runner. Never fatal: a failed capture must not replace the real
+# failure below, nor stop the cleanup that follows it.
+- name: Capture pre-cleanup ROSA Control Plane failure snapshot
+  command: >
+    python3 "{{ playbook_dir }}/../scripts/capture_capa_failure_snapshot.py"
+    --cluster-name "{{ cluster_name }}"
+    --namespace "{{ rosa_hcp_namespace | default('ns-rosa-hcp') }}"
+    --role-config "{{ rosa_role_config_name | default('', true) }}"
+    --fallback-dir "{{ output_dir | default('/tmp', true) }}/diagnostics"
+  register: rcp_failure_snapshot
+  failed_when: false
+  changed_when: false
+  when: not (rcp_status.stdout | bool)
+
 - name: Fail if ROSA Control Plane did not become ready
   fail:
     msg: |
@@ -39,6 +57,10 @@
 
       Recent events:
       {{ rcp_events.stdout | default('No events found', true) }}
+
+      Pre-cleanup snapshot:
+      {{ rcp_failure_snapshot.stdout | default('', true) | trim
+         | default('not captured', true) }}
 
       For full details:
       oc describe rosacontrolplane {{ cluster_name }} -n {{ rosa_hcp_namespace | default('ns-rosa-hcp') }}
