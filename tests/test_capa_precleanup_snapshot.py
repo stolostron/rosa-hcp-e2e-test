@@ -6,10 +6,10 @@ snapshot available: capture (inside the provision path) -> fail -> cleanup
 stage. Only repository content is read; no cluster, AWS or network access.
 """
 
+import importlib.util
 from pathlib import Path
 
 import yaml
-from feature_manager import FeatureManager
 
 BASE_DIR = Path(__file__).parent.parent
 TASK_FILE = BASE_DIR / "tasks" / "wait_for_rosa_control_plane_ready.yml"
@@ -19,6 +19,13 @@ SNAPSHOT_SCRIPT = BASE_DIR / "scripts" / "capture_capa_failure_snapshot.py"
 SCRIPT_NAME = "capture_capa_failure_snapshot.py"
 PROVISION_SUITE = "20-rosa-hcp-provision"
 CLEANUP_SUITE = "30-rosa-hcp-delete"
+
+# Load feature_manager by path, as tests/test_run_test_suite.py does for the
+# runner, so the import resolves without depending on sys.path ordering.
+_spec = importlib.util.spec_from_file_location("fm", BASE_DIR / "feature_manager.py")
+_fm = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_fm)
+FeatureManager = _fm.FeatureManager
 
 
 def _tasks():

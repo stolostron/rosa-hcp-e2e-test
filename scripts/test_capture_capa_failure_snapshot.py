@@ -130,8 +130,8 @@ def _raw(stdout, returncode=0, stderr=""):
     )
 
 
-@pytest.fixture
-def capture(monkeypatch, tmp_path):
+@pytest.fixture(name="capture")
+def capture_fixture(monkeypatch, tmp_path):
     """Run main() against a mocked `oc`; yields (code, snapshot, fake_oc)."""
     artifact_dir = tmp_path / "art"
     fallback_dir = tmp_path / "fallback"

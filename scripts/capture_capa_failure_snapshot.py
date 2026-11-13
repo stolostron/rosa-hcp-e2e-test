@@ -39,7 +39,7 @@ _ACCESS_KEY_RE = re.compile(
 # deletionTimestamp is kept precisely so a reader can tell a pre-cleanup
 # snapshot from one taken after the cleanup stage started deleting.
 METADATA_FIELDS = ("name", "namespace", "creationTimestamp", "deletionTimestamp")
-RCP_SPEC_FIELDS = (
+RCP_SPEC = (
     "version",
     "channelGroup",
     "region",
@@ -50,8 +50,8 @@ RCP_SPEC_FIELDS = (
 # content. The credentials secret *name* tells a reader which identity the
 # control plane used, which is what an STS 403 turns on; the Secret itself is
 # never read.
-RCP_SPEC_REF_FIELDS = ("rosaNetworkRef", "rosaRoleConfigRef", "credentialsSecretRef")
-RCP_STATUS_FIELDS = (
+RCP_REFS = ("rosaNetworkRef", "rosaRoleConfigRef", "credentialsSecretRef")
+RCP_STATUS = (
     "ready",
     "id",
     "failureReason",
@@ -59,12 +59,12 @@ RCP_STATUS_FIELDS = (
     "oidcEndpointURL",
 )
 
-RRC_SPEC_NESTED_FIELDS = {
+RRC_NESTED = {
     "accountRoleConfig": ("prefix", "version", "path"),
     "operatorRoleConfig": ("prefix", "oidcID", "path"),
 }
-RRC_SPEC_FIELDS = ("oidcProviderType",)
-RRC_STATUS_FIELDS = (
+RRC_SPEC = ("oidcProviderType",)
+RRC_STATUS = (
     "ready",
     "phase",
     "id",
@@ -193,47 +193,35 @@ def reduce_conditions(conditions):
     return reduced
 
 
-def _observed_kind(obj, expected):
-    """Report the kind the server returned, not a hardcoded literal."""
-    kind = _scalar(obj.get("kind"))
-    return kind if isinstance(kind, str) and kind else expected
+def _summarize(obj, kind, spec_fields, status_fields, refs=(), nested=None):
+    """Build the allowlisted summary for one resource."""
+    if not isinstance(obj, dict):
+        return None
+    spec = obj.get("spec") if isinstance(obj.get("spec"), dict) else {}
+    status = obj.get("status") if isinstance(obj.get("status"), dict) else {}
+    summary_spec = _pick(spec, spec_fields)
+    summary_spec.update(_pick_ref(spec, refs))
+    for name, fields in (nested or {}).items():
+        nested_summary = _pick(spec.get(name), fields)
+        if nested_summary:
+            summary_spec[name] = nested_summary
+    return {
+        "kind": _scalar(obj.get("kind")) or kind,
+        "metadata": _pick(obj.get("metadata"), METADATA_FIELDS),
+        "spec": summary_spec,
+        "status": _pick(status, status_fields),
+        "conditions": reduce_conditions(status.get("conditions")),
+    }
 
 
 def summarize_control_plane(obj):
-    """Build the allowlisted ROSAControlPlane summary."""
-    if not isinstance(obj, dict):
-        return None
-    spec = obj.get("spec") if isinstance(obj.get("spec"), dict) else {}
-    status = obj.get("status") if isinstance(obj.get("status"), dict) else {}
-    summary_spec = _pick(spec, RCP_SPEC_FIELDS)
-    summary_spec.update(_pick_ref(spec, RCP_SPEC_REF_FIELDS))
-    return {
-        "kind": _observed_kind(obj, "ROSAControlPlane"),
-        "metadata": _pick(obj.get("metadata"), METADATA_FIELDS),
-        "spec": summary_spec,
-        "status": _pick(status, RCP_STATUS_FIELDS),
-        "conditions": reduce_conditions(status.get("conditions")),
-    }
+    """Allowlisted ROSAControlPlane summary."""
+    return _summarize(obj, "ROSAControlPlane", RCP_SPEC, RCP_STATUS, refs=RCP_REFS)
 
 
 def summarize_role_config(obj):
-    """Build the allowlisted ROSARoleConfig summary."""
-    if not isinstance(obj, dict):
-        return None
-    spec = obj.get("spec") if isinstance(obj.get("spec"), dict) else {}
-    status = obj.get("status") if isinstance(obj.get("status"), dict) else {}
-    summary_spec = _pick(spec, RRC_SPEC_FIELDS)
-    for nested, fields in RRC_SPEC_NESTED_FIELDS.items():
-        nested_summary = _pick(spec.get(nested), fields)
-        if nested_summary:
-            summary_spec[nested] = nested_summary
-    return {
-        "kind": _observed_kind(obj, "ROSARoleConfig"),
-        "metadata": _pick(obj.get("metadata"), METADATA_FIELDS),
-        "spec": summary_spec,
-        "status": _pick(status, RRC_STATUS_FIELDS),
-        "conditions": reduce_conditions(status.get("conditions")),
-    }
+    """Allowlisted ROSARoleConfig summary."""
+    return _summarize(obj, "ROSARoleConfig", RRC_SPEC, RRC_STATUS, nested=RRC_NESTED)
 
 
 def fetch_resource(kind, name, namespace, timeout):
