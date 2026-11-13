@@ -110,8 +110,7 @@ spec:
     - {{ az }}
 {% endfor %}
 {% endif %}
-{% endif %}
-{% if private is defined and private | bool and cluster_private_subnets is defined and cluster_private_subnets | length > 0 %}
+{% elif private is defined and private | bool and cluster_private_subnets is defined and cluster_private_subnets | length > 0 %}
   subnets:
 {% for subnet in cluster_private_subnets %}
     - {{ subnet }}

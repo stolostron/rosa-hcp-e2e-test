@@ -28,18 +28,6 @@
 #
 # 5. Via test suite (recommended):
 #    ./run-test-suite.py 04-rosa-hcp-delete -e name_prefix=qe6
-#
-# 6. With custom deletion timeouts:
-#    ansible-playbook delete_rosa_hcp_cluster.yml \
-#      -e cluster_name=my-cluster \
-#      -e rosanetwork_timeout=600 \
-#      -e rosacontrolplane_timeout=2400
-#
-# Configurable Timeouts (all in seconds):
-#   - rosanetwork_timeout: Network resource deletion (default: 300 = 5 min)
-#   - rosacontrolplane_timeout: Control plane deletion (default: 1800 = 30 min)
-#   - rosaroleconfig_timeout: Role config deletion (default: 600 = 10 min)
-#   - deletion_timeout: Global fallback if specific timeout not set (default: 3600 = 60 min)
 # ================================================================
 
 - name: Delete ROSA HCP cluster and automation resources
@@ -57,17 +45,7 @@
     delete_network: true
     delete_roles: true
     wait_for_deletion: true
-    # Per-resource deletion timeouts (seconds). Each resource has different typical completion times:
-    # - ROSANetwork: usually 2-5 min (fast, mostly CloudFormation cleanup)
-    # - ROSAControlPlane: usually 15-25 min (slower, API reconciliation)
-    # - ROSARoleConfig: usually <1 min (fast, just IAM role deletion)
-    rosanetwork_timeout: 300        # 5 minutes
-    rosacontrolplane_timeout: 1800  # 30 minutes
-    rosaroleconfig_timeout: 600     # 10 minutes
-    deletion_timeout: 3600          # 60 minutes (fallback if specific timeout not set)
-    rosacontrolplane_final_check_retries: 180  # ~18 min; confirms deletion after main wait times out
-    roosanetwork_final_check_retries: 36  # ~6 min; final confirmation for network deletion
-    rosaroleconfig_final_check_retries: 36  # ~6 min; final confirmation for IAM role deletion
+    deletion_timeout: 3600  # 60 minutes (AWS resource cleanup can be slow)
 
   tasks:
     - name: Load user variables
@@ -83,7 +61,7 @@
 
     - name: Set cluster credentials
       no_log: true
-      ansible.builtin.set_fact:
+      set_fact:
         ocp_user: "{{ lookup('env', 'OCP_HUB_CLUSTER_USER') | default(OCP_HUB_CLUSTER_USER, true) }}"
         ocp_password: "{{ lookup('env', 'OCP_HUB_CLUSTER_PASSWORD') | default(OCP_HUB_CLUSTER_PASSWORD, true) }}"
         api_url: "{{ lookup('env', 'OCP_HUB_API_URL') | default(OCP_HUB_API_URL, true) }}"
@@ -102,12 +80,12 @@
       when: load_cluster_state is defined and load_cluster_state is failed
 
     - name: Derive cluster_name from name_prefix if provided
-      ansible.builtin.set_fact:
+      set_fact:
         cluster_name: "{{ name_prefix }}-rosa-hcp"
       when: name_prefix is defined and cluster_name is not defined
 
     - name: Validate cluster name is provided
-      ansible.builtin.fail:
+      fail:
         msg: |
           ❌ ERROR: cluster_name or name_prefix must be provided!
 
@@ -118,12 +96,12 @@
       when: cluster_name is not defined
 
     - name: Set default capi namespace
-      ansible.builtin.set_fact:
+      set_fact:
         rosa_hcp_namespace: "ns-rosa-hcp"
       when: rosa_hcp_namespace is not defined
 
     - name: Set derived resource names
-      ansible.builtin.set_fact:
+      set_fact:
         rosa_network_name: "{{ cluster_name }}-network"
         rosa_role_config_name: "{{ cluster_name }}-roles"
         machine_pool_name: "{{ cluster_name }}"
@@ -137,18 +115,17 @@
       when: deployment_mode != 'standalone'
 
     - name: Get current kube context
-      ansible.builtin.shell: oc config current-context
+      shell: oc config current-context
       register: current_context
       changed_when: false
       when: deployment_mode == 'standalone'
 
-    - name: Set OCP context
-      ansible.builtin.set_fact:
+    - set_fact:
         ocp_context: "{{ current_context.stdout | trim }}"
       when: deployment_mode == 'standalone'
 
     - name: Display deletion configuration
-      ansible.builtin.debug:
+      debug:
         msg: |
           ╔═══════════════════════════════════════════════════════════════╗
           ║                                                               ║
@@ -169,30 +146,25 @@
 
           Settings:
           • Wait for Deletion: {{ '✓ Yes' if (wait_for_deletion | bool) else '✗ No' }}
-
-          Deletion Timeouts:
-          • ROSANetwork: {{ (rosanetwork_timeout | int / 60) | int }} min
-          • ROSAControlPlane: {{ (rosacontrolplane_timeout | int / 60) | int }} min
-          • ROSARoleConfig: {{ (rosaroleconfig_timeout | int / 60) | int }} min
-          • Fallback (if timeout not set): {{ (deletion_timeout | int / 60) | int }} min
+          • Timeout: {{ deletion_timeout }}s ({{ (deletion_timeout | int / 60) | int }} minutes)
 
     - name: Delete ROSA HCP cluster resources
       include_tasks: ../tasks/delete_rosa_hcp_resources.yml
 
     - name: Clean up persisted cluster state
-      ansible.builtin.file:
+      file:
         path: "{{ playbook_dir }}/../.last-cluster.json"
         state: absent
       register: cleanup_cluster_state
       ignore_errors: true
 
     - name: Warn if persisted cluster state cleanup failed
-      ansible.builtin.debug:
+      debug:
         msg: "Warning: failed to remove .last-cluster.json — {{ cleanup_cluster_state.msg | default('unknown cleanup error') }}"
       when: cleanup_cluster_state is failed
 
     - name: Deletion complete
-      ansible.builtin.debug:
+      debug:
         msg: |
 
           ╔═══════════════════════════════════════════════════════════════╗

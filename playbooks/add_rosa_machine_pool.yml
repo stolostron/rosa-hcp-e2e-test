@@ -42,38 +42,35 @@
 
     - name: Set cluster credentials
       no_log: true
-      ansible.builtin.set_fact:
+      set_fact:
         ocp_user: "{{ lookup('env', 'OCP_HUB_CLUSTER_USER') | default(OCP_HUB_CLUSTER_USER, true) }}"
         ocp_password: "{{ lookup('env', 'OCP_HUB_CLUSTER_PASSWORD') | default(OCP_HUB_CLUSTER_PASSWORD, true) }}"
         api_url: "{{ lookup('env', 'OCP_HUB_API_URL') | default(OCP_HUB_API_URL, true) }}"
-        automation_path: "{{ lookup('env', 'AUTOMATION_PATH') | default(playbook_dir + '/..', true) }}"
+        AUTOMATION_PATH: "{{ lookup('env', 'AUTOMATION_PATH') | default(playbook_dir + '/..', true) }}"
       when: deployment_mode != 'standalone'
 
     - name: Set defaults
-      ansible.builtin.set_fact:
+      set_fact:
         rosa_hcp_namespace: "{{ rosa_hcp_namespace | default('ns-rosa-hcp') }}"
         instance_type: "{{ instance_type | default('m5.xlarge') }}"
         replicas: "{{ replicas | default(1) }}"
         availability_zone: "{{ availability_zone | default('') }}"
-        machine_pool_readiness_timeout_minutes: "{{ machine_pool_readiness_timeout_minutes | default(30) }}"
-        machine_pool_readiness_poll_interval: "{{ machine_pool_readiness_poll_interval | default(30) }}"
 
     - name: Prepare ansible runner host
-      ansible.builtin.include_tasks: ../tasks/prepare_ansible_runner.yml
+      include_tasks: ../tasks/prepare_ansible_runner.yml
       when: not skip_ansible_runner | default(false) | bool
 
     - name: Login to OCP cluster
-      ansible.builtin.include_tasks: ../tasks/login_ocp.yml
+      include_tasks: ../tasks/login_ocp.yml
       when: deployment_mode != 'standalone'
 
     - name: Get current kube context
-      ansible.builtin.shell: oc config current-context
+      shell: oc config current-context
       register: current_context
       changed_when: false
       when: deployment_mode == 'standalone'
 
-    - name: Set OCP context
-      ansible.builtin.set_fact:
+    - set_fact:
         ocp_context: "{{ current_context.stdout | trim }}"
       when: deployment_mode == 'standalone'
 
@@ -85,58 +82,56 @@
       ignore_errors: true
 
     - name: Derive cluster_name from name_prefix if provided
-      ansible.builtin.set_fact:
+      set_fact:
         cluster_name: "{{ name_prefix }}-rosa-hcp"
       when: name_prefix is defined and name_prefix != "" and (cluster_name is not defined or cluster_name == "")
 
     - name: Set default pool_name
-      ansible.builtin.set_fact:
+      set_fact:
         pool_name: "extra-pool"
       when: pool_name is not defined or pool_name == ""
 
     - name: Validate required parameters
-      ansible.builtin.fail:
+      fail:
         msg: "cluster_name is required. Usage: -e cluster_name=my-cluster -e pool_name=my-pool"
       when: cluster_name is not defined or cluster_name == ""
 
     - name: Validate pool_name length
-      ansible.builtin.fail:
+      fail:
         msg: "pool_name '{{ pool_name }}' exceeds 15 characters (max for nodePoolName)"
       when: pool_name | length > 15
 
     - name: Check if ROSAMachinePool already exists
-      ansible.builtin.shell: |
+      shell: |
         oc get rosamachinepool {{ pool_name }} -n {{ rosa_hcp_namespace }} -o name 2>/dev/null || echo ""
       register: existing_pool
-      changed_when: false
 
     - name: Fail if pool already exists
-      ansible.builtin.fail:
+      fail:
         msg: "ROSAMachinePool '{{ pool_name }}' already exists in namespace {{ rosa_hcp_namespace }}"
       when: existing_pool.stdout != ""
 
     - name: Get control plane version
-      ansible.builtin.shell: |
+      shell: |
         oc get rosacontrolplane {{ cluster_name }} -n {{ rosa_hcp_namespace }} \
           -o jsonpath='{.spec.version}' 2>/dev/null || echo ""
       register: cp_version_result
-      changed_when: false
 
     - name: Set control plane version
-      ansible.builtin.set_fact:
+      set_fact:
         cp_version: "{{ cp_version_result.stdout }}"
 
     - name: Validate control plane exists
-      ansible.builtin.fail:
+      fail:
         msg: "ROSAControlPlane '{{ cluster_name }}' not found in namespace {{ rosa_hcp_namespace }}"
       when: cp_version == ""
 
     - name: Set pool version
-      ansible.builtin.set_fact:
+      set_fact:
         pool_version: "{{ version | default(cp_version) }}"
 
     - name: Display plan
-      ansible.builtin.debug:
+      debug:
         msg: |
           ╔═══════════════════════════════════════════════════════════════╗
           ║       Add ROSAMachinePool                                    ║
@@ -151,25 +146,10 @@
           Availability Zone: {{ availability_zone if availability_zone != '' else 'auto' }}
 
     - name: Detect core CAPI API version
-      ansible.builtin.include_tasks: ../tasks/detect_capi_core_api_version.yml
-
-    - name: Validate machine pool parameters are safe
-      ansible.builtin.fail:
-        msg: "pool_name must contain only alphanumeric characters, hyphens, and underscores (got: {{ pool_name }})"
-      when: pool_name is not regex('^[a-zA-Z0-9_-]+$')
-
-    - name: Validate instance type is safe
-      ansible.builtin.fail:
-        msg: "instance_type must be a valid AWS instance type format (got: {{ instance_type }})"
-      when: instance_type is not regex('^[a-z0-9]+\.[a-z0-9]+$')
-
-    - name: Validate availability zone format
-      ansible.builtin.fail:
-        msg: "availability_zone must be empty or a valid AWS AZ format (got: {{ availability_zone }})"
-      when: availability_zone != '' and availability_zone is not regex('^[a-z]{2}-[a-z]+-[0-9][a-z]?$')
+      include_tasks: ../tasks/detect_capi_core_api_version.yml
 
     - name: Create MachinePool resource
-      ansible.builtin.shell: |
+      shell: |
         cat <<'YAML' | oc apply -f -
         apiVersion: cluster.x-k8s.io/{{ capi_core_api_version | default('v1beta1') }}
         kind: MachinePool
@@ -198,10 +178,9 @@
         YAML
       register: mp_result
       failed_when: mp_result.rc != 0
-      changed_when: "'created' in mp_result.stdout or 'configured' in mp_result.stdout"
 
     - name: Create ROSAMachinePool resource
-      ansible.builtin.shell: |
+      shell: |
         cat <<'YAML' | oc apply -f -
         apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
         kind: ROSAMachinePool
@@ -225,20 +204,19 @@
         YAML
       register: rmp_result
       failed_when: rmp_result.rc != 0
-      changed_when: "'created' in rmp_result.stdout or 'configured' in rmp_result.stdout"
 
     - name: Display creation result
-      ansible.builtin.debug:
+      debug:
         msg: |
           MachinePool: {{ mp_result.stdout }}
           ROSAMachinePool: {{ rmp_result.stdout }}
 
     - name: Record pool creation start time
-      ansible.builtin.set_fact:
+      set_fact:
         pool_start_epoch: "{{ now(utc=true).strftime('%s') }}"
 
     - name: Wait for ROSAMachinePool to become ready
-      ansible.builtin.shell: |
+      shell: |
         # `oc` exits 0 and prints an empty string when a status field is absent,
         # so the `|| echo` fallback never fires. Normalise the empty case after
         # the fact, otherwise REPLICAS reads as "" instead of "0".
@@ -257,22 +235,22 @@
       until: >
         pool_status.stdout is defined and
         pool_status.stdout.split('|')[0] == 'true'
-      retries: "{{ ((machine_pool_readiness_timeout_minutes | int * 60) / (machine_pool_readiness_poll_interval | int)) | int }}"
-      delay: "{{ machine_pool_readiness_poll_interval | int }}"
+      retries: 60
+      delay: 30
       failed_when: false
       changed_when: false
 
     - name: Parse final status
-      ansible.builtin.set_fact:
+      set_fact:
         final_ready: "{{ pool_status.stdout.split('|')[0] | default('false', true) }}"
         final_replicas: "{{ pool_status.stdout.split('|')[1] | default('0', true) }}"
-        total_pool_seconds: "{{ ansible_date_time.epoch | int - pool_start_epoch | int }}"
+        total_pool_seconds: "{{ now(utc=true).strftime('%s') | int - pool_start_epoch | int }}"
 
     # A bare "did not become ready" tells us nothing about WHY -- the pool may be
     # healthy in AWS while the controller simply never wrote status. Capture the
     # CRs and the controller's own view before failing.
     - name: Collect diagnostics when the pool never became ready
-      ansible.builtin.shell: |
+      shell: |
         echo "===== ROSAMachinePool/{{ pool_name }} (status) ====="
         oc get rosamachinepool {{ pool_name }} -n {{ rosa_hcp_namespace }} \
           -o jsonpath='{.status}' 2>&1; echo
@@ -288,24 +266,21 @@
       when: final_ready | lower != "true"
 
     - name: Display diagnostics
-      ansible.builtin.debug:
+      debug:
         msg: "{{ pool_diagnostics.stdout_lines }}"
       when: final_ready | lower != "true"
 
     - name: Verify pool is ready
-      ansible.builtin.fail:
+      fail:
         msg: |
-          ROSAMachinePool {{ pool_name }} did not become ready within {{ machine_pool_readiness_timeout_minutes }} minutes (timeout: machine_pool_readiness_timeout_minutes).
+          ROSAMachinePool {{ pool_name }} did not become ready within 30 minutes.
           Ready: {{ final_ready }}
           Replicas: {{ final_replicas }}
-          Elapsed: {{ total_pool_seconds }}s
 
           This gate gates on .status.ready / .status.replicas, which only the CAPA
           controller writes. An empty status with a healthy pool in AWS means the
           controller never reconciled it -- check the diagnostics above before
           assuming the pool itself failed.
-
-          To increase timeout, pass: -e machine_pool_readiness_timeout_minutes=60
 
           Check status:
             oc describe rosamachinepool {{ pool_name }} -n {{ rosa_hcp_namespace }}
@@ -314,7 +289,7 @@
       when: final_ready | lower != "true"
 
     - name: Display success
-      ansible.builtin.debug:
+      debug:
         msg: |
           ╔═══════════════════════════════════════════════════════════════╗
           ║       MACHINE POOL CREATED!                                  ║

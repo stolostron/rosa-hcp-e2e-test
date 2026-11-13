@@ -18,7 +18,7 @@ reviews:
       - '!work-in-progress'
     ignore_usernames:
       - MergeBot3000
-knowledge_base:
+Knowledge_base:
   # We currently have Data Retention turned off, which is required for some knowledge base features.
   opt_out: true
   web_search:
