@@ -34,9 +34,7 @@ def _index_of(tasks, predicate, label):
 
 def _capture_index(tasks):
     return _index_of(
-        tasks,
-        lambda t: SCRIPT_NAME in str(t.get("command", "")),
-        "snapshot capture",
+        tasks, lambda t: SCRIPT_NAME in str(t.get("command", "")), "capture"
     )
 
 
@@ -117,22 +115,13 @@ def test_capture_invokes_the_snapshot_script_read_only():
     assert "--cluster-name" in command
     assert "--namespace" in command
     assert "rosa_hcp_namespace" in command
+    assert "--fallback-dir" in command
     for mutating in ("oc delete", "oc patch", "oc apply", "oc create", "aws "):
         assert mutating not in command
-
-
-def test_capture_falls_back_when_artifact_dir_is_unset():
-    command = str(_tasks()[_capture_index(_tasks())]["command"])
-    assert "--fallback-dir" in command
 
 
 def test_snapshot_script_exists_and_is_standalone():
     source = SNAPSHOT_SCRIPT.read_text()
     assert source.startswith("#!/usr/bin/env python3")
-    for third_party in (
-        "import boto3",
-        "import yaml",
-        "import requests",
-        "import kubernetes",
-    ):
+    for third_party in ("import boto3", "import yaml", "import requests", "kubernetes"):
         assert third_party not in source

@@ -166,9 +166,6 @@ def _both():
     return {"rosacontrolplane": _ok(CONTROL_PLANE), "rosaroleconfig": _ok(ROLE_CONFIG)}
 
 
-# --- normal capture ---
-
-
 def test_captures_failure_time_control_plane_status(capture):
     code, snapshot, _ = capture(_rcp())
     rcp = snapshot["resources"]["rosacontrolplane"]
@@ -197,18 +194,17 @@ def test_captures_state_before_deletion(capture):
     assert all(c.get("reason") != "deleting" for c in rcp["conditions"])
 
 
-def test_captures_role_config_when_requested(capture):
-    _, snapshot, fake = capture(_both(), "--role-config", ROLES)
+@pytest.mark.parametrize("named", [True, False])
+def test_role_config_is_read_only_when_named(capture, named):
+    args = (_both(), "--role-config", ROLES) if named else (_rcp(),)
+    _, snapshot, fake = capture(*args)
+    assert len(fake.calls) == (2 if named else 1)
+    if not named:
+        assert "rosaroleconfig" not in snapshot["resources"]
+        return
     rrc = snapshot["resources"]["rosaroleconfig"]
     assert rrc["status"]["phase"] == "Ready"
     assert rrc["spec"]["operatorRoleConfig"]["oidcID"] == "2abc3def"
-    assert len(fake.calls) == 2
-
-
-def test_skips_role_config_when_not_named(capture):
-    _, snapshot, fake = capture(_rcp())
-    assert "rosaroleconfig" not in snapshot["resources"]
-    assert len(fake.calls) == 1
 
 
 @pytest.mark.parametrize(
@@ -227,9 +223,6 @@ def test_reports_the_kind_the_server_returned(capture, served, expected):
         payload["kind"] = served
     _, snapshot, _ = capture({"rosacontrolplane": _ok(payload)})
     assert snapshot["resources"]["rosacontrolplane"]["kind"] == expected
-
-
-# --- allowlist and redaction ---
 
 
 def test_allowlist_drops_metadata_secrets_and_unknown_fields(capture):
@@ -286,15 +279,13 @@ def test_redacts_aws_key_and_principal_ids(key_id):
     assert snap.ACCESS_KEY_PLACEHOLDER in masked
 
 
-def test_redacts_bare_account_id_but_leaves_other_text_alone():
-    assert snap.redact(f"account {ACCOUNT_ID} denied") == (
-        f"account {snap.ACCOUNT_ID_PLACEHOLDER} denied"
+def test_redact_masks_account_ids_truncates_and_spares_ordinary_text():
+    placeholder = snap.ACCOUNT_ID_PLACEHOLDER
+    assert (
+        snap.redact(f"account {ACCOUNT_ID} denied") == f"account {placeholder} denied"
     )
     assert snap.redact("2026-11-11T09:20:00Z") == "2026-11-11T09:20:00Z"
     assert snap.redact("AccessDenied on role qe6") == "AccessDenied on role qe6"
-
-
-def test_truncates_long_strings():
     result = snap.redact("stalled. " * 300)
     assert result.endswith(snap.TRUNCATION_SUFFIX)
     assert len(result) == snap.MAX_STRING_LENGTH + len(snap.TRUNCATION_SUFFIX)
@@ -305,9 +296,6 @@ def test_bounds_the_number_of_conditions():
         {"type": f"C{i}", "status": "False"} for i in range(snap.MAX_LIST_ITEMS + 10)
     ]
     assert len(snap.reduce_conditions(many)) == snap.MAX_LIST_ITEMS
-
-
-# --- bounded, read-only collection ---
 
 
 def test_oc_calls_are_read_only_typed_and_namespaced(capture):
@@ -325,9 +313,6 @@ def test_oc_calls_are_read_only_typed_and_namespaced(capture):
 
 def test_default_timeout_is_not_increased():
     assert snap.DEFAULT_TIMEOUT_SECONDS == 30
-
-
-# --- failure handling: the capture never breaks the run ---
 
 
 @pytest.mark.parametrize(
@@ -385,11 +370,10 @@ def test_unexpected_internal_error_exits_zero(monkeypatch, tmp_path, capsys):
     assert "snapshot capture failed" in capsys.readouterr().err
 
 
-# --- output location ---
-
-
 @pytest.mark.parametrize("use_artifact_dir", [True, False])
-def test_snapshot_lands_in_artifact_dir_or_the_fallback(capture, use_artifact_dir):
+def test_snapshot_lands_in_artifact_dir_or_the_fallback(
+    capture, monkeypatch, use_artifact_dir
+):
     code, snapshot, _ = capture(_rcp(), use_artifact_dir=use_artifact_dir)
     assert code == 0 and snapshot is not None
     written = (capture.artifact_dir if use_artifact_dir else capture.fallback_dir).glob(
@@ -397,10 +381,7 @@ def test_snapshot_lands_in_artifact_dir_or_the_fallback(capture, use_artifact_di
     )
     assert list(written)
     assert capture.fallback_dir.exists() is not use_artifact_dir
-
-
-def test_blank_artifact_dir_falls_back(monkeypatch):
-    monkeypatch.setenv("ARTIFACT_DIR", "   ")
+    monkeypatch.setenv("ARTIFACT_DIR", "   ")  # whitespace-only counts as unset
     assert snap.resolve_output_dir("/tmp/diagnostics") == "/tmp/diagnostics"
 
 
@@ -412,8 +393,6 @@ def test_snapshot_path_is_printed(monkeypatch, tmp_path, capsys):
     assert printed.startswith(str(tmp_path))
     assert Path(printed).is_file()
 
-
-# --- freeform provider text is omitted, not patched up ---
 
 SENSITIVE_MESSAGES = [
     "aws_secret_access_key=wJalrXUtnFEMI/K7MDENG",  # pragma: allowlist secret

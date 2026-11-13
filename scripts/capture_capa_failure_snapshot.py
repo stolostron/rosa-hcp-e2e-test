@@ -5,20 +5,11 @@ A failed provisioning run is followed by the scenario's `always` cleanup
 stage, which deletes the ROSAControlPlane; diagnostics gathered after that
 point only show the deleting resource. This runs at failure time instead.
 
-Only an explicit allowlist of non-secret fields is copied. The freeform
-fields (failureMessage, condition messages, `oc` stderr) hold text an
-external system wrote, which a field allowlist cannot bound, so they are
-*omitted outright* on any hint of credential material rather than being
-patched up and kept — see scrub_message().
-
-Usage: capture_capa_failure_snapshot.py --cluster-name NAME --namespace NS
-       [--role-config NAME] [--fallback-dir DIR] [--timeout SECONDS]
-
-The snapshot goes to $ARTIFACT_DIR when set and non-empty, else to
---fallback-dir; the path is printed on stdout. Every capture failure
-(missing `oc`, non-zero exit, timeout, unparseable output, unwritable
-directory) exits 0, so a failed capture can neither mask the test failure
-that triggered it nor stop the cleanup that follows it.
+Only an explicit allowlist of non-secret fields is copied, and anything
+secret-shaped is omitted rather than patched up — see redact() and
+scrub_message(). The snapshot path is printed on stdout. Every capture
+failure exits 0, so a failed capture can neither mask the test failure that
+triggered it nor stop the cleanup that follows it.
 """
 
 import argparse
