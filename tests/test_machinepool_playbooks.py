@@ -19,6 +19,7 @@ import yaml
 BASE_DIR = Path(__file__).parent.parent
 PLAYBOOKS_DIR = BASE_DIR / "playbooks"
 TEST_SUITES_DIR = BASE_DIR / "test-suites"
+DOCS_DIR = BASE_DIR / "docs" / "test-suites"
 JENKINSFILE = BASE_DIR / "Jenkinsfile"
 
 
@@ -177,24 +178,21 @@ def test_delete_machinepool_suite_json():
 
 
 def test_add_suite_requires_cluster_name():
-    suite = json.loads(TEST_SUITES_DIR.joinpath("27-rosa-hcp-add-machinepool.json").read_text())
-    customization = suite["documentation"]["customization"]
-    assert "cluster_name" in customization
+    docs = DOCS_DIR.joinpath("27-rosa-hcp-add-machinepool.md").read_text()
+    assert "cluster_name" in docs
 
 
 def test_add_suite_has_documentation():
-    suite = json.loads(TEST_SUITES_DIR.joinpath("27-rosa-hcp-add-machinepool.json").read_text())
-    assert "documentation" in suite
-    assert "prerequisites" in suite["documentation"]
-    assert "quick_start" in suite["documentation"]
-    assert "expected_results" in suite["documentation"]
+    docs = DOCS_DIR.joinpath("27-rosa-hcp-add-machinepool.md").read_text()
+    assert "## Prerequisites" in docs
+    assert "## Quick start" in docs
+    assert "## Expected results" in docs
 
 
 def test_delete_suite_has_documentation():
-    suite = json.loads(TEST_SUITES_DIR.joinpath("28-rosa-hcp-delete-machinepool.json").read_text())
-    assert "documentation" in suite
-    assert "prerequisites" in suite["documentation"]
-    assert "expected_results" in suite["documentation"]
+    docs = DOCS_DIR.joinpath("28-rosa-hcp-delete-machinepool.md").read_text()
+    assert "## Prerequisites" in docs
+    assert "## Expected results" in docs
 
 
 # ================================================================
