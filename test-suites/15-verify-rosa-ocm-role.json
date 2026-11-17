@@ -1,14 +1,12 @@
 {
   "name": "Verify ROSAOCMRoleConfig",
   "description": "Verify ROSAOCMRoleConfig lifecycle: creation, reconciliation, status field population, and safe Retain deletion policy on shared AWS account",
-  "version": "1.0.0",
   "tags": [
     "rosa",
     "ocm-role",
     "iam",
     "lifecycle"
   ],
-  "environment": "any",
   "playbooks": [
     {
       "name": "Verify ROSAOCMRoleConfig",

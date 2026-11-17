@@ -1,9 +1,7 @@
 {
   "name": "CAPA No-CNI (BYO-CNI) Cluster Provisioning - OpenShift 5.0 RC",
   "description": "Provision a ROSA HCP No-CNI cluster using CAPA with automated network and role configuration on OpenShift 5.0.0-ec.6, candidate channel. The ROSAControlPlane network block sets networkType: Other, disabling the default OVNKubernetes CNI so the user brings and installs their own CNI plugin (ACM-21174-NoCNI).",
-  "version": "1.0.0",
   "tags": ["rosa", "hcp", "provisioning", "network-automation", "role-automation", "no-cni", "byo-cni", "5.0", "features"],
-  "environment": "mce",
   "playbooks": [
     {
       "name": "Create CAPA No-CNI Cluster",

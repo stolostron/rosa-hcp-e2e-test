@@ -1,9 +1,7 @@
 {
   "name": "Configure MCE Environment",
   "description": "Set up MCE environment for CAPI/CAPA cluster provisioning",
-  "execution": "sequential",
   "stopOnFailure": true,
-  "notifyOnComplete": true,
   "playbooks": [
     {
       "name": "Configure MCE Environment",
@@ -14,6 +12,4 @@
       "required": true
     }
   ],
-  "tags": ["setup", "configuration", "mce", "capi", "capa"],
-  "schedule": null
-}
+  "tags": ["setup", "configuration", "mce", "capi", "capa"]}

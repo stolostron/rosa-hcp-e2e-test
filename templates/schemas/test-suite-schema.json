@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ROSA HCP E2E test suite",
+  "description": "Fields read by run-test-suite.py. Anything else belongs in docs/test-suites/<suite-id>.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["name", "description", "tags", "playbooks"],
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "stopOnFailure": {
+      "type": "boolean"
+    },
+    "playbooks": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "file": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": {
+            "type": "string"
+          },
+          "extra_vars": {
+            "type": "object"
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "timeout": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "test_case_id": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

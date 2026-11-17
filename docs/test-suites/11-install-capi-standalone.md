@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Suite ID** | `10-install-capi-standalone` |
+| **Suite ID** | `11-install-capi-standalone` |
 | **Tags** | `setup`, `standalone`, `capi`, `capa`, `helm`, `smoke`, `full` |
 | **Playbooks** | 1 |
 

@@ -1,9 +1,7 @@
 {
   "name": "Install CAPI Standalone",
   "description": "Install CAPI/CAPA controllers via Helm charts for standalone mode",
-  "execution": "sequential",
   "stopOnFailure": true,
-  "notifyOnComplete": true,
   "playbooks": [
     {
       "name": "Install CAPI/CAPA Standalone",
