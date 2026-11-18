@@ -1,9 +1,7 @@
 {
   "name": "Enable CAPI/CAPA, Disable Hypershift",
   "description": "Switch MCE from Hypershift back to CAPI/CAPA for cluster management",
-  "version": "1.0.0",
   "tags": ["mce", "capi", "hypershift", "configuration", "component-management"],
-  "environment": "mce",
   "playbooks": [
     {
       "name": "Enable CAPI/CAPA and Disable Hypershift",

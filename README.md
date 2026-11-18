@@ -242,7 +242,7 @@ Output:
 |------------|-------------|
 | [`05-verify-mce-environment`](docs/test-suites/05-verify-mce-environment.md) | Validate MCE/CAPI/CAPA environment configuration before provisioning |
 | [`10-configure-mce-environment`](docs/test-suites/10-configure-mce-environment.md) | Set up MCE environment for CAPI/CAPA cluster provisioning |
-| [`10-install-capi-standalone`](docs/test-suites/10-install-capi-standalone.md) | Install CAPI/CAPA controllers via Helm charts for standalone mode |
+| [`11-install-capi-standalone`](docs/test-suites/11-install-capi-standalone.md) | Install CAPI/CAPA controllers via Helm charts for standalone mode |
 | [`15-verify-rosa-ocm-role`](docs/test-suites/15-verify-rosa-ocm-role.md) | Verify ROSAOCMRoleConfig creation, reconciliation, status, and Retain deletion |
 | [`20-rosa-hcp-provision`](docs/test-suites/20-rosa-hcp-provision.md) | Provision a ROSA HCP cluster with automated network and role configuration (supports `--feature` flags) |
 | [`21-verify-feature-flags`](docs/test-suites/21-verify-feature-flags.md) | Verify provisioned cluster feature flags match requested configuration |

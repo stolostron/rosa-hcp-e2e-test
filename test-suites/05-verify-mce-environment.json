@@ -1,9 +1,7 @@
 {
   "name": "Verify MCE Environment",
   "description": "Validate MCE/CAPI/CAPA environment configuration before provisioning",
-  "version": "1.0.0",
   "tags": ["mce", "capi", "capa", "validation", "verification"],
-  "environment": "mce",
   "playbooks": [
     {
       "name": "Verify CAPI/CAPA Environment",

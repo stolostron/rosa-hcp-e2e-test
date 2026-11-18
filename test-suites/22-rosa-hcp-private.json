@@ -1,9 +1,7 @@
 {
   "name": "CAPA Private (PrivateLink) Cluster Provisioning - OpenShift 5.0 RC",
   "description": "Provision a ROSA HCP PrivateLink cluster using CAPA with automated network and role configuration on OpenShift 5.0.0-ec.6, candidate channel. The ROSAControlPlane sets endpointAccess: Private, disabling the public API server and public ingress so all access is via AWS PrivateLink (ACM-21174-Private).",
-  "version": "1.0.0",
   "tags": ["rosa", "hcp", "provisioning", "network-automation", "role-automation", "private", "privatelink", "5.0", "features"],
-  "environment": "mce",
   "playbooks": [
     {
       "name": "Create CAPA Private Cluster",

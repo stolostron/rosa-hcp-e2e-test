@@ -54,6 +54,7 @@ def test_load_all_suite_files():
     suite_ids = [
         "05-verify-mce-environment",
         "10-configure-mce-environment",
+        "11-install-capi-standalone",
         "20-rosa-hcp-provision",
         "27-rosa-hcp-add-machinepool",
         "28-rosa-hcp-delete-machinepool",

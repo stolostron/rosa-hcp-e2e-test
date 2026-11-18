@@ -1,9 +1,7 @@
 {
   "name": "Upgrade ROSA HCP Control Plane",
   "description": "Upgrade a ROSA HCP cluster control plane to the next available OpenShift version via ROSAControlPlane spec.version patch",
-  "version": "1.0.0",
   "tags": ["rosa", "hcp", "upgrade", "control-plane", "full"],
-  "environment": "mce",
   "playbooks": [
     {
       "name": "Upgrade Control Plane",
