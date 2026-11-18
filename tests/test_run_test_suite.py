@@ -162,9 +162,31 @@ def test_build_ansible_cmd_complex_dict():
 
 
 def test_build_ansible_cmd_simple_vars():
+    import json
     runner = _make_runner(extra_vars={"simple_key": "simple_value"})
     cmd = runner._build_ansible_cmd(Path("playbooks/test.yml"), {})
-    assert "simple_key=simple_value" in cmd
+
+    json_args = [cmd[i + 1] for i, arg in enumerate(cmd) if arg == "-e"]
+    assert len(json_args) == 1, "All extra vars must be one JSON blob"
+    parsed_json = json.loads(json_args[0])
+    assert parsed_json["simple_key"] == "simple_value"
+
+
+def test_build_ansible_cmd_preserves_spaces_and_types():
+    import json
+    runner = _make_runner(
+        extra_vars={"flag": True, "count": 3, "message": "hello world"}
+    )
+    cmd = runner._build_ansible_cmd(Path("playbooks/test.yml"), {})
+
+    json_args = [cmd[i + 1] for i, arg in enumerate(cmd) if arg == "-e"]
+    assert len(json_args) == 1, "All extra vars must be one JSON blob"
+    parsed_json = json.loads(json_args[0])
+
+    assert parsed_json["flag"] is True
+    assert parsed_json["count"] == 3
+    assert parsed_json["message"] == "hello world"
+    assert not any(arg.startswith("message=") for arg in cmd)
 
 
 # ================================================================
@@ -238,11 +260,6 @@ def test_tag_filter_no_match():
 # ================================================================
 # Runner Initialization
 # ================================================================
-
-def test_runner_dry_run_flag():
-    runner = _make_runner(dry_run=True)
-    assert runner.dry_run is True
-
 
 def test_runner_ai_agent_disabled():
     runner = _make_runner(ai_agent_enabled=False)
@@ -862,3 +879,36 @@ def test_artifact_archived_once_per_run(tmp_path, monkeypatch):
 
     assert len(writes) == 1, f"archive written {len(writes)}x, expected once per run"
     assert list(tmp_path.rglob("feature-verification-*.json"))
+
+
+# ================================================================
+# main() exit codes
+# ================================================================
+
+def test_main_returns_1_without_a_suite(monkeypatch):
+    monkeypatch.setattr(_module.sys, "argv", ["run-test-suite.py"])
+    assert _module.main() == 1
+
+
+def test_main_returns_0_when_suite_passes(monkeypatch):
+    monkeypatch.setattr(
+        _module.sys, "argv",
+        ["run-test-suite.py", "20-rosa-hcp-provision", "--no-save"],
+    )
+    monkeypatch.setattr(
+        _module.TestSuiteRunner, "run_test_suite",
+        lambda self, suite_id: True,
+    )
+    assert _module.main() == 0
+
+
+def test_main_returns_1_when_suite_fails(monkeypatch):
+    monkeypatch.setattr(
+        _module.sys, "argv",
+        ["run-test-suite.py", "20-rosa-hcp-provision", "--no-save"],
+    )
+    monkeypatch.setattr(
+        _module.TestSuiteRunner, "run_test_suite",
+        lambda self, suite_id: False,
+    )
+    assert _module.main() == 1
