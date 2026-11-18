@@ -224,7 +224,6 @@ Feature Flags:
 
 Execution:
   -e KEY=VALUE                Extra Ansible variables (repeatable)
-  --dry-run                   Ansible check mode (no changes)
   -v / -vv / -vvv / -vvvv    Increase verbosity
 
 AI Agent:
@@ -540,9 +539,6 @@ python3 -m pytest tests/ -v
 ```bash
 # Maximum verbosity
 ./run-test-suite.py 20-rosa-hcp-provision -vvv
-
-# Dry-run mode (validates but doesn't execute)
-./run-test-suite.py 20-rosa-hcp-provision --dry-run
 
 # Validate feature flags only (no cluster connection needed)
 ./run-test-suite.py 20-rosa-hcp-provision --validate-only --feature no-cni
