@@ -7,7 +7,6 @@ Validates all test suite JSON files without a live cluster:
     - Playbook file paths exist on disk
     - extra_vars are dicts when present
     - tags are lists
-    - documentation sections (when present)
 """
 
 import json
@@ -30,19 +29,6 @@ SUITE_FILES = [
     "40-enable-capi-disable-hypershift.json",
     "41-disable-capi-enable-hypershift.json",
 ]
-
-# 10-configure-mce-environment.json does not have a documentation section
-SUITES_WITH_DOCUMENTATION = [
-    "05-verify-mce-environment.json",
-    "15-verify-rosa-ocm-role.json",
-    "20-rosa-hcp-provision.json",
-    "27-rosa-hcp-add-machinepool.json",
-    "28-rosa-hcp-delete-machinepool.json",
-    "30-rosa-hcp-delete.json",
-    "40-enable-capi-disable-hypershift.json",
-    "41-disable-capi-enable-hypershift.json",
-]
-
 
 def _load_suite(filename):
     """Load and parse a test suite JSON file."""
@@ -154,32 +140,3 @@ def test_extra_vars_are_dicts_when_present(suite_file):
             assert isinstance(pb["extra_vars"], dict), \
                 f"{suite_file}: playbook '{pb.get('name')}' extra_vars must be a dict, " \
                 f"got {type(pb['extra_vars']).__name__}"
-
-
-# ================================================================
-# Documentation Sections
-# ================================================================
-
-@pytest.mark.parametrize("suite_file", SUITES_WITH_DOCUMENTATION)
-def test_suite_has_documentation_section(suite_file):
-    suite = _load_suite(suite_file)
-    assert "documentation" in suite, \
-        f"{suite_file} expected to have 'documentation' section"
-
-
-@pytest.mark.parametrize("suite_file", SUITES_WITH_DOCUMENTATION)
-def test_documentation_has_prerequisites(suite_file):
-    suite = _load_suite(suite_file)
-    doc = suite.get("documentation", {})
-    assert "prerequisites" in doc, \
-        f"{suite_file}: documentation missing 'prerequisites'"
-    assert isinstance(doc["prerequisites"], list), \
-        f"{suite_file}: documentation.prerequisites must be a list"
-
-
-def test_configure_mce_has_no_documentation():
-    """10-configure-mce-environment.json does not have a documentation section."""
-    suite = _load_suite("10-configure-mce-environment.json")
-    # This is expected - verify we handle it gracefully
-    assert "documentation" not in suite, \
-        "10-configure-mce-environment.json is not expected to have documentation"

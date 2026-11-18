@@ -19,18 +19,4 @@
         "rosa_hcp_namespace": "ns-rosa-hcp"
       }
     }
-  ],
-  "documentation": {
-    "overview": "This test suite verifies that features requested during provisioning (via --feature or --feature-group) were correctly applied. It checks CRDs, queries the OCM API, and validates AWS resources. Features not requested are SKIPped, not FAILed.",
-    "prerequisites": [
-      "A provisioned ROSA HCP cluster (suite 20 must have passed)",
-      "CLUSTER_FEATURES or FEATURE_GROUP must be set",
-      "OpenShift cluster login credentials configured",
-      "AWS credentials for AWS CLI checks"
-    ],
-    "quick_start": {
-      "basic_usage": "./run-test-suite.py 21-verify-feature-flags --feature domain --feature autoscaler -e cluster_name=jnk-rosa-hcp",
-      "description": "Verifies that the specified features were applied to the named cluster"
-    }
-  }
-}
+  ]}
