@@ -121,3 +121,25 @@ def test_schema_lists_only_runner_read_fields():
         "timeout",
         "test_case_id",
     }
+
+
+def test_suites_do_not_hardcode_per_run_inputs():
+    """Region, namespace and OCM role name come from -e/Jenkins, not the suite."""
+    forbidden = {
+        "aws_region",
+        "rosa_hcp_namespace",
+        "capi_namespace",
+        "ocm_role_config_name",
+    }
+    offenders = []
+    for suite_file in SUITE_FILES:
+        suite = _load_suite(suite_file)
+        for playbook in suite.get("playbooks", []):
+            hardcoded = set(playbook.get("extra_vars", {})) & forbidden
+            if hardcoded:
+                offenders.append(f"{suite_file.name}: {sorted(hardcoded)}")
+
+    assert not offenders, (
+        "Per-run inputs must come from -e/Jenkins, not suite JSON:\n"
+        + "\n".join(offenders)
+    )

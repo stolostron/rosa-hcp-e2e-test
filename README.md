@@ -256,6 +256,31 @@ Output:
 | [`40-enable-capi-disable-hypershift`](docs/test-suites/40-enable-capi-disable-hypershift.md) | Switch MCE from HyperShift to CAPI/CAPA |
 | [`41-disable-capi-enable-hypershift`](docs/test-suites/41-disable-capi-enable-hypershift.md) | Switch MCE from CAPI/CAPA to HyperShift |
 
+### Per-run inputs
+
+Region, namespace, and the OCM role name are not hardcoded in the suite
+definitions. Override them with `-e`:
+
+```bash
+./run-test-suite.py 20-rosa-hcp-provision \
+  -e AWS_REGION=us-east-1 \
+  -e rosa_hcp_namespace=my-ns
+
+./run-test-suite.py 15-verify-rosa-ocm-role \
+  -e ocm_role_config_name=my-role
+```
+
+Defaults:
+
+- `AWS_REGION`: from the environment/`vars/user_vars.yml`, otherwise the
+  playbook default (usually `us-west-2`; the standalone install playbook
+  defaults to `us-east-1` when `AWS_REGION` is unset)
+- `rosa_hcp_namespace`: `ns-rosa-hcp` from `vars/vars.yml`
+- `ocm_role_config_name`: `shared-ocm-role` from the verify playbook
+
+The Jenkins pipeline exposes `AWS_REGION` and `ROSA_HCP_NAMESPACE` as
+parameters and passes them to the ROSA HCP suites.
+
 ## Feature Flag System
 
 The framework supports composable Day 1 feature testing via `--feature` CLI flags. Features are defined in `templates/schemas/feature-registry.yml` and resolved by `feature_manager.py`.

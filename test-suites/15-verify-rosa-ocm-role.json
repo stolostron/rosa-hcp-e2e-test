@@ -14,7 +14,6 @@
       "description": "Tests ROSAOCMRoleConfig creation, readiness polling, status verification, and safe teardown with Retain policy",
       "test_case_id": "ROSA-OCM-ROLE-RECONCILIATION",
       "extra_vars": {
-        "ocm_role_config_name": "shared-ocm-role",
         "ocm_role_prefix": "CAPA",
         "ocm_role_profile": "Admin",
         "ocm_role_deletion_policy": "Retain"
