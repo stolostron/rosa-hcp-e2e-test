@@ -6,9 +6,6 @@
     {
       "name": "Delete Machine Pool",
       "file": "playbooks/delete_rosa_machine_pool.yml",
-      "description": "Deletes the MachinePool and ROSAMachinePool resources and waits for full removal",
-      "extra_vars": {
-        "rosa_hcp_namespace": "ns-rosa-hcp"
-      }
+      "description": "Deletes the MachinePool and ROSAMachinePool resources and waits for full removal"
     }
   ]}

@@ -8,7 +8,6 @@
       "file": "playbooks/delete_rosa_hcp_cluster.yml",
       "description": "Deletes a ROSA HCP cluster including optional CAPA ROSANetwork and ROSARoleConfig automation resources",
       "extra_vars": {
-        "rosa_hcp_namespace": "ns-rosa-hcp",
         "delete_network": true,
         "delete_roles": true,
         "wait_for_deletion": true,

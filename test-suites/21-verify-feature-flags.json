@@ -11,10 +11,6 @@
     {
       "name": "Verify Feature Flags",
       "file": "playbooks/verify_feature_flags.yml",
-      "description": "Checks each requested feature against the cluster CRDs, OCM API, and AWS CLI to verify it was applied correctly",
-      "extra_vars": {
-        "aws_region": "us-west-2",
-        "rosa_hcp_namespace": "ns-rosa-hcp"
-      }
+      "description": "Checks each requested feature against the cluster CRDs, OCM API, and AWS CLI to verify it was applied correctly"
     }
   ]}
