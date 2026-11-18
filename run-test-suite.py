@@ -344,6 +344,7 @@ class TestSuiteRunner:
         print(f"\n{Colors.CYAN}⏳ Running: {playbook.get('description', playbook_name)}{Colors.ENDC}")
 
         start_time = time.time()
+        output_lines = []
 
         try:
             cmd = self._build_ansible_cmd(playbook_path, playbook)
@@ -407,33 +408,43 @@ class TestSuiteRunner:
                     if self.verbosity > 0:
                         print(f"{Colors.CYAN}AI Agent sidecar monitoring: {sidecar_logfile}{Colors.ENDC}")
 
-            # Capture output while streaming it in real-time
-            output_lines = []
+            # Capture output while streaming it in real-time. The reader runs
+            # in its own thread so the main thread can enforce the timeout even
+            # when the playbook stops producing output.
+            def _stream_output():
+                try:
+                    for line in process.stdout:
+                        # Print immediately (prevents timeout detection in CI/CD)
+                        print(line, end='')
+                        sys.stdout.flush()
+                        # Also store for later use
+                        output_lines.append(line)
+
+                        # AI Agent Hook: Process line in real-time for issue detection
+                        if self.ai_agent_enabled and self.monitor_agent:
+                            try:
+                                with self._agent_lock:
+                                    self.monitor_agent.process_line(line)
+                            except Exception as e:
+                                if self.verbosity > 0:
+                                    print(f"{Colors.YELLOW}AI Agent Warning: {str(e)}{Colors.ENDC}")
+                except Exception as e:
+                    if self.verbosity > 0:
+                        print(f"{Colors.YELLOW}Output reader warning: {str(e)}{Colors.ENDC}")
+
+            reader_thread = threading.Thread(target=_stream_output, daemon=True)
+            reader_thread.start()
+
             try:
-                for line in process.stdout:
-                    # Print immediately (prevents timeout detection in CI/CD)
-                    print(line, end='')
-                    sys.stdout.flush()
-                    # Also store for later use
-                    output_lines.append(line)
-
-                    # AI Agent Hook: Process line in real-time for issue detection
-                    if self.ai_agent_enabled and self.monitor_agent:
-                        try:
-                            with self._agent_lock:
-                                self.monitor_agent.process_line(line)
-                        except Exception as e:
-                            if self.verbosity > 0:
-                                print(f"{Colors.YELLOW}AI Agent Warning: {str(e)}{Colors.ENDC}")
-
-                # Wait for process to complete
+                # Enforce the timeout while the reader keeps streaming output.
                 returncode = process.wait(timeout=timeout)
-
             except subprocess.TimeoutExpired:
-                process.kill()
+                if process.poll() is None:
+                    process.kill()
                 process.wait()
                 raise  # Re-raise to be caught by outer exception handler
             finally:
+                reader_thread.join(timeout=5)
                 # Stop the sidecar tailer thread
                 sidecar_stop.set()
                 if sidecar_thread is not None:
@@ -479,7 +490,8 @@ class TestSuiteRunner:
                 "success": False,
                 "is_error": True,
                 "error": f"Timeout after {timeout} seconds",
-                "duration": duration
+                "duration": duration,
+                "output": ''.join(output_lines)
             }
         except Exception as e:
             duration = time.time() - start_time

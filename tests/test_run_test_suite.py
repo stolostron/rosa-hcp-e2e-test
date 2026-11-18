@@ -912,3 +912,46 @@ def test_main_returns_1_when_suite_fails(monkeypatch):
         lambda self, suite_id: False,
     )
     assert _module.main() == 1
+
+
+# ================================================================
+# Timeout enforcement
+# ================================================================
+
+def test_run_playbook_enforces_timeout_while_streaming(monkeypatch):
+    class FakeProcess:
+        def __init__(self):
+            self.stdout = iter(["line one\n", "line two\n"])
+            self.killed = False
+            self.returncode = None
+
+        def wait(self, timeout=None):
+            if timeout is not None:
+                raise _module.subprocess.TimeoutExpired("ansible-playbook", timeout)
+            self.returncode = -15
+            return self.returncode
+
+        def kill(self):
+            self.killed = True
+
+        def poll(self):
+            return None
+
+    fake = FakeProcess()
+    monkeypatch.setattr(_module.subprocess, "Popen", lambda *args, **kwargs: fake)
+
+    runner = _make_runner()
+    result = runner.run_playbook(
+        {
+            "name": "timeout-test",
+            "file": "playbooks/create_rosa_hcp_cluster.yml",
+            "description": "timeout test",
+            "timeout": 0.1,
+        },
+        "test-suite",
+    )
+
+    assert result["success"] is False
+    assert "Timeout" in result["error"]
+    assert fake.killed is True
+    assert "line one" in result["output"]
