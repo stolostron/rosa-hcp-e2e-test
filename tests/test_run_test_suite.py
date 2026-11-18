@@ -11,6 +11,7 @@ Validates runner functionality without executing playbooks:
 """
 
 import importlib.util
+import threading
 from pathlib import Path
 
 BASE_DIR = Path(__file__).parent.parent
@@ -912,3 +913,266 @@ def test_main_returns_1_when_suite_fails(monkeypatch):
         lambda self, suite_id: False,
     )
     assert _module.main() == 1
+
+
+# ================================================================
+# Timeout enforcement
+# ================================================================
+
+def test_run_playbook_enforces_timeout_while_streaming(monkeypatch):
+    class FakeProcess:
+        pid = 12345
+
+        def __init__(self):
+            self.stdout = iter(["line one\n", "line two\n"])
+            self.returncode = None
+
+        def wait(self, timeout=None):
+            if timeout is not None:
+                raise _module.subprocess.TimeoutExpired("ansible-playbook", timeout)
+            self.returncode = -9
+            return self.returncode
+
+    fake = FakeProcess()
+    popen_kwargs = {}
+
+    def fake_popen(*args, **kwargs):
+        popen_kwargs.update(kwargs)
+        return fake
+
+    killpg_calls = []
+    monkeypatch.setattr(_module.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(
+        _module.os, "killpg", lambda pid, sig: killpg_calls.append((pid, sig))
+    )
+
+    runner = _make_runner()
+    result = runner.run_playbook(
+        {
+            "name": "timeout-test",
+            "file": "playbooks/create_rosa_hcp_cluster.yml",
+            "description": "timeout test",
+            "timeout": 0.1,
+        },
+        "test-suite",
+    )
+
+    assert result["success"] is False
+    assert "Timeout" in result["error"]
+    assert "line one" in result["output"]
+    assert popen_kwargs["start_new_session"] is True, (
+        "the playbook needs its own session so a timeout can kill its workers"
+    )
+    assert killpg_calls == [(FakeProcess.pid, _module.signal.SIGKILL)], (
+        "a timeout must kill the whole process group, not just ansible-playbook"
+    )
+
+
+def test_run_playbook_waits_for_the_reader_before_returning(monkeypatch):
+    """A normal exit must not abandon the reader (and its agent callbacks)."""
+
+    class FakeProcess:
+        pid = 111
+        stdout = iter([])
+
+        def wait(self, timeout=None):
+            return 0
+
+    class FakeThread:
+        def __init__(self, *args, **kwargs):
+            self.joins = []
+
+        def start(self):
+            pass
+
+        def join(self, timeout=None):
+            self.joins.append(timeout)
+
+        def is_alive(self):
+            return False
+
+    threads = []
+
+    def fake_thread(*args, **kwargs):
+        thread = FakeThread()
+        threads.append(thread)
+        return thread
+
+    monkeypatch.setattr(_module.threading, "Thread", fake_thread)
+    monkeypatch.setattr(_module.subprocess, "Popen", lambda *a, **k: FakeProcess())
+
+    runner = _make_runner()
+    result = runner.run_playbook(
+        {"name": "ok", "file": "playbooks/create_rosa_hcp_cluster.yml", "timeout": 5}, "s"
+    )
+
+    assert result["success"] is True
+    budget = threads[0].joins[0]
+    assert 0 < budget <= 5.0, (
+        "the normal path must wait for the reader only within the playbook deadline"
+    )
+
+
+def test_run_playbook_bounds_the_wait_for_a_stuck_reader(monkeypatch, capsys):
+    """A reader stuck in an agent callback must not hold up the next suite."""
+
+    class FakeProcess:
+        pid = 222
+
+        def __init__(self):
+            self.stdout = iter([])
+
+        def wait(self, timeout=None):
+            if timeout is not None:
+                raise _module.subprocess.TimeoutExpired("ansible-playbook", timeout)
+            return -9
+
+    class StuckThread:
+        def __init__(self, *args, **kwargs):
+            self.joins = []
+
+        def start(self):
+            pass
+
+        def join(self, timeout=None):
+            self.joins.append(timeout)
+
+        def is_alive(self):
+            return True
+
+    threads = []
+
+    def fake_thread(*args, **kwargs):
+        thread = StuckThread()
+        threads.append(thread)
+        return thread
+
+    monkeypatch.setattr(_module.threading, "Thread", fake_thread)
+    monkeypatch.setattr(_module.subprocess, "Popen", lambda *a, **k: FakeProcess())
+    monkeypatch.setattr(_module, "READER_JOIN_TIMEOUT", 0.1)
+    monkeypatch.setattr(_module.os, "killpg", lambda *args: None)
+
+    runner = _make_runner()
+    result = runner.run_playbook(
+        {
+            "name": "stuck-reader",
+            "file": "playbooks/create_rosa_hcp_cluster.yml",
+            "timeout": 0.1,
+        },
+        "s",
+    )
+
+    assert result["success"] is False
+    budget = threads[0].joins[0]
+    assert 0 < budget <= 0.1, "the post-timeout wait must be bounded"
+    assert "still busy after the timeout" in capsys.readouterr().out
+
+
+def test_run_playbook_kills_lingering_workers_after_a_successful_leader(monkeypatch):
+    """A worker left holding stdout is killed; the leader's zero exit is the result."""
+
+    class FakeProcess:
+        pid = 333
+
+        def __init__(self):
+            self.stdout = iter([])
+
+        def wait(self, timeout=None):
+            return 0
+
+    class StuckThread:
+        def __init__(self, *args, **kwargs):
+            self.joins = []
+
+        def start(self):
+            pass
+
+        def join(self, timeout=None):
+            self.joins.append(timeout)
+
+        def is_alive(self):
+            return True
+
+    threads = []
+
+    def fake_thread(*args, **kwargs):
+        thread = StuckThread()
+        threads.append(thread)
+        return thread
+
+    killpg_calls = []
+    monkeypatch.setattr(_module.threading, "Thread", fake_thread)
+    monkeypatch.setattr(_module.subprocess, "Popen", lambda *a, **k: FakeProcess())
+    monkeypatch.setattr(_module.os, "killpg", lambda *args: killpg_calls.append(args))
+    monkeypatch.setattr(_module, "READER_JOIN_TIMEOUT", 0.1)
+
+    runner = _make_runner()
+    result = runner.run_playbook(
+        {
+            "name": "lingering-worker",
+            "file": "playbooks/create_rosa_hcp_cluster.yml",
+            "timeout": 10,
+        },
+        "s",
+    )
+
+    assert result["success"] is True, "the leader's exit code is the playbook result"
+    assert killpg_calls == [(FakeProcess.pid, _module.signal.SIGKILL)]
+    assert 0 < threads[0].joins[0] <= 0.1
+    assert threads[0].joins[1] <= 5.0, "the second wait is bounded too"
+
+
+def test_reader_rechecks_stop_after_waiting_for_the_agent_lock(monkeypatch):
+    """A line buffered while the reader waits on the agent lock is not reported
+    after the playbook was stopped."""
+
+    class FakeProcess:
+        pid = 444
+
+        def __init__(self):
+            self.stdout = iter(["buffered line\n"])
+
+        def wait(self, timeout=None):
+            if timeout is not None:
+                raise _module.subprocess.TimeoutExpired("ansible-playbook", timeout)
+            return -9
+
+    class FakeAgent:
+        def __init__(self):
+            self.lines = []
+
+        def process_line(self, line):
+            self.lines.append(line)
+
+    real_thread = threading.Thread
+    created = []
+
+    def fake_thread(*args, **kwargs):
+        thread = real_thread(*args, **kwargs)
+        created.append(thread)
+        return thread
+
+    agent = FakeAgent()
+    runner = _make_runner()
+    runner.ai_agent_enabled = True
+    runner.monitor_agent = agent
+    runner._agent_lock.acquire()  # the reader blocks here
+    try:
+        monkeypatch.setattr(_module.threading, "Thread", fake_thread)
+        monkeypatch.setattr(_module.subprocess, "Popen", lambda *a, **k: FakeProcess())
+        monkeypatch.setattr(_module.os, "killpg", lambda *args: None)
+        result = runner.run_playbook(
+            {
+                "name": "lock-contention",
+                "file": "playbooks/create_rosa_hcp_cluster.yml",
+                "timeout": 0.1,
+            },
+            "s",
+        )
+    finally:
+        runner._agent_lock.release()
+
+    created[0].join(timeout=1)
+    assert not created[0].is_alive()
+    assert result["success"] is False
+    assert agent.lines == [], "the stop must be rechecked after the lock is acquired"
