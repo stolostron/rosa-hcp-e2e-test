@@ -194,42 +194,31 @@ def test_build_ansible_cmd_preserves_spaces_and_types():
 # Suite Label Extraction
 # ================================================================
 
-def test_extract_suite_label_configure():
+def test_extract_suite_label_drops_only_the_number_prefix():
     runner = _make_runner()
-    assert runner._extract_suite_label("10-configure-mce-environment") == "configure"
+    assert runner._extract_suite_label("10-configure-mce-environment") == \
+        "configure-mce-environment"
 
 
-def test_extract_suite_label_provision():
+def test_extract_suite_label_keeps_the_whole_slug():
     runner = _make_runner()
-    assert runner._extract_suite_label("20-rosa-hcp-provision") == "provision"
+    assert runner._extract_suite_label("20-rosa-hcp-provision") == "rosa-hcp-provision"
+    assert runner._extract_suite_label("30-rosa-hcp-delete") == "rosa-hcp-delete"
+    assert runner._extract_suite_label("05-verify-mce-environment") == \
+        "verify-mce-environment"
 
 
-def test_extract_suite_label_delete():
+def test_extract_suite_label_without_a_prefix_is_unchanged():
     runner = _make_runner()
-    assert runner._extract_suite_label("30-rosa-hcp-delete") == "delete"
+    assert runner._extract_suite_label("something-unknown") == "something-unknown"
 
 
-def test_extract_suite_label_verify():
+def test_suite_labels_are_unique_across_suites():
+    """Each suite must own its latest-<label> report."""
     runner = _make_runner()
-    assert runner._extract_suite_label("05-verify-mce-environment") == "verify"
-
-
-def test_extract_suite_label_toggle():
-    runner = _make_runner()
-    label = runner._extract_suite_label("40-enable-capi-disable-hypershift")
-    assert label == "toggle", f"Expected 'toggle', got '{label}'"
-
-
-def test_extract_suite_label_lifecycle():
-    runner = _make_runner()
-    assert runner._extract_suite_label("23-rosa-hcp-full-lifecycle") == "lifecycle"
-
-
-def test_extract_suite_label_fallback():
-    runner = _make_runner()
-    label = runner._extract_suite_label("99-something-unknown")
-    assert isinstance(label, str) and len(label) > 0, \
-        "Fallback label should be a non-empty string"
+    labels = [runner._extract_suite_label(s["id"])
+              for s in runner.list_test_suites()]
+    assert len(labels) == len(set(labels)), f"duplicate suite labels: {labels}"
 
 
 # ================================================================
@@ -880,6 +869,68 @@ def test_artifact_archived_once_per_run(tmp_path, monkeypatch):
 
     assert len(writes) == 1, f"archive written {len(writes)}x, expected once per run"
     assert list(tmp_path.rglob("feature-verification-*.json"))
+
+
+def test_save_results_writes_one_junit_file_per_run(tmp_path):
+    """A run must produce exactly one file for Jenkins' test-results/**/*.xml glob."""
+    runner = _make_runner()
+    runner.results_dir = tmp_path
+    runner.suite_label = "rosa-hcp-provision"
+    runner.results["suites"] = []
+    runner.results["duration"] = 1.0
+
+    path = runner.save_results(format="junit")
+
+    xmls = list(tmp_path.rglob("*.xml"))
+    assert xmls == [path], f"expected one JUnit file, found {xmls}"
+    assert not list(tmp_path.glob("latest*.xml")), \
+        "a latest-*.xml copy would be counted twice by Jenkins"
+
+
+def test_json_and_html_still_write_a_latest_copy(tmp_path):
+    runner = _make_runner()
+    runner.results_dir = tmp_path
+    runner.suite_label = "rosa-hcp-provision"
+    runner.results["suites"] = []
+    runner.results["duration"] = 1.0
+
+    runner.save_results(format="json")
+    runner.save_results(format="html")
+
+    assert (tmp_path / "latest-rosa-hcp-provision.json").exists()
+    assert (tmp_path / "latest-rosa-hcp-provision.html").exists()
+
+
+def test_total_tests_accumulates_across_suites(monkeypatch):
+    """A multi-suite run reports every executed playbook, not just the last suite."""
+    runner = _make_runner()
+
+    def fake_playbook(playbook, suite_name):
+        return {
+            "name": playbook.get("name", ""),
+            "file": playbook.get("file", ""),
+            "description": "",
+            "test_case_id": "",
+            "success": True,
+            "is_error": False,
+            "error": None,
+            "duration": 0.0,
+        }
+
+    monkeypatch.setattr(runner, "run_playbook", fake_playbook)
+    monkeypatch.setattr(runner, "_print_suite_header", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "_print_suite_summary", lambda *a, **k: None)
+
+    first = runner.load_test_suite("20-rosa-hcp-provision")
+    second = runner.load_test_suite("30-rosa-hcp-delete")
+    runner.run_test_suite("20-rosa-hcp-provision")
+    runner.run_test_suite("30-rosa-hcp-delete")
+
+    expected = len(first["playbooks"]) + len(second["playbooks"])
+    assert runner.results["total_tests"] == expected
+    assert runner.results["total_tests"] == (
+        runner.results["passed"] + runner.results["failed"]
+    )
 
 
 # ================================================================

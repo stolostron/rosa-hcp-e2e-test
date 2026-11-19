@@ -574,34 +574,18 @@ class TestSuiteRunner:
             }
 
     def _extract_suite_label(self, suite_id: str) -> str:
-        """Extract a short descriptive label from suite ID for filenames.
+        """Return a label that is unique per suite, for report filenames.
 
-        Examples:
-            10-configure-mce-environment -> configure
-            20-rosa-hcp-provision -> provision
-            30-rosa-hcp-delete -> delete
-            23-rosa-hcp-full-lifecycle -> lifecycle
+        The label is the suite ID without its ordering prefix:
+            10-configure-mce-environment -> configure-mce-environment
+            20-rosa-hcp-provision -> rosa-hcp-provision
+
+        Suite IDs are unique, so the labels are too.
         """
-        # Remove leading numbers and hyphens
-        label = suite_id.lstrip('0123456789-')
-
-        # Extract key terms for common patterns
-        if 'configure' in label:
-            return 'configure'
-        elif 'provision' in label or 'creation' in label:
-            return 'provision'
-        elif 'delete' in label or 'deletion' in label:
-            return 'delete'
-        elif 'lifecycle' in label:
-            return 'lifecycle'
-        elif 'verify' in label:
-            return 'verify'
-        elif 'enable' in label or 'disable' in label:
-            return 'toggle'
-        else:
-            # Fallback: use first significant word
-            words = label.replace('-', ' ').split()
-            return words[0] if words else 'test'
+        prefix, sep, rest = suite_id.partition("-")
+        if sep and prefix.isdigit():
+            return rest
+        return suite_id
 
     def run_test_suite(self, suite_id: str) -> bool:
         """Execute a complete test suite."""
@@ -652,9 +636,11 @@ class TestSuiteRunner:
         # Print suite summary
         self._print_suite_summary(suite_results)
 
-        # Add to overall results
+        # Add to overall results, accumulating the playbooks that actually ran
+        # so the total stays consistent with passed+failed on multi-suite runs
+        # and when stopOnFailure breaks out early.
         self.results["suites"].append(suite_results)
-        self.results["total_tests"] = len(playbooks)
+        self.results["total_tests"] += len(suite_results["playbooks"])
 
         return self.results["failed"] == 0
 
@@ -770,14 +756,11 @@ class TestSuiteRunner:
                 f.write(html_content)
 
         elif format == "junit":
+            # One JUnit file per run: Jenkins consumes test-results/**/*.xml,
+            # so a latest-<label>.xml copy would double-count every testcase.
             output_file = results_date_dir / f"test-run{label_part}-{timestamp}.xml"
             junit_content = self._generate_junit_xml()
             with open(output_file, 'w') as f:
-                f.write(junit_content)
-
-            # Also save as latest.xml (with label)
-            latest_file = self.results_dir / f"latest{label_part}.xml"
-            with open(latest_file, 'w') as f:
                 f.write(junit_content)
 
         # Archive this run's per-feature results next to the report, in any
