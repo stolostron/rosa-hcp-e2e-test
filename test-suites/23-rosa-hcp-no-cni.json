@@ -17,9 +17,9 @@
         "availability_zone_count": 2,
         "aws_region": "us-west-2",
         "capi_namespace": "ns-rosa-hcp",
-        "cluster_template_name": "rosa-no-cni-cluster",
+        "cluster_template_name": "rosa-controlplane-only",
         "selected_template_category": "features",
-        "network_type": "Other"
+        "no_cni": true
       }
     }
   ]}

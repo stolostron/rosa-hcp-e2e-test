@@ -8,7 +8,7 @@
 
 ## Overview
 
-This test suite provisions a ROSA HCP PrivateLink cluster on the OpenShift 5.0 release candidate (5.0.0-ec.6, candidate channel) against the MCE 5.0 RC hub. It uses the 5.0 feature template rosa-private-cluster, which derives from the 4.20 combined-automation template (full ROSANetwork + ROSARoleConfig automation, no hard-coded ARNs) and adds endpointAccess: Private on the ROSAControlPlane.
+This test suite provisions a ROSA HCP PrivateLink cluster on the OpenShift 5.0 release candidate (5.0.0-ec.6, candidate channel) against the MCE 5.0 RC hub. It uses the versioned 5.0 feature template rosa-controlplane-only with private: true, which sets endpointAccess: Private on the ROSAControlPlane and extracts only private subnets from the automated ROSANetwork.
 
 ## Prerequisites
 
@@ -29,7 +29,7 @@ Using name_prefix automatically sets cluster_name and domain_prefix consistently
 
 - **`openshift_version`:** OpenShift version to deploy (default: 5.0.0-ec.6, candidate channel)
 - **`channel_group`:** Update channel: stable, fast, or candidate (this suite uses candidate for the 5.0 RC)
-- **`endpoint_access`:** ROSAControlPlane endpointAccess enum (Public|Private); this suite uses Private for PrivateLink
+- **`private`:** Set by the suite to provision PrivateLink (`endpointAccess: Private`); the template defaults to Public
 - **`aws_region`:** AWS region for deployment (default: us-west-2)
 
 ## Expected results
