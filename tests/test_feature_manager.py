@@ -1633,13 +1633,24 @@ class TestScenarioRendersThroughTemplates:
 
 
 class TestVersionTemplateParity:
+    # Templates that exist only for 5.0: the dedicated private and no-CNI
+    # variants used by suites 22 and 23.
+    VERSION_SPECIFIC = {"rosa-private-cluster.yaml.j2", "rosa-no-cni-cluster.yaml.j2"}
+
     def test_50_templates_match_422(self):
-        """5.0 is currently a verbatim copy of 4.22. If that stops being true,
-        this test should be updated deliberately rather than drifting silently."""
+        """Templates shared with 4.22 stay byte-identical.
+
+        5.0 may add version-specific templates, but they have to be listed here
+        deliberately rather than drifting in silently.
+        """
         import filecmp
         base = Path(__file__).parent.parent / "templates" / "versions"
         a, b = base / "4.22" / "features", base / "5.0" / "features"
-        names = sorted(p.name for p in a.iterdir())
-        assert names == sorted(p.name for p in b.iterdir())
-        match, mismatch, errors = filecmp.cmpfiles(a, b, names, shallow=False)
+        shared = sorted(p.name for p in a.iterdir())
+        extra = {p.name for p in b.iterdir()} - set(shared)
+        assert set(shared) <= {p.name for p in b.iterdir()}, "5.0 is missing 4.22 templates"
+        assert extra == self.VERSION_SPECIFIC, (
+            f"unexpected version-specific templates: {sorted(extra)}"
+        )
+        match, mismatch, errors = filecmp.cmpfiles(a, b, shared, shallow=False)
         assert not mismatch and not errors, f"5.0 diverged from 4.22: {mismatch + errors}"
