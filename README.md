@@ -548,14 +548,24 @@ ansible-playbook playbooks/create_rosa_hcp_cluster.yml --syntax-check
 
 ### Test Results
 
+`<label>` is the suite ID without its ordering prefix
+(`20-rosa-hcp-provision` → `rosa-hcp-provision`), so it is unique per suite.
+
 ```
 test-results/
-├── feature-verification.json              # latest per-feature results (suite 21)
-├── latest-<label>.xml                      # latest JUnit report
+├── feature-verification.json               # latest per-feature results (suite 21)
+├── latest-<label>.json                    # latest JSON report
+├── latest-<label>.html                    # latest HTML report
 └── <date>/
-    ├── test-run-<label>-<timestamp>.xml
+    ├── test-run-<label>-<timestamp>.xml   # one JUnit report per run
+    ├── test-run-<label>-<timestamp>.json
+    ├── test-run-<label>-<timestamp>.html
     └── feature-verification-<label>-<timestamp>.json
 ```
+
+Only the dated `test-run-*.xml` is written: Jenkins consumes
+`test-results/**/*.xml`, so a `latest-*.xml` copy would make every testcase be
+counted twice.
 
 ### Per-Feature Verification Results
 
