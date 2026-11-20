@@ -2,6 +2,7 @@
   "name": "Add ROSAMachinePool",
   "description": "Add a new machine pool to an existing ROSA HCP cluster by creating a MachinePool + ROSAMachinePool pair",
   "tags": ["rosa", "hcp", "machinepool", "add", "full"],
+  "depends_on": ["20-rosa-hcp-provision"],
   "playbooks": [
     {
       "name": "Add Machine Pool",
