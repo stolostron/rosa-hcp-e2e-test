@@ -2,6 +2,8 @@
   "name": "CAPA Cluster Deletion",
   "description": "Delete a ROSA HCP cluster and its CAPA automation resources (ROSANetwork, ROSARoleConfig)",
   "tags": ["rosa", "hcp", "deletion", "cleanup", "lifecycle", "smoke", "full"],
+  "depends_on": ["20-rosa-hcp-provision"],
+  "always": true,
   "playbooks": [
     {
       "name": "Delete CAPA Cluster",
