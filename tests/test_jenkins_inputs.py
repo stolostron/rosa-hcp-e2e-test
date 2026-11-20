@@ -36,3 +36,16 @@ def test_jenkins_passes_the_namespace_parameter():
     assert '-e rosa_hcp_namespace="${ROSA_HCP_NAMESPACE}"' in text, (
         "Suites that operate on ROSA HCP resources must receive rosa_hcp_namespace"
     )
+
+
+def test_jenkins_extra_feature_vars_are_passed_without_literal_quotes():
+    text = _jenkinsfile()
+    assert 'EXTRA_VARS="${EXTRA_VARS} -e \\"' not in text, (
+        "EXTRA_FEATURE_VARS must not be embedded in a string with literal quotes"
+    )
+    assert 'set -- "$@" -e "${var}"' in text, (
+        "EXTRA_FEATURE_VARS must be accumulated with quoted positional parameters"
+    )
+    assert "EXTRA_ARGS" not in text, (
+        "Use POSIX positional parameters; Jenkins may run sh, which has no arrays"
+    )

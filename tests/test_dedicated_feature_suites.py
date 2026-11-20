@@ -58,8 +58,8 @@ def test_dedicated_suite_renders_feature(suite_id, version, channel_group, tmp_p
     expected_version = version or "5.0.0-ec.6"
     assert variables["openshift_version"] == expected_version
     assert variables["channel_group"] == (channel_group or "candidate")
-    assert variables["create_rosa_network"] == "True"
-    assert variables["create_rosa_role_config"] == "True"
+    assert variables["create_rosa_network"] is True
+    assert variables["create_rosa_role_config"] is True
     variables.update(
         cluster_name="offline-feature",
         rosa_hcp_namespace="offline-ns",

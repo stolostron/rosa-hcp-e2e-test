@@ -9,7 +9,6 @@ Executes test suites defined in JSON format without requiring the web UI.
 Usage:
     ./run-test-suite.py 02-basic-rosa-hcp-cluster-creation
     ./run-test-suite.py 10-configure-mce-environment -e name_prefix=xyz
-    ./run-test-suite.py 10-configure-mce-environment --dry-run
     ./run-test-suite.py 10-configure-mce-environment -vv  # Verbose output
     ./run-test-suite.py --all
     ./run-test-suite.py --tag rosa-hcp
@@ -102,7 +101,7 @@ class Colors:
 class TestSuiteRunner:
     """Main test suite runner class."""
 
-    def __init__(self, base_dir: Path = Path.cwd(), extra_vars: Optional[Dict[str, str]] = None, dry_run: bool = False, verbosity: int = 0, ai_agent_enabled: bool = False, ai_agent_dry_run: bool = False):
+    def __init__(self, base_dir: Path = Path.cwd(), extra_vars: Optional[Dict[str, str]] = None, verbosity: int = 0, ai_agent_enabled: bool = False, ai_agent_dry_run: bool = False):
         self.base_dir = base_dir
         self.test_suites_dir = base_dir / "test-suites"
         self.results_dir = base_dir / "test-results"
@@ -112,7 +111,6 @@ class TestSuiteRunner:
         if extra_vars:
             self.extra_vars.update(extra_vars)
 
-        self.dry_run = dry_run
         self.verbosity = verbosity
         self.suite_label = None  # For generating descriptive filenames
         # Used to tell this run's feature-verification artifact from a stale one.
@@ -312,26 +310,19 @@ class TestSuiteRunner:
             all_vars.update(playbook["extra_vars"])
         all_vars.update(self.extra_vars)  # Command-line overrides JSON
 
-        # Add dry_run variable for playbooks to use
-        if self.dry_run:
-            all_vars["dry_run"] = "true"
-
-        # Add merged variables to command
-        # Complex types (dicts/lists) are passed as a JSON blob so ansible
-        # parses them correctly; simple types use key=value form.
-        complex_vars = {}
+        # Pass every variable in one JSON object. This keeps strings with
+        # spaces intact (no key=value word splitting) and preserves booleans,
+        # integers, lists, and dicts as native types.
+        parsed_vars = {}
         for key, value in all_vars.items():
-            if isinstance(value, (dict, list)):
-                complex_vars[key] = value
-            elif isinstance(value, str) and (value.startswith('{') or value.startswith('[')):
+            if isinstance(value, str) and value.startswith(("{", "[")):
                 try:
-                    complex_vars[key] = json.loads(value)
+                    value = json.loads(value)
                 except json.JSONDecodeError:
-                    cmd.extend(["-e", f"{key}={value}"])
-            else:
-                cmd.extend(["-e", f"{key}={value}"])
-        if complex_vars:
-            cmd.extend(["-e", json.dumps(complex_vars)])
+                    pass
+            parsed_vars[key] = value
+        if parsed_vars:
+            cmd.extend(["-e", json.dumps(parsed_vars)])
 
         return cmd
 
@@ -350,11 +341,7 @@ class TestSuiteRunner:
                 "duration": 0
             }
 
-        # Show dry-run indicator
-        if self.dry_run:
-            print(f"\n{Colors.YELLOW}🔍 DRY RUN: {playbook.get('description', playbook_name)}{Colors.ENDC}")
-        else:
-            print(f"\n{Colors.CYAN}⏳ Running: {playbook.get('description', playbook_name)}{Colors.ENDC}")
+        print(f"\n{Colors.CYAN}⏳ Running: {playbook.get('description', playbook_name)}{Colors.ENDC}")
 
         start_time = time.time()
 
@@ -1213,8 +1200,6 @@ class TestSuiteRunner:
         """Print formatted suite header."""
         print("\n" + "=" * 80)
         print(f"{Colors.BOLD}{Colors.HEADER}CAPA Test Suite Runner{Colors.ENDC}")
-        if self.dry_run:
-            print(f"{Colors.BOLD}{Colors.YELLOW}🔍 DRY RUN MODE - No changes will be made{Colors.ENDC}")
         print("=" * 80)
         print(f"\n{Colors.BOLD}📋 Test Suite:{Colors.ENDC} {suite_data.get('name', 'Unknown')}")
         print(f"{Colors.BOLD}📝 Description:{Colors.ENDC} {suite_data.get('description', '')}")
@@ -1338,12 +1323,6 @@ Examples:
   Run with multiple extra variables:
     ./run-test-suite.py 02-basic-rosa-hcp-cluster-creation -e name_prefix=dev -e aws_region=us-east-1
 
-  Dry run (check mode, no changes):
-    ./run-test-suite.py 10-configure-mce-environment --dry-run
-
-  Dry run with extra variables:
-    ./run-test-suite.py 10-configure-mce-environment --dry-run -e name_prefix=xyz
-
   Run all test suites:
     ./run-test-suite.py --all
 
@@ -1396,12 +1375,6 @@ Examples:
         "-e", "--extra-vars",
         action="append",
         help="Extra variables in key=value format (can be used multiple times)"
-    )
-
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Run in dry-run mode (ansible --check) - no changes will be made"
     )
 
     parser.add_argument(
@@ -1741,7 +1714,6 @@ Examples:
     # Initialize runner
     runner = TestSuiteRunner(
         extra_vars=extra_vars,
-        dry_run=args.dry_run,
         verbosity=args.verbose,
         ai_agent_enabled=args.ai_agent,
         ai_agent_dry_run=args.ai_agent_dry_run
