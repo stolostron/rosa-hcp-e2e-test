@@ -576,7 +576,10 @@ class TestSuiteRunner:
         self.results["suites"].append(suite_results)
         self.results["total_tests"] += len(suite_results["playbooks"])
 
-        return self.results["failed"] == 0
+        # This suite's outcome, not the run's: run_all_suites needs it to know
+        # whether dependents may start, and a failure in an earlier suite must
+        # not make every later suite look failed.
+        return all(p["success"] for p in suite_results["playbooks"])
 
     def run_scenario(self, scenario: Dict) -> bool:
         """Execute a scenario's stages in order.
@@ -622,6 +625,31 @@ class TestSuiteRunner:
 
         return all_passed
 
+    def _order_by_dependencies(self, suites: List[Dict]) -> List[Dict]:
+        """Order suites so a dependency selected in the same run goes first.
+
+        A suite keeps its position unless one of its depends_on entries is also
+        in the selection and has to move ahead of it. Dependencies outside the
+        selection are ignored: a tag run cannot run suites the tag excluded.
+        """
+        by_id = {suite["id"]: suite for suite in suites}
+        ordered: List[Dict] = []
+        placed = set()
+
+        def place(suite: Dict) -> None:
+            if suite["id"] in placed:
+                return
+            placed.add(suite["id"])  # also stops a dependency cycle
+            for dependency_id in suite.get("depends_on", []):
+                dependency = by_id.get(dependency_id)
+                if dependency is not None:
+                    place(dependency)
+            ordered.append(suite)
+
+        for suite in suites:
+            place(suite)
+        return ordered
+
     def run_all_suites(self, tag_filter: Optional[str] = None) -> bool:
         """Run all test suites, optionally filtered by tag."""
         suites = self.list_test_suites()
@@ -645,12 +673,36 @@ class TestSuiteRunner:
 
         # Run each suite (note: suite_label remains as set above for all suites)
         all_passed = True
-        for suite in suites:
+        suite_success: Dict[str, bool] = {}
+        for suite in self._order_by_dependencies(suites):
+            failed_dependencies = [
+                dependency_id
+                for dependency_id in suite.get("depends_on", [])
+                if suite_success.get(dependency_id) is False
+            ]
+            # Cleanup and restore suites are marked `always`: a failed
+            # dependency is exactly when they are needed, so they still run.
+            if failed_dependencies and not suite.get("always", False):
+                print(
+                    f"\n{Colors.YELLOW}⊘ Skipping {suite['id']} "
+                    f"(dependency failed: {', '.join(failed_dependencies)}){Colors.ENDC}"
+                )
+                suite_success[suite["id"]] = False
+                all_passed = False
+                continue
+
+            if failed_dependencies:
+                print(
+                    f"\n{Colors.YELLOW}↻ Running {suite['id']} anyway "
+                    f"(dependency failed: {', '.join(failed_dependencies)}){Colors.ENDC}"
+                )
+
             # Temporarily save the multi/tag label
             saved_label = self.suite_label
             success = self.run_test_suite(suite["id"])
             # Restore the multi/tag label for filename generation
             self.suite_label = saved_label
+            suite_success[suite["id"]] = success
             if not success:
                 all_passed = False
 

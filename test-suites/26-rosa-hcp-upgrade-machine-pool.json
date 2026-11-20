@@ -2,6 +2,7 @@
   "name": "Upgrade ROSA HCP Machine Pool",
   "description": "Upgrade a ROSA HCP cluster machine pool to the next available OpenShift version via ROSAMachinePool spec.version patch",
   "tags": ["rosa", "hcp", "upgrade", "machine-pool", "full"],
+  "depends_on": ["20-rosa-hcp-provision"],
   "playbooks": [
     {
       "name": "Upgrade Machine Pool",
