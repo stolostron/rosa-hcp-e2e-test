@@ -6,9 +6,6 @@
     {
       "name": "Upgrade Control Plane",
       "file": "playbooks/upgrade_rosa_control_plane.yml",
-      "description": "Upgrades the ROSAControlPlane to the next available version and waits for completion",
-      "extra_vars": {
-        "rosa_hcp_namespace": "ns-rosa-hcp"
-      }
+      "description": "Upgrades the ROSAControlPlane to the next available version and waits for completion"
     }
   ]}

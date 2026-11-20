@@ -15,8 +15,6 @@
         "create_rosa_role_config": true,
         "vpc_cidr_block": "10.0.0.0/16",
         "availability_zone_count": 2,
-        "aws_region": "us-west-2",
-        "capi_namespace": "ns-rosa-hcp",
         "cluster_template_name": "rosa-controlplane-only",
         "selected_template_category": "features",
         "private": true

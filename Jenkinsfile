@@ -41,6 +41,8 @@
 //   - OCM_CLIENT_ID             : OCM client ID (optional, uses vault if not provided)
 //   - OCM_CLIENT_SECRET         : OCM client secret (optional, uses vault if not provided)
 //   - MCE_NAMESPACE             : MCE namespace (default: multicluster-engine)
+//   - AWS_REGION                : AWS region (default: us-west-2)
+//   - ROSA_HCP_NAMESPACE        : Namespace for ROSA HCP resources (default: ns-rosa-hcp)
 //   - TEST_GIT_BRANCH           : Git branch to test (default: main)
 //
 //   Jenkins Credentials (configured in Jenkins):
@@ -98,6 +100,8 @@ pipeline {
         string(name:'OCP_HUB_CLUSTER_USER', defaultValue: 'kubeadmin', description: 'Hub OCP username')
         password(name:'OCP_HUB_CLUSTER_PASSWORD', defaultValue: '', description: 'Hub cluster password')
         string(name:'MCE_NAMESPACE', defaultValue: 'multicluster-engine', description: 'The Namespace where MCE is installed')
+        string(name:'AWS_REGION', defaultValue: 'us-west-2', description: 'AWS region for the cluster and AWS-side verification')
+        string(name:'ROSA_HCP_NAMESPACE', defaultValue: 'ns-rosa-hcp', description: 'Namespace containing ROSA HCP resources')
         string(name:'OCM_API_URL', defaultValue: 'https://api.stage.openshift.com', description: 'OCM API URL (e.g. https://api.openshift.com or https://api.stage.openshift.com)')
         string(name:'OCM_CLIENT_ID', defaultValue: '', description: 'OCM client ID for ROSA provisioning')
         password(name:'OCM_CLIENT_SECRET', defaultValue: '', description: 'OCM client secret for ROSA provisioning')
@@ -303,8 +307,9 @@ pipeline {
                                   -e OCP_HUB_API_URL="${OCP_HUB_API_URL}" \
                                   -e OCP_HUB_CLUSTER_USER="${OCP_HUB_CLUSTER_USER}" \
                                   -e MCE_NAMESPACE="${MCE_NAMESPACE}" \
+                                  -e rosa_hcp_namespace="${ROSA_HCP_NAMESPACE}" \
                                   -e AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID}" \
-                                  -e AWS_REGION="us-west-2" \
+                                  -e AWS_REGION="${AWS_REGION}" \
                                   -e name_prefix="${NAME_PREFIX}" \
                                   -e OCM_API_URL="${OCM_API_URL}" \
                                   ${EXTRA_VARS}
@@ -375,6 +380,7 @@ pipeline {
                                   -e OCP_HUB_API_URL="${OCP_HUB_API_URL}" \
                                   -e OCP_HUB_CLUSTER_USER="${OCP_HUB_CLUSTER_USER}" \
                                   -e MCE_NAMESPACE="${MCE_NAMESPACE}" \
+                                  -e rosa_hcp_namespace="${ROSA_HCP_NAMESPACE}" \
                                   -e cluster_name="${NAME_PREFIX}-rosa-hcp" \
                                   ${EXTRA_VARS}
                             '''
@@ -422,6 +428,7 @@ pipeline {
                               -e OCP_HUB_API_URL="${OCP_HUB_API_URL}" \
                               -e OCP_HUB_CLUSTER_USER="${OCP_HUB_CLUSTER_USER}" \
                               -e MCE_NAMESPACE="${MCE_NAMESPACE}" \
+                              -e rosa_hcp_namespace="${ROSA_HCP_NAMESPACE}" \
                               -e cluster_name="${NAME_PREFIX}-rosa-hcp" \
                               -e pool_name="${NAME_PREFIX}-mp"
                         '''
@@ -452,6 +459,7 @@ pipeline {
                               -e OCP_HUB_API_URL="${OCP_HUB_API_URL}" \
                               -e OCP_HUB_CLUSTER_USER="${OCP_HUB_CLUSTER_USER}" \
                               -e MCE_NAMESPACE="${MCE_NAMESPACE}" \
+                              -e rosa_hcp_namespace="${ROSA_HCP_NAMESPACE}" \
                               -e cluster_name="${NAME_PREFIX}-rosa-hcp" \
                               -e pool_name="${NAME_PREFIX}-mp"
                         '''
@@ -494,8 +502,9 @@ pipeline {
                                       -e OCP_HUB_API_URL="${OCP_HUB_API_URL}" \
                                       -e OCP_HUB_CLUSTER_USER="${OCP_HUB_CLUSTER_USER}" \
                                       -e MCE_NAMESPACE="${MCE_NAMESPACE}" \
+                                      -e rosa_hcp_namespace="${ROSA_HCP_NAMESPACE}" \
                                       -e AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID}" \
-                                      -e AWS_REGION="us-west-2" \
+                                      -e AWS_REGION="${AWS_REGION}" \
                                       -e cluster_name="${UPGRADE_CLUSTER_NAME}"
                                 '''
                             }
@@ -539,8 +548,9 @@ pipeline {
                                       -e OCP_HUB_API_URL="${OCP_HUB_API_URL}" \
                                       -e OCP_HUB_CLUSTER_USER="${OCP_HUB_CLUSTER_USER}" \
                                       -e MCE_NAMESPACE="${MCE_NAMESPACE}" \
+                                      -e rosa_hcp_namespace="${ROSA_HCP_NAMESPACE}" \
                                       -e AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID}" \
-                                      -e AWS_REGION="us-west-2" \
+                                      -e AWS_REGION="${AWS_REGION}" \
                                       -e cluster_name="${UPGRADE_CLUSTER_NAME}"
                                 '''
                             }
@@ -585,8 +595,9 @@ pipeline {
                                       -e OCP_HUB_API_URL="${OCP_HUB_API_URL}" \
                                       -e OCP_HUB_CLUSTER_USER="${OCP_HUB_CLUSTER_USER}" \
                                       -e MCE_NAMESPACE="${MCE_NAMESPACE}" \
+                                      -e rosa_hcp_namespace="${ROSA_HCP_NAMESPACE}" \
                                       -e AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID}" \
-                                      -e AWS_REGION="us-west-2" \
+                                      -e AWS_REGION="${AWS_REGION}" \
                                       -e name_prefix="${NAME_PREFIX}"
                                 '''
                             }
@@ -636,8 +647,9 @@ pipeline {
                                       -e OCP_HUB_API_URL="${OCP_HUB_API_URL}" \
                                       -e OCP_HUB_CLUSTER_USER="${OCP_HUB_CLUSTER_USER}" \
                                       -e MCE_NAMESPACE="${MCE_NAMESPACE}" \
+                                      -e rosa_hcp_namespace="${ROSA_HCP_NAMESPACE}" \
                                       -e AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID}" \
-                                      -e AWS_REGION="us-west-2" \
+                                      -e AWS_REGION="${AWS_REGION}" \
                                       -e name_prefix="${NAME_PREFIX}"
                                 '''
                             }

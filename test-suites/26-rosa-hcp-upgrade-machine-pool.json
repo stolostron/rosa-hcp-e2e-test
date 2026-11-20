@@ -6,9 +6,6 @@
     {
       "name": "Upgrade Machine Pool",
       "file": "playbooks/upgrade_rosa_machine_pool.yml",
-      "description": "Upgrades the ROSAMachinePool to the next available version and waits for completion",
-      "extra_vars": {
-        "rosa_hcp_namespace": "ns-rosa-hcp"
-      }
+      "description": "Upgrades the ROSAMachinePool to the next available version and waits for completion"
     }
   ]}
