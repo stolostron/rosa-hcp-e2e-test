@@ -8,7 +8,7 @@
 
 ## Overview
 
-This test suite provisions a ROSA HCP No-CNI (BYO-CNI) cluster on the OpenShift 5.0 release candidate (5.0.0-ec.6, candidate channel) against the MCE 5.0 RC hub. It uses the 5.0 feature template rosa-no-cni-cluster, which derives from the 4.20 combined-automation template (full ROSANetwork + ROSARoleConfig automation, no hard-coded ARNs) and sets network.networkType: Other on the ROSAControlPlane.
+This test suite provisions a ROSA HCP No-CNI (BYO-CNI) cluster on the OpenShift 5.0 release candidate (5.0.0-ec.6, candidate channel) against the MCE 5.0 RC hub. It uses the versioned 5.0 feature template rosa-controlplane-only with no_cni: true, which sets network.networkType: Other on the ROSAControlPlane so the user installs and manages their own CNI plugin.
 
 ## Prerequisites
 
@@ -29,7 +29,7 @@ Using name_prefix automatically sets cluster_name and domain_prefix consistently
 
 - **`openshift_version`:** OpenShift version to deploy (default: 5.0.0-ec.6, candidate channel)
 - **`channel_group`:** Update channel: stable, fast, or candidate (this suite uses candidate for the 5.0 RC)
-- **`network_type`:** ROSAControlPlane network.networkType enum (OVNKubernetes|Other); this suite uses Other for BYO-CNI
+- **`no_cni`:** Set by the suite to disable the default OVNKubernetes CNI (`networkType: Other`); the template defaults to OVNKubernetes
 - **`aws_region`:** AWS region for deployment (default: us-west-2)
 
 ## Expected results

@@ -128,14 +128,18 @@
           Current Version: {{ current_version }}
           Available Upgrades: {{ available_upgrades | join(', ') if available_upgrades | length > 0 else 'None' }}
 
-    - name: Validate available upgrades exist
-      fail:
+    - name: Report no available upgrades
+      debug:
         msg: |
-          No available upgrades for cluster {{ cluster_name }}.
+          SKIPPED: no available upgrades for cluster {{ cluster_name }}.
           Current version: {{ current_version }}
-          The cluster is already at the latest version or upgrade paths
-          have not been populated yet. Check:
+          The cluster is already at the latest version in its channel, or an
+          upgrade path has not been published yet. Nothing to upgrade. Check:
             oc get rosacontrolplane {{ cluster_name }} -n {{ rosa_hcp_namespace }} -o jsonpath='{.status.availableUpgrades}'
+      when: available_upgrades | length == 0
+
+    - name: End play when no upgrade path is available
+      meta: end_play
       when: available_upgrades | length == 0
 
     - name: Set requested version (auto-detect first available)

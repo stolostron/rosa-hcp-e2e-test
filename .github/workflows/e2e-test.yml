@@ -26,7 +26,7 @@ jobs:
   e2e-smoke:
     name: E2E Smoke (CRC)
     if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.test-suite == 'smoke')
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
       - name: Free disk space
@@ -42,7 +42,7 @@ jobs:
           persist-credentials: false
 
       - name: Start CRC OpenShift cluster
-        uses: crc-org/crc-github-action@c32030519c129bdaeedf2f313670831c2195526e # v1
+        uses: crc-org/crc-github-action@7ffcdd62b961e30be7169c9a0dd0a46e243b0d67
         with:
           pull-secret: ${{ secrets.CRC_PULL_SECRET }}
           preset: openshift
@@ -91,7 +91,7 @@ jobs:
   e2e-full:
     name: E2E Full Lifecycle (CRC)
     if: github.event_name == 'workflow_dispatch' && inputs.test-suite == 'full'
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 180
     steps:
       - name: Free disk space
@@ -107,7 +107,7 @@ jobs:
           persist-credentials: false
 
       - name: Start CRC OpenShift cluster
-        uses: crc-org/crc-github-action@c32030519c129bdaeedf2f313670831c2195526e # v1
+        uses: crc-org/crc-github-action@7ffcdd62b961e30be7169c9a0dd0a46e243b0d67
         with:
           pull-secret: ${{ secrets.CRC_PULL_SECRET }}
           preset: openshift
