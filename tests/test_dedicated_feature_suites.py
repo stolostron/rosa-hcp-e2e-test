@@ -63,6 +63,7 @@ def test_dedicated_suite_renders_feature(suite_id, version, channel_group, tmp_p
     variables.update(
         cluster_name="offline-feature",
         rosa_hcp_namespace="offline-ns",
+        aws_region="us-west-2",
         deployment_mode="mce",
         domain_prefix="offline",
         machine_pool={},
