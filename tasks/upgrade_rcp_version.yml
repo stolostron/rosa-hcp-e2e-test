@@ -1,7 +1,8 @@
-- debug:
-    var: requested_version
-    var: current_version
-    var: rcp_name
+- name: Show RCP version context
+  ansible.builtin.debug:
+    msg: >-
+      rcp_name={{ rcp_name }}, current_version={{ current_version }},
+      requested_version={{ requested_version }}
 
 - name: Print version stuff
   debug:

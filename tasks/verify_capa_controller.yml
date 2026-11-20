@@ -281,44 +281,44 @@
 
       Controller is ready for ACM-21162 ROSARoleConfig testing!
 
-rescue:
-  - name: Handle verification failure
-    debug:
-      msg: |
-        CAPA controller verification failed.
-        Gathering diagnostic information...
+  rescue:
+    - name: Handle verification failure
+      debug:
+        msg: |
+          CAPA controller verification failed.
+          Gathering diagnostic information...
 
-  - name: Set verification failure facts
-    set_fact:
-      capa_controller_verified: false
-      capa_controller_verification_failed: true
+    - name: Set verification failure facts
+      set_fact:
+        capa_controller_verified: false
+        capa_controller_verification_failed: true
 
-  - name: Provide verification failure guidance
-    debug:
-      msg: |
-        CAPA Controller Verification Failed - Troubleshooting:
+    - name: Provide verification failure guidance
+      debug:
+        msg: |
+          CAPA Controller Verification Failed - Troubleshooting:
 
-        1. Check deployment status:
-           oc get deployment {{ capa_controller_name }} -n {{ capa_controller_namespace }}
+          1. Check deployment status:
+             oc get deployment {{ capa_controller_name }} -n {{ capa_controller_namespace }}
 
-        2. Check pod status:
-           oc get pods -n {{ capa_controller_namespace }} -l control-plane=controller-manager
+          2. Check pod status:
+             oc get pods -n {{ capa_controller_namespace }} -l control-plane=controller-manager
 
-        3. Check controller logs:
-           oc logs deployment/{{ capa_controller_name }} -n {{ capa_controller_namespace }}
+          3. Check controller logs:
+             oc logs deployment/{{ capa_controller_name }} -n {{ capa_controller_namespace }}
 
-        4. Check ClusterRole permissions:
-           oc get clusterrole capa-manager-role -o yaml
+          4. Check ClusterRole permissions:
+             oc get clusterrole capa-manager-role -o yaml
 
-        5. Check CRDs:
-           oc get crd rosaroleconfigs.infrastructure.cluster.x-k8s.io
+          5. Check CRDs:
+             oc get crd rosaroleconfigs.infrastructure.cluster.x-k8s.io
 
-        6. Verify CAPA installation:
-           oc get all -n {{ capa_controller_namespace }}
+          6. Verify CAPA installation:
+             oc get all -n {{ capa_controller_namespace }}
 
-  - name: Fail the verification
-    fail:
-      msg: |
-        CAPA controller verification failed.
-        Controller is not ready for ACM-21162 ROSARoleConfig testing.
-        Please check the troubleshooting guidance above.
+    - name: Fail the verification
+      fail:
+        msg: |
+          CAPA controller verification failed.
+          Controller is not ready for ACM-21162 ROSARoleConfig testing.
+          Please check the troubleshooting guidance above.

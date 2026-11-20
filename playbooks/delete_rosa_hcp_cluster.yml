@@ -61,7 +61,7 @@
 
     - name: Set cluster credentials
       no_log: true
-      set_fact:
+      ansible.builtin.set_fact:
         ocp_user: "{{ lookup('env', 'OCP_HUB_CLUSTER_USER') | default(OCP_HUB_CLUSTER_USER, true) }}"
         ocp_password: "{{ lookup('env', 'OCP_HUB_CLUSTER_PASSWORD') | default(OCP_HUB_CLUSTER_PASSWORD, true) }}"
         api_url: "{{ lookup('env', 'OCP_HUB_API_URL') | default(OCP_HUB_API_URL, true) }}"
@@ -75,17 +75,17 @@
       ignore_errors: true
 
     - name: Warn if cluster state file could not be loaded
-      debug:
+      ansible.builtin.debug:
         msg: "Warning: failed to load .last-cluster.json — {{ load_cluster_state.msg | default('file not found or malformed') }}"
       when: load_cluster_state is defined and load_cluster_state is failed
 
     - name: Derive cluster_name from name_prefix if provided
-      set_fact:
+      ansible.builtin.set_fact:
         cluster_name: "{{ name_prefix }}-rosa-hcp"
       when: name_prefix is defined and cluster_name is not defined
 
     - name: Validate cluster name is provided
-      fail:
+      ansible.builtin.fail:
         msg: |
           ❌ ERROR: cluster_name or name_prefix must be provided!
 
@@ -96,36 +96,37 @@
       when: cluster_name is not defined
 
     - name: Set default capi namespace
-      set_fact:
+      ansible.builtin.set_fact:
         rosa_hcp_namespace: "ns-rosa-hcp"
       when: rosa_hcp_namespace is not defined
 
     - name: Set derived resource names
-      set_fact:
+      ansible.builtin.set_fact:
         rosa_network_name: "{{ cluster_name }}-network"
         rosa_role_config_name: "{{ cluster_name }}-roles"
         machine_pool_name: "{{ cluster_name }}"
 
     - name: Prepare ansible runner host
-      include_tasks: ../tasks/prepare_ansible_runner.yml
+      ansible.builtin.include_tasks: ../tasks/prepare_ansible_runner.yml
       when: not skip_ansible_runner | default(false) | bool
 
     - name: Login to OCP cluster
-      include_tasks: ../tasks/login_ocp.yml
+      ansible.builtin.include_tasks: ../tasks/login_ocp.yml
       when: deployment_mode != 'standalone'
 
     - name: Get current kube context
-      shell: oc config current-context
+      ansible.builtin.command: oc config current-context
       register: current_context
       changed_when: false
       when: deployment_mode == 'standalone'
 
-    - set_fact:
+    - name: Record the current context
+      ansible.builtin.set_fact:
         ocp_context: "{{ current_context.stdout | trim }}"
       when: deployment_mode == 'standalone'
 
     - name: Display deletion configuration
-      debug:
+      ansible.builtin.debug:
         msg: |
           ╔═══════════════════════════════════════════════════════════════╗
           ║                                                               ║
@@ -149,23 +150,23 @@
           • Timeout: {{ deletion_timeout }}s ({{ (deletion_timeout | int / 60) | int }} minutes)
 
     - name: Delete ROSA HCP cluster resources
-      include_tasks: ../tasks/delete_rosa_hcp_resources.yml
+      ansible.builtin.include_tasks: ../tasks/delete_rosa_hcp_resources.yml
 
     - name: Clean up persisted cluster state
-      file:
+      ansible.builtin.file:
         path: "{{ playbook_dir }}/../.last-cluster.json"
         state: absent
       register: cleanup_cluster_state
       ignore_errors: true
 
     - name: Warn if persisted cluster state cleanup failed
-      debug:
+      ansible.builtin.debug:
         msg: "Warning: failed to remove .last-cluster.json — {{ cleanup_cluster_state.msg | default('unknown cleanup error') }}"
       when: cleanup_cluster_state is failed
 
     - name: Deletion complete
-      debug:
-        msg: |
+      ansible.builtin.debug:
+        msg: |2
 
           ╔═══════════════════════════════════════════════════════════════╗
           ║                                                               ║

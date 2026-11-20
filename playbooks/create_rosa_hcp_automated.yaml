@@ -42,9 +42,8 @@
   vars_files:
     - ../vars/vars.yml
 
-  vars:
-    # These variables should be passed via -e extra_vars
-    # Defaults are handled in the included task file
+  # These variables should be passed via -e extra_vars
+  # Defaults are handled in the included task file
 
   tasks:
     - name: Load user variables
@@ -55,7 +54,7 @@
           skip: true
 
     - name: Set cluster credentials
-      set_fact:
+      ansible.builtin.set_fact:
         ocp_user: "{{ lookup('env', 'OCP_HUB_CLUSTER_USER') | default(OCP_HUB_CLUSTER_USER, true) }}"
         ocp_password: "{{ lookup('env', 'OCP_HUB_CLUSTER_PASSWORD') | default(OCP_HUB_CLUSTER_PASSWORD, true) }}"
         api_url: "{{ lookup('env', 'OCP_HUB_API_URL') | default(OCP_HUB_API_URL, true) }}"
@@ -63,10 +62,10 @@
       no_log: true
 
     - name: Login to OCP cluster
-      include_tasks: ../tasks/login_ocp.yml
+      ansible.builtin.include_tasks: ../tasks/login_ocp.yml
 
     - name: Display automation configuration
-      debug:
+      ansible.builtin.debug:
         msg: |
           ╔═══════════════════════════════════════════════════════════════╗
           ║                                                               ║
@@ -99,12 +98,12 @@
           {% endif %}
 
     - name: Provision ROSA HCP cluster with automation
-      include_tasks: ../tasks/provision_rosa_hcp_with_automation.yml
+      ansible.builtin.include_tasks: ../tasks/provision_rosa_hcp_with_automation.yml
       # Note: Variables are passed as-is. Defaults are handled in the included task file.
 
     - name: Provisioning complete
-      debug:
-        msg: |
+      ansible.builtin.debug:
+        msg: |2
 
           ╔═══════════════════════════════════════════════════════════════╗
           ║                                                               ║

@@ -1,3 +1,4 @@
+---
 # ======================================================
 # CAPI/CAPA Environment Validation Task
 # ======================================================
@@ -11,19 +12,19 @@
 # STEP 1: Verify OCP Login
 # ======================================================
 - name: Verify OCP context is set (from login)
-  fail:
+  ansible.builtin.fail:
     msg: "ℹ️  Not connected to OpenShift cluster yet - Click the 'Credentials' button to connect to your hub cluster"
   when: ocp_context is not defined or ocp_context == ''
 
 - name: OCP Login Check
-  debug:
+  ansible.builtin.debug:
     msg: "✅ Step 1/3: OCP login successful - Context: {{ ocp_context }}"
 
 # ======================================================
 # STEP 2: Verify CAPI/CAPA Controllers are Deployed
 # ======================================================
 - name: Check for capi-controller-manager deployment
-  shell: |
+  ansible.builtin.shell: |
     oc --context='{{ ocp_context }}' get deploy -n {{ capi_namespace }} -ojson |\
     jq -c '.items[] | select(.metadata.name | contains("capi-controller-manager")) | {name: .metadata.name, creationTimestamp: .metadata.creationTimestamp}'
   register: capi_controller_manager
@@ -31,16 +32,16 @@
   changed_when: false
 
 - name: Fail if CAPI controller not found
-  fail:
+  ansible.builtin.fail:
     msg: "ℹ️  Environment not configured yet - Ready to set up! Click the 'Configure' button in the Components card to install CAPI/CAPA controllers (~2 minutes)"
   when: capi_controller_manager.stdout | length == 0
 
 - name: CAPI Controller Check
-  debug:
+  ansible.builtin.debug:
     msg: "✅ Step 2a/3: CAPI controller deployed - {{ capi_controller_manager.stdout }}"
 
 - name: Check for capa-controller-manager deployment
-  shell: |
+  ansible.builtin.shell: |
     oc --context='{{ ocp_context }}' get deploy -n {{ capa_namespace }} -ojson |\
     jq -c '.items[] | select(.metadata.name | contains("capa-controller-manager")) | {name: .metadata.name, creationTimestamp: .metadata.creationTimestamp}'
   register: capa_controller_manager
@@ -48,12 +49,12 @@
   changed_when: false
 
 - name: Fail if CAPA controller not found
-  fail:
+  ansible.builtin.fail:
     msg: "ℹ️  AWS provider not configured yet - Click the 'Configure' button to add cluster-api-provider-aws (CAPA) for ROSA HCP support"
   when: capa_controller_manager.stdout | length == 0
 
 - name: CAPA Controller Check
-  debug:
+  ansible.builtin.debug:
     msg: "✅ Step 2b/3: CAPA controller deployed - {{ capa_controller_manager.stdout }}"
 
 # ======================================================
@@ -64,7 +65,7 @@
 # ======================================================
 
 - name: Get ClusterManager registration configuration
-  shell: |
+  ansible.builtin.shell: |
     oc --context='{{ ocp_context }}' get clusterManager -n {{ capa_namespace }} -ojson |\
     jq -c '.items[] | select(.spec.registrationConfiguration) | {name: "ClusterManager", creationTimestamp: .metadata.creationTimestamp}'
   register: registration_configuration_applied
@@ -72,80 +73,80 @@
   changed_when: false
 
 - name: Check for ClusterManager registration configuration
-  debug:
+  ansible.builtin.debug:
     msg: "✓ ClusterManager registration configuration found - {{ registration_configuration_applied.stdout }}"
   when: registration_configuration_applied.stdout | length > 0
 
 - name: Info if registration configuration not found
-  debug:
+  ansible.builtin.debug:
     msg: "ℹ ClusterManager registration configuration not found (will be created during configuration)"
   when: registration_configuration_applied.stdout | length == 0
 
 - name: Get ClusterRoleBinding
-  shell: |
+  ansible.builtin.shell: |
     oc --context='{{ ocp_context }}' get ClusterRoleBinding cluster-manager-registration-capi -ojson | jq -c '{name: .metadata.name, creationTimestamp: .metadata.creationTimestamp}'
   register: cluster_role_binding_applied
   failed_when: false
   changed_when: false
 
 - name: Check for ClusterRoleBinding
-  debug:
+  ansible.builtin.debug:
     msg: "✓ ClusterRoleBinding cluster-manager-registration-capi found - {{ cluster_role_binding_applied.stdout }}"
   when: cluster_role_binding_applied.stdout | length > 0
 
 - name: Info if ClusterRoleBinding not found
-  debug:
+  ansible.builtin.debug:
     msg: "ℹ ClusterRoleBinding cluster-manager-registration-capi not found (will be created during configuration)"
   when: cluster_role_binding_applied.stdout | length == 0
 
 - name: Get AWS credentials secret (capa-manager-bootstrap-credentials)
-  shell: |
+  ansible.builtin.shell: |
     oc --context='{{ ocp_context }}' get secret -n {{ capa_namespace }} capa-manager-bootstrap-credentials -ojson | jq -c '{name: .metadata.name, creationTimestamp: .metadata.creationTimestamp}'
   register: capa_manager_bootstrap_credentials_exists
   failed_when: false
   changed_when: false
 
 - name: Check for AWS credentials secret
-  debug:
+  ansible.builtin.debug:
     msg: "✓ Secret capa-manager-bootstrap-credentials found - {{ capa_manager_bootstrap_credentials_exists.stdout }}"
   when: capa_manager_bootstrap_credentials_exists.stdout | length > 0
 
 - name: Info if AWS credentials secret not found
-  debug:
+  ansible.builtin.debug:
     msg: "ℹ Secret capa-manager-bootstrap-credentials not found (will be created during configuration)"
   when: capa_manager_bootstrap_credentials_exists.stdout | length == 0
 
 - name: Get ROSA credentials secret
-  shell: |
+  ansible.builtin.shell: |
     oc --context='{{ ocp_context }}' get secret -n {{ capa_namespace }} rosa-creds-secret -ojson | jq -c '{name: .metadata.name, creationTimestamp: .metadata.creationTimestamp}'
   register: rosa_creds_secret_exists
   failed_when: false
   changed_when: false
 
 - name: Check for ROSA credentials secret
-  debug:
+  ansible.builtin.debug:
     msg: "✓ Secret rosa-creds-secret found - {{ rosa_creds_secret_exists.stdout }}"
   when: rosa_creds_secret_exists.stdout | length > 0
 
 - name: Info if ROSA credentials secret not found
-  debug:
+  ansible.builtin.debug:
     msg: "ℹ Secret rosa-creds-secret not found (will be created during configuration)"
   when: rosa_creds_secret_exists.stdout | length == 0
 
 - name: Get AWSClusterControllerIdentity
-  shell: |
+  ansible.builtin.shell: |
     oc --context='{{ ocp_context }}' get AWSClusterControllerIdentity default -ojson | jq -c '{name: .metadata.name, creationTimestamp: .metadata.creationTimestamp}'
   register: aws_cluster_controller_identity_exists
   failed_when: false
   changed_when: false
 
 - name: Check for AWSClusterControllerIdentity
-  debug:
+  ansible.builtin.debug:
     msg: "✓ AWSClusterControllerIdentity default found - {{ aws_cluster_controller_identity_exists.stdout }}"
   when: aws_cluster_controller_identity_exists.stdout | length > 0
 
 - name: Info if AWSClusterControllerIdentity not found
-  debug:
+  ansible.builtin.debug:
     msg: "ℹ AWSClusterControllerIdentity default not found (will be created during configuration)"
   when: aws_cluster_controller_identity_exists.stdout | length == 0
 
@@ -156,87 +157,111 @@
 # ======================================================
 
 - name: Get ROSA-related namespaces
-  shell: |
+  ansible.builtin.shell: |
     oc --context='{{ ocp_context }}' get namespace -ojson | jq -c '.items[] | select(.metadata.name | test("rosa|capi")) | {name: .metadata.name, creationTimestamp: .metadata.creationTimestamp}'
   register: rosa_namespaces
   failed_when: false
   changed_when: false
 
 - name: Check for ROSA namespaces
-  debug:
+  ansible.builtin.debug:
     msg: "✓ Namespace found - {{ item }}"
   loop: "{{ rosa_namespaces.stdout_lines }}"
   when: rosa_namespaces.stdout_lines | length > 0
 
 - name: Get ROSACluster resources (all namespaces)
-  shell: |
-    oc --context='{{ ocp_context }}' get rosacluster --all-namespaces -ojson | jq -c '.items[] | {namespace: .metadata.namespace, name: .metadata.name, creationTimestamp: .metadata.creationTimestamp, status: (if .metadata.deletionTimestamp then "Uninstalling" elif .status.ready then "Ready" else "Provisioning" end)}'
+  vars:
+    resource_summary_filter: >-
+      .items[] | {namespace: .metadata.namespace, name: .metadata.name,
+      creationTimestamp: .metadata.creationTimestamp,
+      status: (if .metadata.deletionTimestamp then "Uninstalling" elif .status.ready then "Ready" else "Provisioning" end)}
+  ansible.builtin.shell: |
+    oc --context='{{ ocp_context }}' get rosacluster --all-namespaces -ojson \
+      | jq -c '{{ resource_summary_filter }}'
   register: rosa_clusters
   failed_when: false
   changed_when: false
 
 - name: Check for ROSACluster resources
-  debug:
+  ansible.builtin.debug:
     msg: "✓ ROSACluster found - {{ item }}"
   loop: "{{ rosa_clusters.stdout_lines }}"
   when: rosa_clusters.stdout_lines | length > 0
 
 - name: Info if no ROSACluster resources found
-  debug:
+  ansible.builtin.debug:
     msg: "ℹ No ROSACluster resources found (this is normal if you haven't created any clusters yet)"
   when: rosa_clusters.stdout_lines | length == 0
 
 - name: Get RosaControlPlane resources (all namespaces)
-  shell: |
-    oc --context='{{ ocp_context }}' get rosacontrolplane --all-namespaces -ojson | jq -c '.items[] | {namespace: .metadata.namespace, name: .metadata.name, creationTimestamp: .metadata.creationTimestamp, status: (if .metadata.deletionTimestamp then "Uninstalling" elif .status.ready then "Ready" else "Provisioning" end)}'
+  vars:
+    resource_summary_filter: >-
+      .items[] | {namespace: .metadata.namespace, name: .metadata.name,
+      creationTimestamp: .metadata.creationTimestamp,
+      status: (if .metadata.deletionTimestamp then "Uninstalling" elif .status.ready then "Ready" else "Provisioning" end)}
+  ansible.builtin.shell: |
+    oc --context='{{ ocp_context }}' get rosacontrolplane --all-namespaces -ojson \
+      | jq -c '{{ resource_summary_filter }}'
   register: rosa_control_planes
   failed_when: false
   changed_when: false
 
 - name: Check for RosaControlPlane resources
-  debug:
+  ansible.builtin.debug:
     msg: "✓ RosaControlPlane found - {{ item }}"
   loop: "{{ rosa_control_planes.stdout_lines }}"
   when: rosa_control_planes.stdout_lines | length > 0
 
 - name: Info if no RosaControlPlane resources found
-  debug:
+  ansible.builtin.debug:
     msg: "ℹ No RosaControlPlane resources found (this is normal if you haven't created any clusters yet)"
   when: rosa_control_planes.stdout_lines | length == 0
 
 - name: Get RosaNetwork resources (all namespaces)
-  shell: |
-    oc --context='{{ ocp_context }}' get rosanetwork --all-namespaces -ojson | jq -c '.items[] | {namespace: .metadata.namespace, name: .metadata.name, creationTimestamp: .metadata.creationTimestamp, status: (if .metadata.deletionTimestamp then "Deleting" elif .status.ready then "Ready" else "Configuring" end)}'
+  vars:
+    resource_summary_filter: >-
+      .items[] | {namespace: .metadata.namespace, name: .metadata.name,
+      creationTimestamp: .metadata.creationTimestamp,
+      status: (if .metadata.deletionTimestamp then "Deleting" elif .status.ready then "Ready" else "Configuring" end)}
+  ansible.builtin.shell: |
+    oc --context='{{ ocp_context }}' get rosanetwork --all-namespaces -ojson \
+      | jq -c '{{ resource_summary_filter }}'
   register: rosa_networks
   failed_when: false
   changed_when: false
 
 - name: Check for RosaNetwork resources
-  debug:
+  ansible.builtin.debug:
     msg: "✓ RosaNetwork found - {{ item }}"
   loop: "{{ rosa_networks.stdout_lines }}"
   when: rosa_networks.stdout_lines | length > 0
 
 - name: Info if no RosaNetwork resources found
-  debug:
+  ansible.builtin.debug:
     msg: "ℹ No RosaNetwork resources found (this is normal if you haven't created any clusters yet)"
   when: rosa_networks.stdout_lines | length == 0
 
 - name: Get Cluster resources (all namespaces)
-  shell: |
-    oc --context='{{ ocp_context }}' get cluster --all-namespaces -ojson | jq -c '.items[] | {namespace: .metadata.namespace, name: .metadata.name, creationTimestamp: .metadata.creationTimestamp, status: (if .status.phase then .status.phase else "Active" end)}'
+  vars:
+    resource_summary_filter: >-
+      .items[] | {namespace: .metadata.namespace, name: .metadata.name,
+      creationTimestamp: .metadata.creationTimestamp,
+      status: (if .status.phase then .status.phase else "Active" end)}
+  ansible.builtin.shell: |
+    oc --context='{{ ocp_context }}' get cluster --all-namespaces -ojson \
+      | jq -c '{{ resource_summary_filter }}'
   register: capi_clusters
   failed_when: false
   changed_when: false
 
 - name: Check for CAPI Cluster resources
-  debug:
+  ansible.builtin.debug:
     msg: "✓ Cluster found - {{ item }}"
   loop: "{{ capi_clusters.stdout_lines }}"
   when: capi_clusters.stdout_lines | length > 0
 
 - name: Info if no CAPI Cluster resources found
-  debug:
+  ansible.builtin.debug:
     msg: "ℹ No Cluster resources found (this is normal if you haven't created any clusters yet)"
   when: capi_clusters.stdout_lines | length == 0
 
@@ -244,8 +269,8 @@
 # SUCCESS: Environment is Fully Configured
 # ======================================================
 - name: Environment validation complete
-  debug:
-    msg: |
+  ansible.builtin.debug:
+    msg: |2
 
       ✅ ✅ ✅ ENVIRONMENT CONFIGURED AND READY TO GO! ✅ ✅ ✅
 

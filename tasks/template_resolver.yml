@@ -1,17 +1,18 @@
+---
 # Template Resolver Tasks
 # Handles smart template lookup with fallback logic for versioned OpenShift deployments
 
 - name: Extract major.minor version from OpenShift version
-  set_fact:
+  ansible.builtin.set_fact:
     ocp_major_minor: "{{ openshift_version.split('.')[0] }}.{{ openshift_version.split('.')[1] }}"
 
 - name: Validate OpenShift version (major.minor)
-  fail:
+  ansible.builtin.fail:
     msg: "OpenShift version '{{ openshift_version }}' ({{ ocp_major_minor }}) is not supported. Supported versions: {{ supported_versions | join(', ') }}"
   when: ocp_major_minor not in supported_versions
 
 - name: Set template resolver variables
-  set_fact:
+  ansible.builtin.set_fact:
     template_name: "{{ template_name | default('') }}"
     template_category: "{{ template_category | default('cluster-configs') }}"
     template_extension: "{{ template_extension | default('.yaml.j2') }}"
@@ -19,13 +20,13 @@
     common_templates: "../templates/common"
 
 - name: Construct template paths
-  set_fact:
+  ansible.builtin.set_fact:
     version_specific_template: "{{ version_templates }}/{{ template_category }}/{{ template_name }}{{ template_extension }}"
     common_template: "{{ common_templates }}/{{ template_name }}{{ template_extension }}"
     feature_template: "{{ version_templates }}/features/{{ template_name }}{{ template_extension }}"
 
 - name: Debug template paths
-  debug:
+  ansible.builtin.debug:
     msg: |
       Looking for template: {{ template_name }}
       Version-specific path: {{ version_specific_template }}
@@ -34,58 +35,58 @@
   when: template_debug | default(false) | bool
 
 - name: Check if version-specific template exists
-  stat:
+  ansible.builtin.stat:
     path: "{{ version_specific_template }}"
   register: version_template_stat
 
 - name: Check if feature-specific template exists
-  stat:
+  ansible.builtin.stat:
     path: "{{ feature_template }}"
   register: feature_template_stat
 
 - name: Check if common template exists
-  stat:
+  ansible.builtin.stat:
     path: "{{ common_template }}"
   register: common_template_stat
 
 - name: Set resolved template path
-  set_fact:
+  ansible.builtin.set_fact:
     resolved_template_path: "{{ version_specific_template }}"
     template_source: "version-specific"
   when: version_template_stat.stat.exists
 
 - name: Fall back to feature template
-  set_fact:
+  ansible.builtin.set_fact:
     resolved_template_path: "{{ feature_template }}"
     template_source: "feature-specific"
-  when: 
+  when:
     - not version_template_stat.stat.exists
     - feature_template_stat.stat.exists
 
 - name: Fall back to common template
-  set_fact:
+  ansible.builtin.set_fact:
     resolved_template_path: "{{ common_template }}"
     template_source: "common"
-  when: 
+  when:
     - not version_template_stat.stat.exists
     - not feature_template_stat.stat.exists
     - common_template_stat.stat.exists
 
 - name: Template not found error
-  fail:
+  ansible.builtin.fail:
     msg: |
       Template '{{ template_name }}' not found in any location:
       - Version-specific: {{ version_specific_template }}
       - Feature-specific: {{ feature_template }}
       - Common: {{ common_template }}
       Please ensure the template exists in one of these locations.
-  when: 
+  when:
     - not version_template_stat.stat.exists
     - not feature_template_stat.stat.exists
     - not common_template_stat.stat.exists
 
 - name: Display template resolution result
-  debug:
+  ansible.builtin.debug:
     msg: |
       Template resolved: {{ template_name }}
       Source: {{ template_source }}

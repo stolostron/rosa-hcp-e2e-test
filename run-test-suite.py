@@ -37,9 +37,13 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 import yaml
+
+# Optional AI-agent hooks catch any exception so a monitoring failure
+# can never abort a test run.
+# pylint: disable=broad-exception-caught
 
 # Per-feature verification results. The playbook writes this at a fixed path
 # (it has no view of the runner's dated output layout); the runner reads it to
@@ -50,9 +54,11 @@ FEATURE_VERIFICATION_PLAYBOOK = "verify_feature_flags.yml"
 # AI Agent Framework (optional - only imported if --ai-agent flag is used)
 try:
     from agents import MonitoringAgent, DiagnosticAgent, RemediationAgent, LearningAgent
+
     AI_AGENTS_AVAILABLE = True
 except ImportError:
     AI_AGENTS_AVAILABLE = False
+
 
 # Terminal colors for output
 class _BlockingStream:
@@ -70,16 +76,22 @@ class _BlockingStream:
         try:
             return self._stream.write(data)
         except BlockingIOError:
-            fcntl.fcntl(self._stream, fcntl.F_SETFL,
-                        fcntl.fcntl(self._stream, fcntl.F_GETFL) & ~os.O_NONBLOCK)
+            fcntl.fcntl(
+                self._stream,
+                fcntl.F_SETFL,
+                fcntl.fcntl(self._stream, fcntl.F_GETFL) & ~os.O_NONBLOCK,
+            )
             return self._stream.write(data)
 
     def flush(self):
         try:
             return self._stream.flush()
         except BlockingIOError:
-            fcntl.fcntl(self._stream, fcntl.F_SETFL,
-                        fcntl.fcntl(self._stream, fcntl.F_GETFL) & ~os.O_NONBLOCK)
+            fcntl.fcntl(
+                self._stream,
+                fcntl.F_SETFL,
+                fcntl.fcntl(self._stream, fcntl.F_GETFL) & ~os.O_NONBLOCK,
+            )
             return self._stream.flush()
 
     def __getattr__(self, name):
@@ -87,21 +99,28 @@ class _BlockingStream:
 
 
 class Colors:
-    HEADER = '\033[95m'
-    BLUE = '\033[94m'
-    CYAN = '\033[96m'
-    GREEN = '\033[92m'
-    YELLOW = '\033[93m'
-    RED = '\033[91m'
-    ENDC = '\033[0m'
-    BOLD = '\033[1m'
-    UNDERLINE = '\033[4m'
+    HEADER = "\033[95m"
+    BLUE = "\033[94m"
+    CYAN = "\033[96m"
+    GREEN = "\033[92m"
+    YELLOW = "\033[93m"
+    RED = "\033[91m"
+    ENDC = "\033[0m"
+    BOLD = "\033[1m"
+    UNDERLINE = "\033[4m"
 
 
 class TestSuiteRunner:
     """Main test suite runner class."""
 
-    def __init__(self, base_dir: Path = Path.cwd(), extra_vars: Optional[Dict[str, str]] = None, verbosity: int = 0, ai_agent_enabled: bool = False, ai_agent_dry_run: bool = False):
+    def __init__(
+        self,
+        base_dir: Path = Path.cwd(),
+        extra_vars: Optional[Dict[str, str]] = None,
+        verbosity: int = 0,
+        ai_agent_enabled: bool = False,
+        ai_agent_dry_run: bool = False,
+    ):
         self.base_dir = base_dir
         self.test_suites_dir = base_dir / "test-suites"
         self.results_dir = base_dir / "test-results"
@@ -133,7 +152,7 @@ class TestSuiteRunner:
             "failed": 0,
             "skipped": 0,
             "suites": [],
-            "ai_agent_statistics": None
+            "ai_agent_statistics": None,
         }
 
         # Create results directory if it doesn't exist
@@ -145,30 +164,55 @@ class TestSuiteRunner:
         self.diagnostic_agent = None
         self.remediation_agent = None
         self.learning_agent = None
-        self._agent_lock = threading.Lock()  # Guards process_line from concurrent sidecar + stdout calls
+        self._agent_lock = (
+            threading.Lock()
+        )  # Guards process_line from concurrent sidecar + stdout calls
 
         if self.ai_agent_enabled:
             if not AI_AGENTS_AVAILABLE:
-                print(f"{Colors.YELLOW}Warning: AI agents requested but not available - install agents/ module{Colors.ENDC}")
+                print(
+                    f"{Colors.YELLOW}Warning: AI agents requested but not available - install agents/ module{Colors.ENDC}"
+                )
                 self.ai_agent_enabled = False
             else:
                 print(f"{Colors.CYAN}Initializing AI Agent Framework...{Colors.ENDC}")
 
-                self.monitor_agent = MonitoringAgent(base_dir, enabled=True, verbose=(verbosity > 0))
-                self.diagnostic_agent = DiagnosticAgent(base_dir, enabled=True, verbose=(verbosity > 0))
-                self.remediation_agent = RemediationAgent(base_dir, enabled=True, verbose=(verbosity > 0), dry_run=ai_agent_dry_run)
-                self.learning_agent = LearningAgent(base_dir, enabled=True, verbose=(verbosity > 0))
+                self.monitor_agent = MonitoringAgent(
+                    base_dir, enabled=True, verbose=(verbosity > 0)
+                )
+                self.diagnostic_agent = DiagnosticAgent(
+                    base_dir, enabled=True, verbose=(verbosity > 0)
+                )
+                self.remediation_agent = RemediationAgent(
+                    base_dir,
+                    enabled=True,
+                    verbose=(verbosity > 0),
+                    dry_run=ai_agent_dry_run,
+                )
+                self.learning_agent = LearningAgent(
+                    base_dir, enabled=True, verbose=(verbosity > 0)
+                )
 
                 self.monitor_agent.set_issue_callback(self._ai_agent_issue_detected)
 
                 mode_text = "DRY RUN MODE" if ai_agent_dry_run else "LIVE MODE"
-                print(f"{Colors.GREEN}AI Agent Framework initialized ({mode_text}){Colors.ENDC}")
-                print(f"{Colors.CYAN}  - Monitoring Agent: Real-time issue detection{Colors.ENDC}")
-                print(f"{Colors.CYAN}  - Diagnostic Agent: Root cause analysis{Colors.ENDC}")
-                print(f"{Colors.CYAN}  - Remediation Agent: Autonomous fixes{Colors.ENDC}")
-                print(f"{Colors.CYAN}  - Learning Agent: Outcome tracking & confidence adjustment{Colors.ENDC}\n")
+                print(
+                    f"{Colors.GREEN}AI Agent Framework initialized ({mode_text}){Colors.ENDC}"
+                )
+                print(
+                    f"{Colors.CYAN}  - Monitoring Agent: Real-time issue detection{Colors.ENDC}"
+                )
+                print(
+                    f"{Colors.CYAN}  - Diagnostic Agent: Root cause analysis{Colors.ENDC}"
+                )
+                print(
+                    f"{Colors.CYAN}  - Remediation Agent: Autonomous fixes{Colors.ENDC}"
+                )
+                print(
+                    f"{Colors.CYAN}  - Learning Agent: Outcome tracking & confidence adjustment{Colors.ENDC}\n"
+                )
 
-    def _ai_agent_issue_detected(self, issue_type: str, context: Dict, issue: Dict):
+    def _ai_agent_issue_detected(self, issue_type: str, context: Dict, _issue: Dict):
         """
         AI Agent callback - called when monitoring agent detects an issue.
         Orchestrates the diagnostic and remediation chain.
@@ -176,15 +220,21 @@ class TestSuiteRunner:
         resource_key = context.get("resource_key")
 
         try:
-            print(f"\n{Colors.YELLOW}AI Agent detected issue: {issue_type}{Colors.ENDC}")
+            print(
+                f"\n{Colors.YELLOW}AI Agent detected issue: {issue_type}{Colors.ENDC}"
+            )
 
             diagnosis = self.diagnostic_agent.diagnose(issue_type, context)
 
             if diagnosis:
-                print(f"{Colors.CYAN}   Root cause: {diagnosis.get('root_cause', 'Unknown')}{Colors.ENDC}")
-                print(f"{Colors.CYAN}   Recommended fix: {diagnosis.get('recommended_fix', 'None')}{Colors.ENDC}")
+                print(
+                    f"{Colors.CYAN}   Root cause: {diagnosis.get('root_cause', 'Unknown')}{Colors.ENDC}"
+                )
+                print(
+                    f"{Colors.CYAN}   Recommended fix: {diagnosis.get('recommended_fix', 'None')}{Colors.ENDC}"
+                )
 
-                if diagnosis.get('confidence', 0) >= 0.7:
+                if diagnosis.get("confidence", 0) >= 0.7:
                     success, message = self.remediation_agent.remediate(diagnosis)
 
                     # Record outcome for learning agent
@@ -208,13 +258,19 @@ class TestSuiteRunner:
                         # types pass no verify_fn and behave as before.
                         verify_fn = None
                         if issue_type == "rosanetwork_stuck_deletion":
-                            verify_fn = self._make_rosanetwork_resolution_verifier(diagnosis)
-                        self.monitor_agent.mark_issue_resolved(issue_type, resource_key, verify_fn=verify_fn)
+                            verify_fn = self._make_rosanetwork_resolution_verifier(
+                                diagnosis
+                            )
+                        self.monitor_agent.mark_issue_resolved(
+                            issue_type, resource_key, verify_fn=verify_fn
+                        )
                     else:
                         print(f"{Colors.YELLOW}   Fix result: {message}{Colors.ENDC}\n")
                         self.monitor_agent.mark_issue_failed(issue_type, resource_key)
                 else:
-                    print(f"{Colors.YELLOW}   Confidence too low for auto-remediation{Colors.ENDC}\n")
+                    print(
+                        f"{Colors.YELLOW}   Confidence too low for auto-remediation{Colors.ENDC}\n"
+                    )
                     self.monitor_agent.mark_issue_failed(issue_type, resource_key)
             else:
                 print(f"{Colors.YELLOW}   Unable to diagnose issue{Colors.ENDC}\n")
@@ -252,7 +308,7 @@ class TestSuiteRunner:
             # us-west-2 and can report a stack in another region as GONE,
             # producing a false-positive "resolved".
             resource_info = {"spec": {"region": region}} if region else None
-            status = self.diagnostic_agent._get_cloudformation_stack_status(
+            status = self.diagnostic_agent._get_cloudformation_stack_status(  # pylint: disable=protected-access
                 stack_name, resource_info=resource_info
             )
             if status in ("GONE", "DELETE_COMPLETE"):
@@ -274,7 +330,7 @@ class TestSuiteRunner:
             return None
 
         try:
-            with open(suite_file, 'r') as f:
+            with open(suite_file, "r", encoding="utf-8") as f:
                 return json.load(f)
         except json.JSONDecodeError as e:
             print(f"{Colors.RED}✗ Invalid JSON in {suite_id}: {e}{Colors.ENDC}")
@@ -287,13 +343,15 @@ class TestSuiteRunner:
             suite_id = suite_file.stem
             suite_data = self.load_test_suite(suite_id)
             if suite_data:
-                suites.append({
-                    "id": suite_id,
-                    "name": suite_data.get("name", "Unknown"),
-                    "description": suite_data.get("description", ""),
-                    "tags": suite_data.get("tags", []),
-                    "playbook_count": len(suite_data.get("playbooks", []))
-                })
+                suites.append(
+                    {
+                        "id": suite_id,
+                        "name": suite_data.get("name", "Unknown"),
+                        "description": suite_data.get("description", ""),
+                        "tags": suite_data.get("tags", []),
+                        "playbook_count": len(suite_data.get("playbooks", [])),
+                    }
+                )
         return suites
 
     def _build_ansible_cmd(self, playbook_path: Path, playbook: Dict) -> List[str]:
@@ -326,10 +384,12 @@ class TestSuiteRunner:
 
         return cmd
 
-    def run_playbook(self, playbook: Dict, suite_name: str) -> Dict:
+    def run_playbook(self, playbook: Dict, _suite_name: str) -> Dict:
         """Execute a single Ansible playbook."""
         playbook_name = playbook.get("name")
-        playbook_file = playbook.get("file", playbook_name)  # Use 'file' field, fallback to 'name'
+        playbook_file = playbook.get(
+            "file", playbook_name
+        )  # Use 'file' field, fallback to 'name'
         playbook_path = self.base_dir / playbook_file
 
         if not playbook_path.exists():
@@ -338,10 +398,12 @@ class TestSuiteRunner:
                 "file": playbook_file,
                 "success": False,
                 "error": f"Playbook not found: {playbook_path}",
-                "duration": 0
+                "duration": 0,
             }
 
-        print(f"\n{Colors.CYAN}⏳ Running: {playbook.get('description', playbook_name)}{Colors.ENDC}")
+        print(
+            f"\n{Colors.CYAN}⏳ Running: {playbook.get('description', playbook_name)}{Colors.ENDC}"
+        )
 
         start_time = time.time()
         output_lines = []
@@ -361,7 +423,7 @@ class TestSuiteRunner:
                 stdin=subprocess.DEVNULL,
                 text=True,
                 bufsize=1,  # Line buffered
-                cwd=self.base_dir
+                cwd=self.base_dir,
             )
 
             # Start sidecar log file tailer for real-time agent monitoring.
@@ -371,7 +433,11 @@ class TestSuiteRunner:
             sidecar_stop = threading.Event()
             sidecar_thread = None
 
-            if self.ai_agent_enabled and self.monitor_agent and "delete" in playbook_name.lower():
+            if (
+                self.ai_agent_enabled
+                and self.monitor_agent
+                and "delete" in playbook_name.lower()
+            ):
                 cluster_name = self.extra_vars.get("cluster_name", "")
                 if not cluster_name:
                     # Derive from name_prefix (same as Ansible: name_prefix + "-rosa-hcp")
@@ -387,7 +453,9 @@ class TestSuiteRunner:
                         while not sidecar_stop.is_set():
                             try:
                                 if os.path.exists(sidecar_logfile):
-                                    with open(sidecar_logfile, 'r') as f:
+                                    with open(
+                                        sidecar_logfile, "r", encoding="utf-8"
+                                    ) as f:
                                         f.seek(last_pos)
                                         new_lines = f.readlines()
                                         if new_lines:
@@ -396,17 +464,22 @@ class TestSuiteRunner:
                                                 if line:
                                                     try:
                                                         with self._agent_lock:
-                                                            self.monitor_agent.process_line(line)
+                                                            self.monitor_agent.process_line(
+                                                                line
+                                                            )
                                                     except Exception:
                                                         pass
                                         last_pos = f.tell()
                             except Exception:
                                 pass
                             sidecar_stop.wait(2)  # Poll every 2 seconds
+
                     sidecar_thread = threading.Thread(target=_tail_sidecar, daemon=True)
                     sidecar_thread.start()
                     if self.verbosity > 0:
-                        print(f"{Colors.CYAN}AI Agent sidecar monitoring: {sidecar_logfile}{Colors.ENDC}")
+                        print(
+                            f"{Colors.CYAN}AI Agent sidecar monitoring: {sidecar_logfile}{Colors.ENDC}"
+                        )
 
             # Capture output while streaming it in real-time. The reader runs
             # in its own thread so the main thread can enforce the timeout even
@@ -415,7 +488,7 @@ class TestSuiteRunner:
                 try:
                     for line in process.stdout:
                         # Print immediately (prevents timeout detection in CI/CD)
-                        print(line, end='')
+                        print(line, end="")
                         sys.stdout.flush()
                         # Also store for later use
                         output_lines.append(line)
@@ -427,10 +500,14 @@ class TestSuiteRunner:
                                     self.monitor_agent.process_line(line)
                             except Exception as e:
                                 if self.verbosity > 0:
-                                    print(f"{Colors.YELLOW}AI Agent Warning: {str(e)}{Colors.ENDC}")
+                                    print(
+                                        f"{Colors.YELLOW}AI Agent Warning: {str(e)}{Colors.ENDC}"
+                                    )
                 except Exception as e:
                     if self.verbosity > 0:
-                        print(f"{Colors.YELLOW}Output reader warning: {str(e)}{Colors.ENDC}")
+                        print(
+                            f"{Colors.YELLOW}Output reader warning: {str(e)}{Colors.ENDC}"
+                        )
 
             reader_thread = threading.Thread(target=_stream_output, daemon=True)
             reader_thread.start()
@@ -451,10 +528,12 @@ class TestSuiteRunner:
                     sidecar_thread.join(timeout=5)
 
             duration = time.time() - start_time
-            output = ''.join(output_lines)
+            output = "".join(output_lines)
 
             if returncode == 0:
-                print(f"{Colors.GREEN}✓ Completed successfully ({self._format_duration(duration)}){Colors.ENDC}")
+                print(
+                    f"{Colors.GREEN}✓ Completed successfully ({self._format_duration(duration)}){Colors.ENDC}"
+                )
 
                 return {
                     "name": playbook_name,
@@ -463,7 +542,7 @@ class TestSuiteRunner:
                     "test_case_id": playbook.get("test_case_id", ""),
                     "success": True,
                     "duration": duration,
-                    "output": output
+                    "output": output,
                 }
             else:
                 print(f"{Colors.RED}✗ Failed with exit code {returncode}{Colors.ENDC}")
@@ -476,12 +555,14 @@ class TestSuiteRunner:
                     "success": False,
                     "error": output,
                     "duration": duration,
-                    "output": output
+                    "output": output,
                 }
 
         except subprocess.TimeoutExpired:
             duration = time.time() - start_time
-            print(f"{Colors.RED}✗ Timeout after {self._format_duration(duration)}{Colors.ENDC}")
+            print(
+                f"{Colors.RED}✗ Timeout after {self._format_duration(duration)}{Colors.ENDC}"
+            )
             return {
                 "name": playbook_name,
                 "file": playbook_file,
@@ -491,7 +572,7 @@ class TestSuiteRunner:
                 "is_error": True,
                 "error": f"Timeout after {timeout} seconds",
                 "duration": duration,
-                "output": ''.join(output_lines)
+                "output": "".join(output_lines),
             }
         except Exception as e:
             duration = time.time() - start_time
@@ -504,7 +585,7 @@ class TestSuiteRunner:
                 "success": False,
                 "is_error": True,
                 "error": str(e),
-                "duration": duration
+                "duration": duration,
             }
 
     def _extract_suite_label(self, suite_id: str) -> str:
@@ -538,7 +619,7 @@ class TestSuiteRunner:
             "id": suite_id,
             "name": suite_data.get("name", "Unknown"),
             "start_time": datetime.now().isoformat(),
-            "playbooks": []
+            "playbooks": [],
         }
 
         # Execute playbooks
@@ -558,8 +639,12 @@ class TestSuiteRunner:
                 self.results["failed"] += 1
 
                 # Stop on failure if configured
-                if suite_data.get("stopOnFailure", False) and playbook.get("required", True):
-                    print(f"\n{Colors.YELLOW}⚠ Stopping suite due to failure{Colors.ENDC}")
+                if suite_data.get("stopOnFailure", False) and playbook.get(
+                    "required", True
+                ):
+                    print(
+                        f"\n{Colors.YELLOW}⚠ Stopping suite due to failure{Colors.ENDC}"
+                    )
                     break
 
         # Calculate suite duration
@@ -607,11 +692,15 @@ class TestSuiteRunner:
             suite_id = stage["suite"]
 
             if not all_passed and not stage["always"]:
-                print(f"\n{Colors.YELLOW}⊘ Skipping {suite_id} (earlier stage failed){Colors.ENDC}")
+                print(
+                    f"\n{Colors.YELLOW}⊘ Skipping {suite_id} (earlier stage failed){Colors.ENDC}"
+                )
                 continue
 
             if not all_passed and stage["always"]:
-                print(f"\n{Colors.YELLOW}↻ Running {suite_id} anyway (cleanup stage){Colors.ENDC}")
+                print(
+                    f"\n{Colors.YELLOW}↻ Running {suite_id} anyway (cleanup stage){Colors.ENDC}"
+                )
 
             # run_test_suite() returns a cumulative pass flag, so compare the
             # failure count before and after to see if *this* stage failed.
@@ -663,7 +752,9 @@ class TestSuiteRunner:
         # Apply tag filter if specified
         if tag_filter:
             suites = [s for s in suites if tag_filter in s.get("tags", [])]
-            print(f"{Colors.CYAN}Running test suites with tag '{tag_filter}'{Colors.ENDC}\n")
+            print(
+                f"{Colors.CYAN}Running test suites with tag '{tag_filter}'{Colors.ENDC}\n"
+            )
 
         if not suites:
             print(f"{Colors.YELLOW}No test suites found{Colors.ENDC}")
@@ -708,7 +799,7 @@ class TestSuiteRunner:
 
         return all_passed
 
-    def save_results(self, format: str = "json") -> Path:
+    def save_results(self, output_format: str = "json") -> Path:
         """Save test results to file."""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         results_date_dir = self.results_dir / datetime.now().strftime("%Y-%m-%d")
@@ -720,33 +811,33 @@ class TestSuiteRunner:
         #           test-run-configure-20260208_151015.xml
         label_part = f"-{self.suite_label}" if self.suite_label else ""
 
-        if format == "json":
+        if output_format == "json":
             output_file = results_date_dir / f"test-run{label_part}-{timestamp}.json"
-            with open(output_file, 'w') as f:
+            with open(output_file, "w", encoding="utf-8") as f:
                 json.dump(self.results, f, indent=2)
 
             # Also save as latest.json (with label)
             latest_file = self.results_dir / f"latest{label_part}.json"
-            with open(latest_file, 'w') as f:
+            with open(latest_file, "w", encoding="utf-8") as f:
                 json.dump(self.results, f, indent=2)
 
-        elif format == "html":
+        elif output_format == "html":
             output_file = results_date_dir / f"test-run{label_part}-{timestamp}.html"
             html_content = self._generate_html_report()
-            with open(output_file, 'w') as f:
+            with open(output_file, "w", encoding="utf-8") as f:
                 f.write(html_content)
 
             # Also save as latest.html (with label)
             latest_file = self.results_dir / f"latest{label_part}.html"
-            with open(latest_file, 'w') as f:
+            with open(latest_file, "w", encoding="utf-8") as f:
                 f.write(html_content)
 
-        elif format == "junit":
+        elif output_format == "junit":
             # One JUnit file per run: Jenkins consumes test-results/**/*.xml,
             # so a latest-<label>.xml copy would double-count every testcase.
             output_file = results_date_dir / f"test-run{label_part}-{timestamp}.xml"
             junit_content = self._generate_junit_xml()
-            with open(output_file, 'w') as f:
+            with open(output_file, "w", encoding="utf-8") as f:
                 f.write(junit_content)
 
         # Archive this run's per-feature results next to the report, in any
@@ -755,9 +846,17 @@ class TestSuiteRunner:
         if not self._artifact_archived:
             feature_data = self.load_feature_verification()
             if feature_data:
-                archived = results_date_dir / f"feature-verification{label_part}-{timestamp}.json"
+                archived = (
+                    results_date_dir
+                    / f"feature-verification{label_part}-{timestamp}.json"
+                )
                 # Created 0600 in one step: the spec snapshot can hold cluster details.
-                with open(archived, 'w', opener=lambda p, flags: os.open(p, flags, 0o600)) as f:
+                with open(
+                    archived,
+                    "w",
+                    encoding="utf-8",
+                    opener=lambda p, flags: os.open(p, flags, 0o600),
+                ) as f:
                     json.dump(feature_data, f, indent=2)
                 self._artifact_archived = True
 
@@ -770,40 +869,48 @@ class TestSuiteRunner:
         env_info = {}
 
         # Extract OCP login info
-        ocp_login_match = re.search(r'Successfully logged in - User: ([\w:]+) \| API: (https://[^\s]+) \| Context: ([^\s]+)', playbook_output)
+        ocp_login_match = re.search(
+            r"Successfully logged in - User: ([\w:]+) \| API: (https://[^\s]+) \| Context: ([^\s]+)",
+            playbook_output,
+        )
         if ocp_login_match:
-            env_info['ocp_user'] = ocp_login_match.group(1)
-            env_info['ocp_api_url'] = ocp_login_match.group(2)
-            env_info['ocp_context'] = ocp_login_match.group(3)
+            env_info["ocp_user"] = ocp_login_match.group(1)
+            env_info["ocp_api_url"] = ocp_login_match.group(2)
+            env_info["ocp_context"] = ocp_login_match.group(3)
 
         # Extract CAPI controller info
-        capi_match = re.search(r'CAPI controller deployed - ({[^}]+})', playbook_output)
+        capi_match = re.search(r"CAPI controller deployed - ({[^}]+})", playbook_output)
         if capi_match:
-            env_info['capi_controller'] = capi_match.group(1)
+            env_info["capi_controller"] = capi_match.group(1)
 
         # Extract CAPA controller info
-        capa_match = re.search(r'CAPA controller deployed - ({[^}]+})', playbook_output)
+        capa_match = re.search(r"CAPA controller deployed - ({[^}]+})", playbook_output)
         if capa_match:
-            env_info['capa_controller'] = capa_match.group(1)
+            env_info["capa_controller"] = capa_match.group(1)
 
         # Check for RosaNetwork resources
-        if 'RosaNetwork resources found' in playbook_output or 'No RosaNetwork resources found' in playbook_output:
-            if 'No RosaNetwork resources found' in playbook_output:
-                env_info['rosa_network'] = 'none'
+        if (
+            "RosaNetwork resources found" in playbook_output
+            or "No RosaNetwork resources found" in playbook_output
+        ):
+            if "No RosaNetwork resources found" in playbook_output:
+                env_info["rosa_network"] = "none"
             else:
-                env_info['rosa_network'] = 'available'
+                env_info["rosa_network"] = "available"
 
         # Check for RosaRoleConfig (note: might be ROSARoleConfig in some outputs)
-        if 'rosa-creds-secret found' in playbook_output:
-            env_info['rosa_role_config'] = 'available'
-        elif 'rosa-creds-secret not found' in playbook_output:
-            env_info['rosa_role_config'] = 'none'
+        if "rosa-creds-secret found" in playbook_output:
+            env_info["rosa_role_config"] = "available"
+        elif "rosa-creds-secret not found" in playbook_output:
+            env_info["rosa_role_config"] = "none"
 
         return env_info
 
     def _generate_html_report(self) -> str:
         """Generate HTML test report."""
-        passed_pct = (self.results["passed"] / max(self.results["total_tests"], 1)) * 100
+        passed_pct = (
+            self.results["passed"] / max(self.results["total_tests"], 1)
+        ) * 100
 
         # Extract environment info from first successful playbook
         env_info = {}
@@ -860,43 +967,43 @@ class TestSuiteRunner:
         <div class="env-info">
             <h2>🔧 Environment Information</h2>
 """
-            if 'ocp_api_url' in env_info:
+            if "ocp_api_url" in env_info:
                 html += f"""
             <div class="env-item">
                 <span class="env-label">OpenShift API:</span>
                 <span class="env-value">{env_info['ocp_api_url']}</span>
             </div>
 """
-            if 'ocp_user' in env_info:
+            if "ocp_user" in env_info:
                 html += f"""
             <div class="env-item">
                 <span class="env-label">User:</span>
                 <span class="env-value">{env_info['ocp_user']}</span>
             </div>
 """
-            if 'ocp_context' in env_info:
+            if "ocp_context" in env_info:
                 html += f"""
             <div class="env-item">
                 <span class="env-label">Context:</span>
                 <span class="env-value">{env_info['ocp_context']}</span>
             </div>
 """
-            if 'capi_controller' in env_info:
-                html += f"""
+            if "capi_controller" in env_info:
+                html += """
             <div class="env-item">
                 <span class="env-label">CAPI Controller:</span>
                 <span class="env-value">✓ Deployed</span>
             </div>
 """
-            if 'capa_controller' in env_info:
-                html += f"""
+            if "capa_controller" in env_info:
+                html += """
             <div class="env-item">
                 <span class="env-label">CAPA Controller:</span>
                 <span class="env-value">✓ Deployed</span>
             </div>
 """
-            if 'rosa_network' in env_info:
-                if env_info['rosa_network'] == 'available':
+            if "rosa_network" in env_info:
+                if env_info["rosa_network"] == "available":
                     html += """
             <div class="env-item">
                 <span class="env-label">ROSANetwork CRD:</span>
@@ -910,8 +1017,8 @@ class TestSuiteRunner:
                 <span class="env-value">ℹ Not yet available</span>
             </div>
 """
-            if 'rosa_role_config' in env_info:
-                if env_info['rosa_role_config'] == 'available':
+            if "rosa_role_config" in env_info:
+                if env_info["rosa_role_config"] == "available":
                     html += """
             <div class="env-item">
                 <span class="env-label">ROSARoleConfig:</span>
@@ -1012,7 +1119,9 @@ class TestSuiteRunner:
             return None
         return data if isinstance(data, dict) else None
 
-    def _feature_testcases(self, playbook: Dict, feature_data: Optional[Dict]) -> Optional[List[Dict]]:
+    def _feature_testcases(
+        self, playbook: Dict, feature_data: Optional[Dict]
+    ) -> Optional[List[Dict]]:
         """Expand the feature-verification playbook into one testcase per feature.
 
         Returns None when expansion does not apply (different playbook, no
@@ -1046,16 +1155,20 @@ class TestSuiteRunner:
         # string "False", which is truthy — every CI build would then grow a
         # spurious ocm_reachability failure on a perfectly healthy run.
         if env.get("degraded") is True:
-            reason = str(env.get("degraded_reason")
-                         or "Verification ran without OCM; CRD side only").strip()
-            cases.append({
-                "classname": "FeatureVerification",
-                "name": "ocm_reachability",
-                "time": 0.0,
-                "outcome": "failed" if _in_ci() else "skipped",
-                "message": reason,
-                "text": reason,
-            })
+            reason = str(
+                env.get("degraded_reason")
+                or "Verification ran without OCM; CRD side only"
+            ).strip()
+            cases.append(
+                {
+                    "classname": "FeatureVerification",
+                    "name": "ocm_reachability",
+                    "time": 0.0,
+                    "outcome": "failed" if _in_ci() else "skipped",
+                    "message": reason,
+                    "text": reason,
+                }
+            )
 
         for index, feat in enumerate(features):
             if not isinstance(feat, dict):
@@ -1064,14 +1177,19 @@ class TestSuiteRunner:
             detail = feat.get("detail", "")
             if status == "failed":
                 outcome = "failed"
-                message = detail or "Feature was requested but not found in the cluster spec"
+                message = (
+                    detail or "Feature was requested but not found in the cluster spec"
+                )
             elif status == "warned":
                 # A warn means the installed CRD has no field for this feature —
                 # a platform limitation, not our bug. JUnit 'skipped' keeps the
                 # build green while still surfacing it per feature, which is
                 # exactly the distinction you need on a new OpenShift release.
                 outcome = "skipped"
-                message = detail or f"CRD has no field '{feat.get('field', '')}' — platform limitation"
+                message = (
+                    detail
+                    or f"CRD has no field '{feat.get('field', '')}' — platform limitation"
+                )
             elif status == "passed":
                 outcome, message = "passed", ""
             else:
@@ -1079,21 +1197,25 @@ class TestSuiteRunner:
                 # a green testcase is the wrong answer — the producing playbook
                 # and this file are edited independently.
                 outcome = "error"
-                message = (f"Unrecognised feature status {status!r} in "
-                           f"{FEATURE_VERIFICATION_FILE}")
+                message = (
+                    f"Unrecognised feature status {status!r} in "
+                    f"{FEATURE_VERIFICATION_FILE}"
+                )
 
-            cases.append({
-                # Stable classname so CI can trend one feature across builds.
-                "classname": "FeatureVerification",
-                "name": str(feat.get("id") or f"feature-{index}"),
-                # Per-feature timing is not measured. The real elapsed time stays
-                # on the enclosing <testsuite>; splitting it evenly across
-                # features would be a fabricated number.
-                "time": 0.0,
-                "outcome": outcome,
-                "message": message,
-                "text": message,
-            })
+            cases.append(
+                {
+                    # Stable classname so CI can trend one feature across builds.
+                    "classname": "FeatureVerification",
+                    "name": str(feat.get("id") or f"feature-{index}"),
+                    # Per-feature timing is not measured. The real elapsed time stays
+                    # on the enclosing <testsuite>; splitting it evenly across
+                    # features would be a fabricated number.
+                    "time": 0.0,
+                    "outcome": outcome,
+                    "message": message,
+                    "text": message,
+                }
+            )
         return cases
 
     def _junit_testcases(self, suite: Dict, feature_data: Optional[Dict]) -> List[Dict]:
@@ -1117,17 +1239,25 @@ class TestSuiteRunner:
                 if not playbook["success"]:
                     self._suite_output[suite["name"]] = playbook.get("output", "")
                     if not any(c["outcome"] in ("failed", "error") for c in expanded):
-                        cases.append({
-                            "classname": f"{suite['name']} {playbook['name']}",
-                            "name": f"{playbook['name']} (playbook exit)",
-                            "time": round(playbook["duration"], 3),
-                            "outcome": "error" if playbook.get("is_error") else "failed",
-                            "message": playbook.get(
-                                "error", "Playbook failed after writing per-feature results"),
-                            "text": (f"Playbook: {playbook['name']}\n"
-                                     f"Error: {playbook.get('error', 'Unknown error')}\n"
-                                     f"\nOutput:\n{playbook.get('output', '')}"),
-                        })
+                        cases.append(
+                            {
+                                "classname": f"{suite['name']} {playbook['name']}",
+                                "name": f"{playbook['name']} (playbook exit)",
+                                "time": round(playbook["duration"], 3),
+                                "outcome": (
+                                    "error" if playbook.get("is_error") else "failed"
+                                ),
+                                "message": playbook.get(
+                                    "error",
+                                    "Playbook failed after writing per-feature results",
+                                ),
+                                "text": (
+                                    f"Playbook: {playbook['name']}\n"
+                                    f"Error: {playbook.get('error', 'Unknown error')}\n"
+                                    f"\nOutput:\n{playbook.get('output', '')}"
+                                ),
+                            }
+                        )
                 continue
 
             test_case_id = playbook.get("test_case_id", "")
@@ -1148,14 +1278,16 @@ class TestSuiteRunner:
             else:
                 outcome, message, text = "passed", "", ""
 
-            cases.append({
-                "classname": f"{suite['name']} {name}",
-                "name": name,
-                "time": round(playbook["duration"], 3),
-                "outcome": outcome,
-                "message": message,
-                "text": text,
-            })
+            cases.append(
+                {
+                    "classname": f"{suite['name']} {name}",
+                    "name": name,
+                    "time": round(playbook["duration"], 3),
+                    "outcome": outcome,
+                    "message": message,
+                    "text": text,
+                }
+            )
         return cases
 
     @property
@@ -1188,71 +1320,81 @@ class TestSuiteRunner:
         def _tally(cases, outcome):
             return sum(1 for c in cases if c["outcome"] == outcome)
 
-        testsuites = ET.Element('testsuites')
-        testsuites.set('name', 'ROSA HCP Test Suite')
+        testsuites = ET.Element("testsuites")
+        testsuites.set("name", "ROSA HCP Test Suite")
         # Derive the test count from the testcases actually reported here, not
         # from self.results['total_tests'] — that counter is overwritten per
         # suite, so on a multi-suite run it would disagree with the totals.
-        testsuites.set('tests', str(len(all_cases)))
-        testsuites.set('failures', str(_tally(all_cases, 'failed')))
-        testsuites.set('errors', str(_tally(all_cases, 'error')))
-        testsuites.set('skipped', str(_tally(all_cases, 'skipped')))
-        testsuites.set('time', str(round(self.results['duration'], 3)))
+        testsuites.set("tests", str(len(all_cases)))
+        testsuites.set("failures", str(_tally(all_cases, "failed")))
+        testsuites.set("errors", str(_tally(all_cases, "error")))
+        testsuites.set("skipped", str(_tally(all_cases, "skipped")))
+        testsuites.set("time", str(round(self.results["duration"], 3)))
 
         for suite, cases in suite_cases:
-            testsuite = ET.SubElement(testsuites, 'testsuite')
-            testsuite.set('name', suite['name'])
-            testsuite.set('timestamp', suite['start_time'])
-            testsuite.set('tests', str(len(cases)))
-            testsuite.set('time', str(round(suite['duration'], 3)))
-            testsuite.set('failures', str(_tally(cases, 'failed')))
-            testsuite.set('errors', str(_tally(cases, 'error')))
-            testsuite.set('skipped', str(_tally(cases, 'skipped')))
+            testsuite = ET.SubElement(testsuites, "testsuite")
+            testsuite.set("name", suite["name"])
+            testsuite.set("timestamp", suite["start_time"])
+            testsuite.set("tests", str(len(cases)))
+            testsuite.set("time", str(round(suite["duration"], 3)))
+            testsuite.set("failures", str(_tally(cases, "failed")))
+            testsuite.set("errors", str(_tally(cases, "error")))
+            testsuite.set("skipped", str(_tally(cases, "skipped")))
 
             for case in cases:
-                testcase = ET.SubElement(testsuite, 'testcase')
-                testcase.set('name', case['name'])
-                testcase.set('classname', case['classname'])
-                testcase.set('time', str(case['time']))
+                testcase = ET.SubElement(testsuite, "testcase")
+                testcase.set("name", case["name"])
+                testcase.set("classname", case["classname"])
+                testcase.set("time", str(case["time"]))
 
-                if case['outcome'] in ('failed', 'error'):
-                    tag = 'error' if case['outcome'] == 'error' else 'failure'
+                if case["outcome"] in ("failed", "error"):
+                    tag = "error" if case["outcome"] == "error" else "failure"
                     elem = ET.SubElement(testcase, tag)
-                    elem.set('type', 'TestError' if tag == 'error' else 'TestFailure')
-                    elem.set('message', case['message'] or 'Test failed')
-                    elem.text = case['text']
-                elif case['outcome'] == 'skipped':
-                    skipped = ET.SubElement(testcase, 'skipped')
-                    if case['message']:
-                        skipped.set('message', case['message'])
+                    elem.set("type", "TestError" if tag == "error" else "TestFailure")
+                    elem.set("message", case["message"] or "Test failed")
+                    elem.text = case["text"]
+                elif case["outcome"] == "skipped":
+                    skipped = ET.SubElement(testcase, "skipped")
+                    if case["message"]:
+                        skipped.set("message", case["message"])
 
             # Attach the ansible log once per suite rather than per feature.
-            captured = self._suite_output.get(suite['name'])
+            captured = self._suite_output.get(suite["name"])
             if captured:
-                ET.SubElement(testsuite, 'system-out').text = captured
+                ET.SubElement(testsuite, "system-out").text = captured
 
         self._last_junit_counts = {
             "tests": len(all_cases),
-            "failures": _tally(all_cases, 'failed'),
-            "errors": _tally(all_cases, 'error'),
-            "skipped": _tally(all_cases, 'skipped'),
+            "failures": _tally(all_cases, "failed"),
+            "errors": _tally(all_cases, "error"),
+            "skipped": _tally(all_cases, "skipped"),
         }
 
         # Pretty print XML
-        xml_str = ET.tostring(testsuites, encoding='unicode')
+        xml_str = ET.tostring(testsuites, encoding="unicode")
         dom = minidom.parseString(xml_str)
-        return dom.toprettyxml(indent='  ')
+        return dom.toprettyxml(indent="  ")
 
     def _print_suite_header(self, suite_data: Dict):
         """Print formatted suite header."""
         print("\n" + "=" * 80)
         print(f"{Colors.BOLD}{Colors.HEADER}CAPA Test Suite Runner{Colors.ENDC}")
         print("=" * 80)
-        print(f"\n{Colors.BOLD}📋 Test Suite:{Colors.ENDC} {suite_data.get('name', 'Unknown')}")
-        print(f"{Colors.BOLD}📝 Description:{Colors.ENDC} {suite_data.get('description', '')}")
-        print(f"{Colors.BOLD}🏷️  Tags:{Colors.ENDC} {', '.join(suite_data.get('tags', []))}")
-        print(f"{Colors.BOLD}📦 Playbooks:{Colors.ENDC} {len(suite_data.get('playbooks', []))}")
-        print(f"{Colors.BOLD}⏰ Started:{Colors.ENDC} {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        print(
+            f"\n{Colors.BOLD}📋 Test Suite:{Colors.ENDC} {suite_data.get('name', 'Unknown')}"
+        )
+        print(
+            f"{Colors.BOLD}📝 Description:{Colors.ENDC} {suite_data.get('description', '')}"
+        )
+        print(
+            f"{Colors.BOLD}🏷️  Tags:{Colors.ENDC} {', '.join(suite_data.get('tags', []))}"
+        )
+        print(
+            f"{Colors.BOLD}📦 Playbooks:{Colors.ENDC} {len(suite_data.get('playbooks', []))}"
+        )
+        print(
+            f"{Colors.BOLD}⏰ Started:{Colors.ENDC} {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        )
         print("\n" + "-" * 80)
 
     def _print_suite_summary(self, suite_results: Dict):
@@ -1275,7 +1417,9 @@ class TestSuiteRunner:
         print(f"   Total Tests: {self.results['total_tests']}")
         print(f"   {Colors.GREEN}✓ Passed: {self.results['passed']}{Colors.ENDC}")
         print(f"   {Colors.RED}✗ Failed: {self.results['failed']}{Colors.ENDC}")
-        print(f"   ⏱️  Total Duration: {self._format_duration(self.results['duration'])}")
+        print(
+            f"   ⏱️  Total Duration: {self._format_duration(self.results['duration'])}"
+        )
 
         # Print AI Agent statistics if enabled
         if self.ai_agent_enabled and self.monitor_agent:
@@ -1283,18 +1427,22 @@ class TestSuiteRunner:
 
             monitor_stats = self.monitor_agent.get_statistics()
             print(f"   Issues Detected: {monitor_stats.get('patterns_detected', 0)}")
-            print(f"   Interventions: {monitor_stats.get('interventions_performed', 0)}")
+            print(
+                f"   Interventions: {monitor_stats.get('interventions_performed', 0)}"
+            )
 
             if self.remediation_agent:
                 success_rates = self.remediation_agent.get_success_rate()
                 if success_rates:
                     print(f"\n{Colors.CYAN}   Fix Success Rates:{Colors.ENDC}")
                     for fix_name, stats in success_rates.items():
-                        print(f"      {fix_name}: {stats['success_rate']} ({stats['successes']}/{stats['total_attempts']})")
+                        print(
+                            f"      {fix_name}: {stats['success_rate']} ({stats['successes']}/{stats['total_attempts']})"
+                        )
 
-                self.results['ai_agent_statistics'] = {
-                    'monitor_stats': monitor_stats,
-                    'fix_success_rates': success_rates
+                self.results["ai_agent_statistics"] = {
+                    "monitor_stats": monitor_stats,
+                    "fix_success_rates": success_rates,
                 }
 
             # Learning agent end-of-run summary
@@ -1302,11 +1450,17 @@ class TestSuiteRunner:
                 learning_summary = self.learning_agent.end_of_run_summary()
                 if learning_summary.get("session_outcomes", 0) > 0:
                     print(f"\n{Colors.CYAN}   Learning Agent:{Colors.ENDC}")
-                    print(f"      Outcomes recorded: {learning_summary['session_outcomes']}")
+                    print(
+                        f"      Outcomes recorded: {learning_summary['session_outcomes']}"
+                    )
                     if learning_summary.get("adjustments"):
                         for adj in learning_summary["adjustments"]:
-                            print(f"      Confidence adjusted: {adj['issue_type']} ({adj.get('reason', '')})")
-                self.results.setdefault('ai_agent_statistics', {})['learning_summary'] = learning_summary
+                            print(
+                                f"      Confidence adjusted: {adj['issue_type']} ({adj.get('reason', '')})"
+                            )
+                self.results.setdefault("ai_agent_statistics", {})[
+                    "learning_summary"
+                ] = learning_summary
 
         print("\n" + "=" * 80 + "\n")
 
@@ -1378,128 +1532,116 @@ Examples:
 
   List available test suites:
     ./run-test-suite.py --list
-        """
+        """,
     )
 
     parser.add_argument(
         "suite_id",
         nargs="?",
-        help="Test suite ID to execute (e.g., 02-basic-rosa-hcp-cluster-creation)"
+        help="Test suite ID to execute (e.g., 02-basic-rosa-hcp-cluster-creation)",
     )
 
-    parser.add_argument(
-        "--all",
-        action="store_true",
-        help="Run all test suites"
-    )
+    parser.add_argument("--all", action="store_true", help="Run all test suites")
+
+    parser.add_argument("--tag", type=str, help="Filter test suites by tag")
 
     parser.add_argument(
-        "--tag",
-        type=str,
-        help="Filter test suites by tag"
-    )
-
-    parser.add_argument(
-        "--list",
-        action="store_true",
-        help="List all available test suites"
+        "--list", action="store_true", help="List all available test suites"
     )
 
     parser.add_argument(
         "--format",
         choices=["json", "html", "junit", "all"],
         default="all",
-        help="Output format for test results: json, html, junit (JUnit XML), or all (default: all)"
+        help="Output format for test results: json, html, junit (JUnit XML), or all (default: all)",
     )
 
     parser.add_argument(
-        "--no-save",
-        action="store_true",
-        help="Don't save results to file"
+        "--no-save", action="store_true", help="Don't save results to file"
     )
 
     parser.add_argument(
-        "-e", "--extra-vars",
+        "-e",
+        "--extra-vars",
         action="append",
-        help="Extra variables in key=value format (can be used multiple times)"
+        help="Extra variables in key=value format (can be used multiple times)",
     )
 
     parser.add_argument(
-        "-v", "--verbose",
+        "-v",
+        "--verbose",
         action="count",
         default=0,
-        help="Increase verbosity (-v, -vv, -vvv, or -vvvv for maximum)"
+        help="Increase verbosity (-v, -vv, -vvv, or -vvvv for maximum)",
     )
 
     parser.add_argument(
         "--ai-agent",
         action="store_true",
-        help="Enable AI agent framework for autonomous issue detection and remediation"
+        help="Enable AI agent framework for autonomous issue detection and remediation",
     )
 
     parser.add_argument(
         "--ai-agent-dry-run",
         action="store_true",
-        help="Run AI agents in dry-run mode (detect and diagnose but don't apply fixes)"
+        help="Run AI agents in dry-run mode (detect and diagnose but don't apply fixes)",
     )
 
     parser.add_argument(
         "--feature",
         dest="features",
         action="append",
-        help="Enable a cluster feature (can be used multiple times, e.g., --feature no-cni --feature tags)"
+        help="Enable a cluster feature (can be used multiple times, e.g., --feature no-cni --feature tags)",
     )
 
     parser.add_argument(
         "--feature-group",
         type=str,
-        help="Enable a preset group of features (e.g., day1-combo)"
+        help="Enable a preset group of features (e.g., day1-combo)",
     )
 
     parser.add_argument(
         "--scenario",
         type=str,
         help="Run a named scenario end-to-end (features, inputs and stages all "
-             "come from the registry, e.g. --scenario day1-security)"
+        "come from the registry, e.g. --scenario day1-security)",
     )
 
     parser.add_argument(
         "--stages",
         type=str,
         help="Comma-separated subset of a scenario's stages to run "
-             "(e.g. --stages 20,21 to skip hub setup/teardown)"
+        "(e.g. --stages 20,21 to skip hub setup/teardown)",
     )
 
     parser.add_argument(
         "--list-scenarios",
         action="store_true",
-        help="List all available scenarios and the versions each can run on"
+        help="List all available scenarios and the versions each can run on",
     )
 
     parser.add_argument(
         "--list-features",
         action="store_true",
-        help="List all available cluster features"
+        help="List all available cluster features",
     )
 
     parser.add_argument(
-        "--list-groups",
-        action="store_true",
-        help="List all available feature groups"
+        "--list-groups", action="store_true", help="List all available feature groups"
     )
 
     parser.add_argument(
         "--ocp-version",
         type=str,
         default=None,
-        help="Filter features by OpenShift version (e.g., 4.20)"
+        help="Filter features by OpenShift version (e.g., 4.20)",
     )
 
     parser.add_argument(
         "--validate-only",
         action="store_true",
         help="Validate feature flags and inputs only (no ansible execution). "
-             "Exits 0 if valid, 1 if errors found."
+        "Exits 0 if valid, 1 if errors found.",
     )
 
     args = parser.parse_args()
@@ -1508,15 +1650,18 @@ Examples:
     extra_vars = {}
     if args.extra_vars:
         for var in args.extra_vars:
-            if '=' in var:
-                key, value = var.split('=', 1)
+            if "=" in var:
+                key, value = var.split("=", 1)
                 extra_vars[key] = value
             else:
-                print(f"{Colors.YELLOW}Warning: Ignoring invalid extra var format: {var}{Colors.ENDC}")
+                print(
+                    f"{Colors.YELLOW}Warning: Ignoring invalid extra var format: {var}{Colors.ENDC}"
+                )
 
     # Handle --list-features
     if args.list_features:
         from feature_manager import FeatureManager
+
         try:
             fm = FeatureManager(Path.cwd())
         except FileNotFoundError as e:
@@ -1532,7 +1677,9 @@ Examples:
             alias_str = f" (--feature {alias})" if alias else ""
             print(f"  {Colors.CYAN}{f['id']}{Colors.ENDC}{alias_str}")
             print(f"    {f['description']}")
-            print(f"    Type: {f['type']}  Default: {f['default']}  Phase: {f['phase']}")
+            print(
+                f"    Type: {f['type']}  Default: {f['default']}  Phase: {f['phase']}"
+            )
             if f.get("min_version"):
                 print(f"    Available from: OpenShift {f['min_version']}")
             print()
@@ -1541,6 +1688,7 @@ Examples:
     # Handle --list-groups
     if args.list_groups:
         from feature_manager import FeatureManager
+
         try:
             fm = FeatureManager(Path.cwd())
         except FileNotFoundError as e:
@@ -1550,7 +1698,11 @@ Examples:
         print(f"\n{Colors.BOLD}Available Feature Groups:{Colors.ENDC}\n")
         for g in groups:
             features = g["features"]
-            feat_str = ", ".join(features) if features else "(default provisioning — no extra features)"
+            feat_str = (
+                ", ".join(features)
+                if features
+                else "(default provisioning — no extra features)"
+            )
             print(f"  {Colors.CYAN}{g['name']}{Colors.ENDC}")
             print(f"    {g['description']}")
             print(f"    Features: {feat_str}")
@@ -1560,6 +1712,7 @@ Examples:
     # Handle --list-scenarios
     if args.list_scenarios:
         from feature_manager import FeatureManager
+
         try:
             fm = FeatureManager(Path.cwd())
         except FileNotFoundError as e:
@@ -1575,12 +1728,16 @@ Examples:
             if s.get("estimated_minutes"):
                 print(f"    Runtime:  ~{s['estimated_minutes']} minutes")
             print()
-        print("  Run one with: ./run-test-suite.py --scenario <name> "
-              "-e openshift_version=<version>\n")
+        print(
+            "  Run one with: ./run-test-suite.py --scenario <name> "
+            "-e openshift_version=<version>\n"
+        )
         return 0
 
     if args.stages and not args.scenario:
-        print(f"{Colors.RED}Error: --stages only applies to --scenario runs{Colors.ENDC}")
+        print(
+            f"{Colors.RED}Error: --stages only applies to --scenario runs{Colors.ENDC}"
+        )
         return 1
 
     # Expand --scenario into features, extra vars and a stage list
@@ -1588,6 +1745,7 @@ Examples:
     scenario_extra_vars = {}
     if args.scenario:
         from feature_manager import FeatureManager, ScenarioError
+
         try:
             fm = FeatureManager(Path.cwd())
         except FileNotFoundError as e:
@@ -1595,12 +1753,16 @@ Examples:
             return 1
 
         # Version comes from -e, then --ocp-version, then vars.yml.
-        version = (extra_vars.get("openshift_version")
-                   or args.ocp_version
-                   or _default_openshift_version())
+        version = (
+            extra_vars.get("openshift_version")
+            or args.ocp_version
+            or _default_openshift_version()
+        )
         if not version:
-            print(f"{Colors.RED}Error: could not determine an OpenShift version. "
-                  f"Pass -e openshift_version=<version>{Colors.ENDC}")
+            print(
+                f"{Colors.RED}Error: could not determine an OpenShift version. "
+                f"Pass -e openshift_version=<version>{Colors.ENDC}"
+            )
             return 1
 
         try:
@@ -1621,8 +1783,10 @@ Examples:
         # exact build is an explicit choice and is always honoured.
         pinned = scenario_extra_vars.get("openshift_version")
         if pinned and version == _major_minor(version):
-            print(f"{Colors.CYAN}Scenario pins OpenShift {version} → {pinned} "
-                  f"(OCM cannot resolve a bare {version}){Colors.ENDC}")
+            print(
+                f"{Colors.CYAN}Scenario pins OpenShift {version} → {pinned} "
+                f"(OCM cannot resolve a bare {version}){Colors.ENDC}"
+            )
             version = pinned
             if "openshift_version" in extra_vars:
                 extra_vars["openshift_version"] = pinned
@@ -1656,28 +1820,39 @@ Examples:
         if args.stages:
             wanted = [s.strip() for s in args.stages.split(",") if s.strip()]
             selected = [
-                st for st in scenario["stages"]
-                if any(st["suite"] == w or st["suite"].startswith(f"{w}-") for w in wanted)
+                st
+                for st in scenario["stages"]
+                if any(
+                    st["suite"] == w or st["suite"].startswith(f"{w}-") for w in wanted
+                )
             ]
             unmatched = [
-                w for w in wanted
-                if not any(st["suite"] == w or st["suite"].startswith(f"{w}-")
-                           for st in scenario["stages"])
+                w
+                for w in wanted
+                if not any(
+                    st["suite"] == w or st["suite"].startswith(f"{w}-")
+                    for st in scenario["stages"]
+                )
             ]
             if unmatched:
                 available = ", ".join(st["suite"] for st in scenario["stages"])
-                print(f"{Colors.RED}Error: --stages entries not in scenario "
-                      f"'{args.scenario}': {', '.join(unmatched)}. "
-                      f"Available: {available}{Colors.ENDC}")
+                print(
+                    f"{Colors.RED}Error: --stages entries not in scenario "
+                    f"'{args.scenario}': {', '.join(unmatched)}. "
+                    f"Available: {available}{Colors.ENDC}"
+                )
                 return 1
             scenario["stages"] = selected
 
-        print(f"\n{Colors.CYAN}Scenario '{args.scenario}' on OpenShift {version}: "
-              f"{', '.join(scenario['features'])}{Colors.ENDC}")
+        print(
+            f"\n{Colors.CYAN}Scenario '{args.scenario}' on OpenShift {version}: "
+            f"{', '.join(scenario['features'])}{Colors.ENDC}"
+        )
 
     # Expand --feature-group into --feature flags
     if args.feature_group:
         from feature_manager import FeatureManager
+
         try:
             fm = FeatureManager(Path.cwd())
         except FileNotFoundError as e:
@@ -1686,20 +1861,27 @@ Examples:
         group_features = fm.resolve_group(args.feature_group)
         if group_features is None:
             available = ", ".join(g["name"] for g in fm.list_groups())
-            print(f"{Colors.RED}Unknown feature group: '{args.feature_group}'. Available: {available}{Colors.ENDC}")
+            print(
+                f"{Colors.RED}Unknown feature group: '{args.feature_group}'. Available: {available}{Colors.ENDC}"
+            )
             return 1
         if group_features:
             if args.features is None:
                 args.features = []
             args.features.extend(group_features)
             args.features = list(dict.fromkeys(args.features))
-            print(f"\n{Colors.CYAN}Feature group '{args.feature_group}': {', '.join(group_features)}{Colors.ENDC}")
+            print(
+                f"\n{Colors.CYAN}Feature group '{args.feature_group}': {', '.join(group_features)}{Colors.ENDC}"
+            )
         else:
-            print(f"\n{Colors.CYAN}Feature group '{args.feature_group}': using default provisioning{Colors.ENDC}")
+            print(
+                f"\n{Colors.CYAN}Feature group '{args.feature_group}': using default provisioning{Colors.ENDC}"
+            )
 
     # Process --feature flags into extra_vars
     if args.features:
         from feature_manager import FeatureManager
+
         try:
             fm = FeatureManager(Path.cwd())
         except FileNotFoundError as e:
@@ -1710,9 +1892,11 @@ Examples:
         resolved = fm.auto_resolve_deps(resolved)
 
         # Read default version from vars.yml if not specified via -e
-        version = (extra_vars.get("openshift_version")
-                   or scenario_extra_vars.get("openshift_version")
-                   or _default_openshift_version("4.21"))
+        version = (
+            extra_vars.get("openshift_version")
+            or scenario_extra_vars.get("openshift_version")
+            or _default_openshift_version("4.21")
+        )
         errors = fm.validate_features(resolved, version)
         if errors:
             for error_msg in errors:
@@ -1728,16 +1912,22 @@ Examples:
         for warn in input_warnings:
             print(f"{Colors.YELLOW}Warning: {warn}{Colors.ENDC}")
         if input_warnings and _in_ci():
-            print(f"{Colors.RED}Error: Required feature inputs missing in CI mode{Colors.ENDC}")
+            print(
+                f"{Colors.RED}Error: Required feature inputs missing in CI mode{Colors.ENDC}"
+            )
             return 1
 
         # Precedence: feature defaults < scenario (incl. version overrides) < CLI -e
         extra_vars = {**feature_vars, **scenario_extra_vars, **extra_vars}
 
-        print(f"\n{Colors.CYAN}Features enabled: {', '.join(args.features)}{Colors.ENDC}")
+        print(
+            f"\n{Colors.CYAN}Features enabled: {', '.join(args.features)}{Colors.ENDC}"
+        )
         if set(resolved) != set(fm.resolve_alias(f) for f in args.features):
             auto_added = set(resolved) - set(fm.resolve_alias(f) for f in args.features)
-            print(f"{Colors.CYAN}Auto-added dependencies: {', '.join(auto_added)}{Colors.ENDC}")
+            print(
+                f"{Colors.CYAN}Auto-added dependencies: {', '.join(auto_added)}{Colors.ENDC}"
+            )
         print()
 
     # A featureless scenario skips the merge above, so apply its vars here.
@@ -1747,7 +1937,9 @@ Examples:
     # --validate-only: exit after feature validation without running ansible
     if args.validate_only:
         if scenario:
-            print(f"{Colors.GREEN}Scenario '{scenario['name']}' validation PASSED{Colors.ENDC}")
+            print(
+                f"{Colors.GREEN}Scenario '{scenario['name']}' validation PASSED{Colors.ENDC}"
+            )
             print(f"  Stages: {' → '.join(s['suite'] for s in scenario['stages'])}")
             print("  Resolved extra vars:")
             for key in sorted(extra_vars):
@@ -1763,7 +1955,7 @@ Examples:
         extra_vars=extra_vars,
         verbosity=args.verbose,
         ai_agent_enabled=args.ai_agent,
-        ai_agent_dry_run=args.ai_agent_dry_run
+        ai_agent_dry_run=args.ai_agent_dry_run,
     )
 
     # List suites if requested
@@ -1781,8 +1973,10 @@ Examples:
     # Validate arguments
     if not args.suite_id and not args.all and not args.tag and not scenario:
         parser.print_help()
-        print(f"\n{Colors.RED}Error: Please specify a suite ID, --scenario <name>, "
-              f"--all, or --tag <tag>{Colors.ENDC}")
+        print(
+            f"\n{Colors.RED}Error: Please specify a suite ID, --scenario <name>, "
+            f"--all, or --tag <tag>{Colors.ENDC}"
+        )
         return 1
 
     # Track overall execution time
@@ -1809,20 +2003,20 @@ Examples:
     runner.results["duration"] = time.time() - start_time
 
     # Print final summary
-    runner._print_final_summary()
+    runner._print_final_summary()  # pylint: disable=protected-access
 
     # Save results
     if not args.no_save:
         if args.format in ["json", "all"]:
-            json_file = runner.save_results(format="json")
+            json_file = runner.save_results(output_format="json")
             print(f"{Colors.CYAN}📄 JSON results: {json_file}{Colors.ENDC}")
 
         if args.format in ["html", "all"]:
-            html_file = runner.save_results(format="html")
+            html_file = runner.save_results(output_format="html")
             print(f"{Colors.CYAN}📄 HTML report: {html_file}{Colors.ENDC}")
 
         if args.format in ["junit", "all"]:
-            junit_file = runner.save_results(format="junit")
+            junit_file = runner.save_results(output_format="junit")
             print(f"{Colors.CYAN}📄 JUnit XML: {junit_file}{Colors.ENDC}")
             # Log the XML path and its computed counts so a build flipped to
             # UNSTABLE by the junit step can be traced back to the exact

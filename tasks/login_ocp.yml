@@ -1,5 +1,6 @@
+---
 - name: Validate OCP credentials are configured
-  fail:
+  ansible.builtin.fail:
     msg: |
       ❌ CREDENTIAL CONFIGURATION ERROR ❌
 
@@ -41,7 +42,7 @@
 
 - name: Attempt OCP login
   no_log: true
-  shell: |
+  ansible.builtin.shell: |
     oc login -u {{ ocp_user }} -p {{ ocp_password }} -s {{ api_url }} \
       {% if ocp_ca_bundle is defined and ocp_ca_bundle %}--certificate-authority={{ ocp_ca_bundle }}{% else %}--insecure-skip-tls-verify{% endif %}
   register: ocp_login_result
@@ -49,7 +50,7 @@
   changed_when: ocp_login_result.rc == 0
 
 - name: Check for authentication failure (401 Unauthorized)
-  fail:
+  ansible.builtin.fail:
     msg: |
       ❌ AUTHENTICATION FAILED ❌
 
@@ -95,7 +96,7 @@
      'Login failed' in ocp_login_result.stdout)
 
 - name: Check for other login failures
-  fail:
+  ansible.builtin.fail:
     msg: |
       ❌ OPENSHIFT LOGIN FAILED ❌
 
@@ -122,14 +123,14 @@
   when: ocp_login_result.rc != 0
 
 - name: Store OCP context name
-  shell: oc config current-context
+  ansible.builtin.command: oc config current-context
   register: ocp_context_result
   changed_when: false
 
 - name: Set OCP context as fact
-  set_fact:
+  ansible.builtin.set_fact:
     ocp_context: "{{ ocp_context_result.stdout }}"
 
 - name: Print OCP login Information
-  debug:
+  ansible.builtin.debug:
     msg: "✅ Successfully logged in - User: {{ ocp_user }} | API: {{ api_url }} | Context: {{ ocp_context }}"

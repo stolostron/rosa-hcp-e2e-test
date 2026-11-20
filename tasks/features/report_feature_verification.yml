@@ -10,7 +10,7 @@
 
 - name: Feature verification summary
   ansible.builtin.debug:
-    msg: |
+    msg: |2
 
       ═══════════════════════════════════════════════════════════════
       FEATURE FLAG VERIFICATION SUMMARY
@@ -166,12 +166,8 @@
       # One dict expression, not four scalars: Ansible leaves a templated
       # scalar as a string ("4"), but preserves native ints inside a
       # structure, so `jq .totals.failed > 0` works on the artifact.
-      totals: "{{ {
-                'requested': requested_features_list | length,
-                'passed': results_passed | length,
-                'warned': results_warned | length,
-                'failed': results_failed | length
-              } }}"
+      totals: "{{ {'requested': requested_features_list | length, 'passed': results_passed | length, 'warned': results_warned | length, 'failed': results_failed |
+        length} }}"
       features: "{{ feature_results | default([]) }}"
       crd_field_map: "{{ crd_field_map }}"
       resources:
@@ -181,14 +177,9 @@
           spec: "{{ (rnet | default({})).spec | default({}) }}"
           status: "{{ (rnet | default({})).status | default({}) }}"
         # OCM returns a very large object; keep only what the checks read.
-        OCM: "{{ {
-                'domain_prefix': ocm_cluster.domain_prefix | default(''),
-                'state': ocm_cluster.state | default(''),
-                'region': ocm_cluster.region | default({}),
-                'version': ocm_cluster.version | default({}),
-                'nodes': ocm_cluster.nodes | default({}),
-                'aws_tags': (ocm_cluster.aws | default({})).tags | default({})
-              } if (ocm_available | default(false)) else {} }}"
+        OCM: "{{ {'domain_prefix': ocm_cluster.domain_prefix | default(''), 'state': ocm_cluster.state | default(''), 'region': ocm_cluster.region | default({}),
+          'version': ocm_cluster.version | default({}), 'nodes': ocm_cluster.nodes | default({}), 'aws_tags': (ocm_cluster.aws | default({})).tags | default({})}
+          if (ocm_available | default(false)) else {} }}"
 
 - name: Write feature verification artifact
   ansible.builtin.copy:
