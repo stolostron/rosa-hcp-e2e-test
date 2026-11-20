@@ -621,7 +621,7 @@ def test_deletion_task_final_check_pattern():
             f"{final_task} should come after {wait_task}"
 
         # Verify the final check has a retry loop (shell for loop)
-        shell_cmd = final_t.get("shell", "")
+        shell_cmd = final_t.get("ansible.builtin.shell", final_t.get("shell", ""))
         has_shell_loop = "for " in shell_cmd and "seq" in shell_cmd
         assert has_shell_loop, \
             f"{final_task} should have a shell retry loop"

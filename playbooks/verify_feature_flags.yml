@@ -20,24 +20,24 @@
     results_failed: []
     results_warned: []
     crd_field_map:
-      no_cni: {crd: "rosacontrolplanes.controlplane.cluster.x-k8s.io", field: "network.networkType"}
-      byon: {crd: "rosacontrolplanes.controlplane.cluster.x-k8s.io", field: "subnets"}
-      private_network: {crd: "rosacontrolplanes.controlplane.cluster.x-k8s.io", field: "endpointAccess"}
-      external_oidc: {crd: "rosacontrolplanes.controlplane.cluster.x-k8s.io", field: "enableExternalAuthProviders"}
-      fips: {crd: "rosacontrolplanes.controlplane.cluster.x-k8s.io", field: "fips"}
-      etcd_kms: {crd: "rosacontrolplanes.controlplane.cluster.x-k8s.io", field: "etcdEncryptionKMSARN"}
-      cluster_autoscaler_expander: {crd: "rosacontrolplanes.controlplane.cluster.x-k8s.io", field: "autoscaler"}
-      image_registry: {crd: "rosacontrolplanes.controlplane.cluster.x-k8s.io", field: "clusterRegistryConfig"}
-      disk_size: {crd: "rosamachinepools.infrastructure.cluster.x-k8s.io", field: "volumeSize"}
-      parallel_upgrade: {crd: "rosamachinepools.infrastructure.cluster.x-k8s.io", field: "updateConfig"}
-      security_groups: {crd: "rosamachinepools.infrastructure.cluster.x-k8s.io", field: "additionalSecurityGroups"}
-      audit_logging: {crd: "rosacontrolplanes.controlplane.cluster.x-k8s.io", field: "cloudWatchlogForwarder"}
-      proxy_enabled: {crd: "rosacontrolplanes.controlplane.cluster.x-k8s.io", field: "proxy"}
-      default_autoscaling: {crd: "rosacontrolplanes.controlplane.cluster.x-k8s.io", field: "defaultMachinePoolSpec"}
-      domain_prefix: {crd: "rosacontrolplanes.controlplane.cluster.x-k8s.io", field: "domainPrefix"}
-      channel_group: {crd: "rosacontrolplanes.controlplane.cluster.x-k8s.io", field: "channelGroup"}
-      additional_tags: {crd: "rosacontrolplanes.controlplane.cluster.x-k8s.io", field: "additionalTags"}
-      availability_zones: {crd: "rosanetworks.infrastructure.cluster.x-k8s.io", field: "availabilityZones"}
+      no_cni: { crd: "rosacontrolplanes.controlplane.cluster.x-k8s.io", field: "network.networkType" }
+      byon: { crd: "rosacontrolplanes.controlplane.cluster.x-k8s.io", field: "subnets" }
+      private_network: { crd: "rosacontrolplanes.controlplane.cluster.x-k8s.io", field: "endpointAccess" }
+      external_oidc: { crd: "rosacontrolplanes.controlplane.cluster.x-k8s.io", field: "enableExternalAuthProviders" }
+      fips: { crd: "rosacontrolplanes.controlplane.cluster.x-k8s.io", field: "fips" }
+      etcd_kms: { crd: "rosacontrolplanes.controlplane.cluster.x-k8s.io", field: "etcdEncryptionKMSARN" }
+      cluster_autoscaler_expander: { crd: "rosacontrolplanes.controlplane.cluster.x-k8s.io", field: "autoscaler" }
+      image_registry: { crd: "rosacontrolplanes.controlplane.cluster.x-k8s.io", field: "clusterRegistryConfig" }
+      disk_size: { crd: "rosamachinepools.infrastructure.cluster.x-k8s.io", field: "volumeSize" }
+      parallel_upgrade: { crd: "rosamachinepools.infrastructure.cluster.x-k8s.io", field: "updateConfig" }
+      security_groups: { crd: "rosamachinepools.infrastructure.cluster.x-k8s.io", field: "additionalSecurityGroups" }
+      audit_logging: { crd: "rosacontrolplanes.controlplane.cluster.x-k8s.io", field: "cloudWatchlogForwarder" }
+      proxy_enabled: { crd: "rosacontrolplanes.controlplane.cluster.x-k8s.io", field: "proxy" }
+      default_autoscaling: { crd: "rosacontrolplanes.controlplane.cluster.x-k8s.io", field: "defaultMachinePoolSpec" }
+      domain_prefix: { crd: "rosacontrolplanes.controlplane.cluster.x-k8s.io", field: "domainPrefix" }
+      channel_group: { crd: "rosacontrolplanes.controlplane.cluster.x-k8s.io", field: "channelGroup" }
+      additional_tags: { crd: "rosacontrolplanes.controlplane.cluster.x-k8s.io", field: "additionalTags" }
+      availability_zones: { crd: "rosanetworks.infrastructure.cluster.x-k8s.io", field: "availabilityZones" }
 
   tasks:
     # ================================================================

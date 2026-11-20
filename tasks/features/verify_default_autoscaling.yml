@@ -15,7 +15,8 @@
           - ocm_cluster.nodes.autoscale_compute.min_replicas | int >= expected_min | int
           - ocm_cluster.nodes.autoscale_compute.max_replicas | int >= ocm_cluster.nodes.autoscale_compute.min_replicas | int
         fail_msg: "FAIL: OCM autoscale_compute not configured or range invalid"
-        success_msg: "PASS: OCM confirms autoscaling enabled (min={{ ocm_cluster.nodes.autoscale_compute.min_replicas }}, max={{ ocm_cluster.nodes.autoscale_compute.max_replicas }})"
+        success_msg: "PASS: OCM confirms autoscaling enabled (min={{ ocm_cluster.nodes.autoscale_compute.min_replicas }}, max={{ ocm_cluster.nodes.autoscale_compute.max_replicas
+          }})"
       when: ocm_available
 
     - name: Assert autoscaling via CRD
@@ -70,10 +71,12 @@
           requested min={{ expected_min }}, max={{ expected_max }}
       when: ocm_available
 
-    - ansible.builtin.set_fact:
+    - name: Count this feature as passed
+      ansible.builtin.set_fact:
         features_passed: "{{ features_passed | int + 1 }}"
   rescue:
-    - ansible.builtin.include_tasks: "{{ playbook_dir }}/../tasks/verify_feature_rescue.yml"
+    - name: Record the feature failure
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../tasks/verify_feature_rescue.yml"
       vars:
         feature_id: default_autoscaling
         fail_detail: "autoscaling not configured or min/max do not match expected"

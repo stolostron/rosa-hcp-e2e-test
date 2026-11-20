@@ -3,14 +3,14 @@
 # Monitors ROSARoleConfig status and AWS resource creation
 
 - name: Set wait variables
-  set_fact:
+  ansible.builtin.set_fact:
     rosa_role_config_name: "{{ rosa_role_config_name | default(cluster_name + '-roles') }}"
     max_wait_time: "{{ rosa_roles_wait_timeout | default(1800) }}"  # 30 minutes default
-    poll_interval: "{{ rosa_roles_poll_interval | default(30) }}"   # 30 seconds default
+    poll_interval: "{{ rosa_roles_poll_interval | default(30) }}"  # 30 seconds default
     start_time: "{{ ansible_date_time.epoch | int }}"
 
 - name: Display wait configuration
-  debug:
+  ansible.builtin.debug:
     msg: |
       Waiting for ROSARoleConfig: {{ rosa_role_config_name }}
       - Namespace: {{ rosa_hcp_namespace }}
@@ -19,10 +19,11 @@
       - Start time: {{ ansible_date_time.iso8601 }}
 
 - name: Wait for ROSARoleConfig to exist
-  shell: |
+  ansible.builtin.shell: |
     oc get rosaroleconfig {{ rosa_role_config_name }} -n {{ rosa_hcp_namespace }} -o json 2>/dev/null || echo '{"items":[]}'
   register: rosa_role_config_check
-  until: (rosa_role_config_check.stdout if rosa_role_config_check.stdout is mapping else (rosa_role_config_check.stdout | from_json)).metadata.name | default('') != ''
+  until: (rosa_role_config_check.stdout if rosa_role_config_check.stdout is mapping else (rosa_role_config_check.stdout | from_json)).metadata.name |
+    default('') != ''
   retries: 20
   delay: 15
   changed_when: false
@@ -30,17 +31,18 @@
 - name: Monitor ROSARoleConfig status until ready
   block:
     - name: Wait for ROSARoleConfig to be ready
-      shell: |
+      ansible.builtin.shell: |
         oc get rosaroleconfig {{ rosa_role_config_name }} -n {{ rosa_hcp_namespace }} -o json 2>/dev/null || echo '{}'
       register: rosa_role_config_status
       until:
-        - ((rosa_role_config_status.stdout if rosa_role_config_status.stdout is mapping else (rosa_role_config_status.stdout | from_json)).status.conditions | default([]) | selectattr('type', 'equalto', 'Ready') | selectattr('status', 'equalto', 'True') | list | length) > 0
+        - ((rosa_role_config_status.stdout if rosa_role_config_status.stdout is mapping else (rosa_role_config_status.stdout | from_json)).status.conditions |
+          default([]) | selectattr('type', 'equalto', 'Ready') | selectattr('status', 'equalto', 'True') | list | length) > 0
       retries: "{{ (max_wait_time | int / poll_interval | int) | int }}"
       delay: "{{ poll_interval | int }}"
       changed_when: false
 
     - name: Set successful completion facts
-      set_fact:
+      ansible.builtin.set_fact:
         rosa_roles_ready: true
         rosa_role_config_resource: "{{ rosa_role_config_status.stdout | from_json }}"
         current_time: "{{ ansible_date_time.epoch | int }}"
@@ -48,33 +50,36 @@
 
   rescue:
     - name: Handle timeout or failure
-      debug:
+      ansible.builtin.debug:
         msg: |
           ROSARoleConfig did not become ready within the timeout period.
           Investigating current status...
 
     - name: Get current ROSARoleConfig status for debugging
-      shell: |
+      ansible.builtin.shell: |
         oc get rosaroleconfig {{ rosa_role_config_name }} -n {{ rosa_hcp_namespace }} -o json 2>/dev/null || echo '{"items":[]}'
       register: failed_rosa_role_config_status_raw
       failed_when: false
       changed_when: false
 
     - name: Parse ROSARoleConfig status for debugging
-      set_fact:
+      ansible.builtin.set_fact:
         failed_rosa_role_config_status:
           resources:
-            - "{{ failed_rosa_role_config_status_raw.stdout if failed_rosa_role_config_status_raw.stdout is mapping else (failed_rosa_role_config_status_raw.stdout | from_json) }}"
-      when: (failed_rosa_role_config_status_raw.stdout if failed_rosa_role_config_status_raw.stdout is mapping else (failed_rosa_role_config_status_raw.stdout | from_json)).metadata.name | default('') != ''
+            - "{{ failed_rosa_role_config_status_raw.stdout if failed_rosa_role_config_status_raw.stdout is mapping else (failed_rosa_role_config_status_raw.stdout
+              | from_json) }}"
+      when: (failed_rosa_role_config_status_raw.stdout if failed_rosa_role_config_status_raw.stdout is mapping else (failed_rosa_role_config_status_raw.stdout |
+        from_json)).metadata.name | default('') != ''
 
     - name: Set empty resources if not found
-      set_fact:
+      ansible.builtin.set_fact:
         failed_rosa_role_config_status:
           resources: []
-      when: (failed_rosa_role_config_status_raw.stdout if failed_rosa_role_config_status_raw.stdout is mapping else (failed_rosa_role_config_status_raw.stdout | from_json)).metadata.name | default('') == ''
+      when: (failed_rosa_role_config_status_raw.stdout if failed_rosa_role_config_status_raw.stdout is mapping else (failed_rosa_role_config_status_raw.stdout |
+        from_json)).metadata.name | default('') == ''
 
     - name: Display current status and conditions
-      debug:
+      ansible.builtin.debug:
         msg: |
           Current ROSARoleConfig Status:
           {% if failed_rosa_role_config_status.resources | default([]) | length > 0 %}
@@ -103,19 +108,19 @@
           {% endif %}
 
     - name: Get related events for debugging
-      shell: |
+      ansible.builtin.shell: |
         oc get events -n {{ rosa_hcp_namespace }} --field-selector involvedObject.name={{ rosa_role_config_name }},involvedObject.kind=ROSARoleConfig -o json 2>/dev/null || echo '{"items":[]}'
       register: rosa_role_config_events_raw
       failed_when: false
       changed_when: false
 
     - name: Parse events for debugging
-      set_fact:
+      ansible.builtin.set_fact:
         rosa_role_config_events:
           resources: "{{ (rosa_role_config_events_raw.stdout | from_json).items | default([]) }}"
 
     - name: Display recent events
-      debug:
+      ansible.builtin.debug:
         msg: |
           Recent Events for ROSARoleConfig {{ rosa_role_config_name }}:
           {% for event in rosa_role_config_events.resources | default([]) | sort(attribute='firstTimestamp') | reverse %}
@@ -126,27 +131,29 @@
       when: rosa_role_config_events.resources | default([]) | length > 0
 
     - name: Check CAPA controller status
-      shell: |
+      ansible.builtin.shell: |
         oc get deployment capa-controller-manager -n {{ capa_namespace }} -o json 2>/dev/null || echo '{"items":[]}'
       register: capa_controller_status_raw
       failed_when: false
       changed_when: false
 
     - name: Parse CAPA controller status
-      set_fact:
+      ansible.builtin.set_fact:
         capa_controller_status:
           resources:
             - "{{ capa_controller_status_raw.stdout if capa_controller_status_raw.stdout is mapping else (capa_controller_status_raw.stdout | from_json) }}"
-      when: (capa_controller_status_raw.stdout if capa_controller_status_raw.stdout is mapping else (capa_controller_status_raw.stdout | from_json)).metadata.name | default('') != ''
+      when: (capa_controller_status_raw.stdout if capa_controller_status_raw.stdout is mapping else (capa_controller_status_raw.stdout |
+        from_json)).metadata.name | default('') != ''
 
     - name: Set empty CAPA controller status if not found
-      set_fact:
+      ansible.builtin.set_fact:
         capa_controller_status:
           resources: []
-      when: (capa_controller_status_raw.stdout if capa_controller_status_raw.stdout is mapping else (capa_controller_status_raw.stdout | from_json)).metadata.name | default('') == ''
+      when: (capa_controller_status_raw.stdout if capa_controller_status_raw.stdout is mapping else (capa_controller_status_raw.stdout |
+        from_json)).metadata.name | default('') == ''
 
     - name: Display CAPA controller information
-      debug:
+      ansible.builtin.debug:
         msg: |
           CAPA Controller Status:
           {% if capa_controller_status.resources | default([]) | length > 0 %}
@@ -162,14 +169,14 @@
           {% endif %}
 
     - name: Set failure facts
-      set_fact:
+      ansible.builtin.set_fact:
         rosa_roles_ready: false
         rosa_roles_wait_failed: true
         current_time: "{{ ansible_date_time.epoch | int }}"
         wait_duration: "{{ (ansible_date_time.epoch | int) - (start_time | int) }}"
 
     - name: Save failure diagnostics to artifact directory
-      shell: |
+      ansible.builtin.shell: |
         ARTIFACT_BASE="{{ lookup('env', 'ARTIFACT_DIR') }}"
         DIAG_DIR="${ARTIFACT_BASE:-{{ output_dir | default('/tmp') }}/diagnostics}"
         mkdir -p "$DIAG_DIR"
@@ -201,11 +208,11 @@
       changed_when: false
 
     - name: Display diagnostic file location
-      debug:
+      ansible.builtin.debug:
         msg: "{{ wait_diag_capture.stdout | default('Diagnostics capture failed') }}"
 
     - name: Provide troubleshooting guidance
-      debug:
+      ansible.builtin.debug:
         msg: |
           ROSARoleConfig Wait Failed - Troubleshooting Steps:
 
@@ -230,14 +237,14 @@
           Wait Duration: {{ wait_duration }} seconds (timeout: {{ max_wait_time }} seconds)
 
     - name: Fail the task
-      fail:
+      ansible.builtin.fail:
         msg: |
           ROSARoleConfig {{ rosa_role_config_name }} did not become ready within {{ max_wait_time }} seconds.
           Current phase: {{ failed_rosa_role_config_status.resources[0].status.phase | default('Unknown') if failed_rosa_role_config_status.resources | default([]) | length > 0 else 'Not Found' }}
           Please check the troubleshooting guidance above.
 
 - name: Display success information
-  debug:
+  ansible.builtin.debug:
     msg: |
       ROSARoleConfig {{ rosa_role_config_name }} is ready!
 
@@ -253,7 +260,7 @@
   when: rosa_roles_ready | default(false)
 
 - name: Set final facts
-  set_fact:
+  ansible.builtin.set_fact:
     rosa_roles_wait_completed: true
     rosa_roles_installer_arn: "{{ rosa_role_config_resource.status.installerRoleArn | default('') }}"
     rosa_roles_support_arn: "{{ rosa_role_config_resource.status.supportRoleArn | default('') }}"

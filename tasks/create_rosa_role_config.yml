@@ -4,7 +4,7 @@
 # Eliminates manual role setup requirements
 
 - name: Set ROSARoleConfig creation variables
-  set_fact:
+  ansible.builtin.set_fact:
     rosa_role_config_name: "{{ cluster_name }}-roles"
     template_name: "rosa-role-config"
     template_category: "features"
@@ -12,11 +12,11 @@
     template_debug: true
 
 - name: Debug openshift_version before template
-  debug:
+  ansible.builtin.debug:
     msg: "openshift_version = {{ openshift_version }}"
 
 - name: Validate required variables for ROSARoleConfig
-  fail:
+  ansible.builtin.fail:
     msg: "Required variable {{ item }} is not defined"
   when: vars[item] is not defined or vars[item] == ""
   loop:
@@ -26,23 +26,23 @@
     - rosa_hcp_namespace
 
 - name: Resolve ROSARoleConfig template
-  include_tasks: template_resolver.yml
+  ansible.builtin.include_tasks: template_resolver.yml
 
 - name: Create output directory for ROSARoleConfig
-  file:
+  ansible.builtin.file:
     path: "{{ output_dir }}"
     state: directory
-    mode: '0755'
+    mode: "0755"
 
 - name: Generate ROSARoleConfig from template
-  template:
+  ansible.builtin.template:
     src: "{{ resolved_template_path }}"
     dest: "{{ output_dir }}/{{ rosa_role_config_name }}.yaml"
-    mode: '0644'
+    mode: "0644"
   register: rosa_role_config_template_result
 
 - name: Display ROSARoleConfig generation info
-  debug:
+  ansible.builtin.debug:
     msg: |
       ROSARoleConfig generated:
       - Name: {{ rosa_role_config_name }}
@@ -54,23 +54,23 @@
       - Namespace: {{ rosa_hcp_namespace }}
 
 - name: Check if ROSARoleConfig already exists
-  shell: |
+  ansible.builtin.shell: |
     oc get rosaroleconfig {{ rosa_role_config_name }} -n {{ rosa_hcp_namespace }} -o json 2>/dev/null || echo '{}'
   register: existing_rosa_role_config_raw
   failed_when: false
   changed_when: false
 
 - name: Parse ROSARoleConfig JSON
-  set_fact:
+  ansible.builtin.set_fact:
     existing_rosa_role_config_json: "{{ existing_rosa_role_config_raw.stdout | from_json }}"
 
 - name: Check if existing ROSARoleConfig is ready
-  set_fact:
+  ansible.builtin.set_fact:
     rosa_role_config_exists: "{{ existing_rosa_role_config_json.metadata is defined }}"
     rosa_role_config_is_ready: false
 
 - name: Check existing resource ready status
-  set_fact:
+  ansible.builtin.set_fact:
     rosa_role_config_is_ready: true
   when:
     - existing_rosa_role_config_json.metadata is defined
@@ -79,7 +79,7 @@
     - existing_rosa_role_config_json.status.conditions | selectattr('type', 'equalto', 'Ready') | selectattr('status', 'equalto', 'True') | list | length > 0
 
 - name: Display existing ROSARoleConfig status
-  debug:
+  ansible.builtin.debug:
     msg: |
       ✅ ROSARoleConfig {{ rosa_role_config_name }} already exists and is Ready
       Skipping creation and using existing resource.
@@ -88,20 +88,20 @@
     - rosa_role_config_is_ready | default(false) | bool
 
 - name: Display ROSARoleConfig creation needed
-  debug:
+  ansible.builtin.debug:
     msg: |
       Creating new ROSARoleConfig {{ rosa_role_config_name }} in namespace {{ rosa_hcp_namespace }}
   when:
     - not (rosa_role_config_exists | default(false) | bool and rosa_role_config_is_ready | default(false) | bool)
 
 - name: Apply ROSARoleConfig to cluster
-  shell: oc apply -f {{ output_dir }}/{{ rosa_role_config_name }}.yaml -o json
+  ansible.builtin.command: oc apply -f {{ output_dir }}/{{ rosa_role_config_name }}.yaml -o json
   register: rosa_role_config_apply_result_raw
   when:
     - not (rosa_role_config_exists | default(false) | bool and rosa_role_config_is_ready | default(false) | bool)
 
 - name: Parse apply result
-  set_fact:
+  ansible.builtin.set_fact:
     rosa_role_config_apply_result:
       result: "{{ rosa_role_config_apply_result_raw.stdout | from_json }}"
       method: "applied"
@@ -110,7 +110,7 @@
     - rosa_role_config_apply_result_raw.stdout is defined
 
 - name: Display ROSARoleConfig apply result
-  debug:
+  ansible.builtin.debug:
     msg: |
       ROSARoleConfig application result:
       - Status: {{ rosa_role_config_apply_result.result.status | default('Unknown') }}
@@ -127,7 +127,7 @@
     - not (rosa_role_config_exists | default(false) | bool and rosa_role_config_is_ready | default(false) | bool)
   block:
     - name: Wait for ROSARoleConfig condition Ready
-      shell: |
+      ansible.builtin.shell: |
         oc wait --for=condition=Ready \
           rosaroleconfig/{{ rosa_role_config_name }} \
           -n {{ rosa_hcp_namespace }} \
@@ -135,7 +135,7 @@
 
   rescue:
     - name: Capture ROSARoleConfig failure diagnostics
-      shell: |
+      ansible.builtin.shell: |
         DIAG_DIR="{{ lookup('env', 'ARTIFACT_DIR') | default(output_dir + '/diagnostics', true) }}"
         mkdir -p "$DIAG_DIR"
         DIAG_FILE="$DIAG_DIR/rosaroleconfig-failure-$(date +%Y%m%dT%H%M%S).txt"
@@ -165,26 +165,26 @@
       changed_when: false
 
     - name: Display diagnostic file location
-      debug:
+      ansible.builtin.debug:
         msg: >-
           ROSARoleConfig provisioning failed. Diagnostics saved to
           {{ diag_capture.stdout_lines | default(['(unknown path)']) | last }}
 
     - name: Fail with clear message after diagnostics captured
-      fail:
+      ansible.builtin.fail:
         msg: >-
           ROSARoleConfig {{ rosa_role_config_name }} did not reach Ready
           within 15 minutes. Diagnostics have been saved to the artifacts
           directory for post-mortem analysis.
 
 - name: Get final ROSARoleConfig status
-  shell: oc get rosaroleconfig {{ rosa_role_config_name }} -n {{ rosa_hcp_namespace }} -o json
+  ansible.builtin.command: oc get rosaroleconfig {{ rosa_role_config_name }} -n {{ rosa_hcp_namespace }} -o json
   register: rosa_role_config_ready_result_raw
   when:
     - not (rosa_role_config_exists | default(false) | bool and rosa_role_config_is_ready | default(false) | bool)
 
 - name: Parse ready result
-  set_fact:
+  ansible.builtin.set_fact:
     rosa_role_config_ready_result:
       resources:
         - "{{ rosa_role_config_ready_result_raw.stdout | from_json }}"
@@ -193,7 +193,7 @@
     - rosa_role_config_ready_result_raw.stdout is defined
 
 - name: Use existing ready ROSARoleConfig
-  set_fact:
+  ansible.builtin.set_fact:
     rosa_role_config_ready_result:
       resources:
         - "{{ existing_rosa_role_config_json }}"
@@ -202,7 +202,7 @@
     - rosa_role_config_is_ready | default(false) | bool
 
 - name: Set ROSARoleConfig facts for subsequent tasks
-  set_fact:
+  ansible.builtin.set_fact:
     rosa_role_config_created: true
     rosa_role_config_resource: "{{ rosa_role_config_ready_result.resources[0] }}"
     installer_role_arn: "{{ rosa_role_config_ready_result.resources[0].status.installerRoleArn | default('') }}"
@@ -211,7 +211,7 @@
     oidc_provider_arn: "{{ rosa_role_config_ready_result.resources[0].status.oidcProviderArn | default('') }}"
 
 - name: Display created AWS resources
-  debug:
+  ansible.builtin.debug:
     msg: |
       ROSARoleConfig {{ rosa_role_config_name }} created successfully!
 

@@ -5,7 +5,7 @@
     AWS_ACCESS_KEY_ID: "{{ AWS_ACCESS_KEY_ID }}"
     AWS_SECRET_ACCESS_KEY: "{{ AWS_SECRET_ACCESS_KEY }}"
     AWS_DEFAULT_REGION: "{{ aws_region | default('us-west-2') }}"
-  shell: |
+  ansible.builtin.shell: |
     aws ec2 describe-security-groups \
       --filters "Name=tag:rosa-cluster,Values={{ cluster_name }}" \
                 "Name=tag:automation.acm.redhat.com/created-by,Values=ansible-automation" \
@@ -20,7 +20,7 @@
     AWS_ACCESS_KEY_ID: "{{ AWS_ACCESS_KEY_ID }}"
     AWS_SECRET_ACCESS_KEY: "{{ AWS_SECRET_ACCESS_KEY }}"
     AWS_DEFAULT_REGION: "{{ aws_region | default('us-west-2') }}"
-  shell: |
+  ansible.builtin.shell: |
     SG_IDS="{{ sg_lookup_result.stdout | trim }}"
     if [ -z "$SG_IDS" ]; then
       echo "No security groups to delete"
@@ -67,10 +67,10 @@
   failed_when: false
 
 - name: Display security group cleanup result
-  debug:
+  ansible.builtin.debug:
     msg: "{{ sg_delete_result.stdout | default('No security groups to clean up') }}"
 
 - name: Warn on cleanup failure
   when: sg_delete_result.rc | default(0) | int != 0
-  debug:
+  ansible.builtin.debug:
     msg: "WARNING: Some security groups could not be deleted — may need manual cleanup"

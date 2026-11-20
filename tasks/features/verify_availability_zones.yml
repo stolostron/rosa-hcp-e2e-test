@@ -34,10 +34,12 @@
         success_msg: "PASS: ROSANetwork status confirms {{ expected_az_count }} subnet pairs"
       when: rnet is defined and rnet.status is defined and rnet.status.subnets is defined
 
-    - ansible.builtin.set_fact:
+    - name: Count this feature as passed
+      ansible.builtin.set_fact:
         features_passed: "{{ features_passed | int + 1 }}"
   rescue:
-    - ansible.builtin.include_tasks: "{{ playbook_dir }}/../tasks/verify_feature_rescue.yml"
+    - name: Record the feature failure
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../tasks/verify_feature_rescue.yml"
       vars:
         feature_id: availability_zones
         fail_detail: "availability zones do not match expected count"

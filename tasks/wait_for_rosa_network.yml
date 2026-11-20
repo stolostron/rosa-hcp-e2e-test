@@ -3,14 +3,14 @@
 - name: "Wait for ROSANetwork to be ready for cluster {{ cluster_name }}"
   block:
     - name: Display wait configuration
-      debug:
+      ansible.builtin.debug:
         msg:
           - "Waiting for ROSANetwork: {{ rosa_network_config_name | default(cluster_name + '-network') }}"
           - "Namespace: {{ rosa_hcp_namespace }}"
           - "Timeout: {{ rosa_network_creation_timeout | default(900) }} seconds"
 
     - name: Wait for ROSANetwork to complete network creation
-      shell: |
+      ansible.builtin.shell: |
         set -e
         NETWORK_NAME="{{ rosa_network_config_name | default(cluster_name + '-network') }}"
         NAMESPACE="{{ rosa_hcp_namespace }}"
@@ -57,28 +57,29 @@
       register: network_wait_result
 
     - name: Load ROSANetwork status from file
-      shell: cat /tmp/rosanetwork_status.json
+      ansible.builtin.command: cat /tmp/rosanetwork_status.json
       register: network_status_json
       changed_when: false
 
     - name: Parse network status
-      set_fact:
+      ansible.builtin.set_fact:
         network_ready_parsed: "{{ network_status_json.stdout | from_json }}"
 
     - name: Extract network status information
-      set_fact:
+      ansible.builtin.set_fact:
         network_status: "{{ network_ready_parsed.status }}"
 
     - name: Display network creation progress
-      debug:
+      ansible.builtin.debug:
         msg:
-          - "ROSANetwork Condition Ready: {{ 'Yes' if (network_status.conditions | selectattr('type', 'equalto', 'ROSANetworkReady') | selectattr('status', 'equalto', 'True') | list | length > 0) else 'No' }}"
+          - "ROSANetwork Condition Ready: {{ 'Yes' if (network_status.conditions | selectattr('type', 'equalto', 'ROSANetworkReady') | selectattr('status', 'equalto',
+            'True') | list | length > 0) else 'No' }}"
           - "Conditions: {{ network_status.conditions | default([]) | length }}"
           - "CloudFormation Resources: {{ network_status.resources | default([]) | length }}"
           - "Subnets Configured: {{ network_status.subnets | default([]) | length }} AZs"
 
     - name: Verify all network components are ready
-      assert:
+      ansible.builtin.assert:
         that:
           - network_status.conditions | selectattr('type', 'equalto', 'ROSANetworkReady') | selectattr('status', 'equalto', 'True') | list | length > 0
           - network_status.subnets is defined
@@ -89,11 +90,11 @@
         success_msg: "All network components are ready"
 
     - name: Extract VPC ID from resources
-      set_fact:
+      ansible.builtin.set_fact:
         vpc_resource: "{{ network_status.resources | selectattr('logicalId', 'equalto', 'VPC') | first }}"
 
     - name: Display detailed network resource information
-      debug:
+      ansible.builtin.debug:
         msg: |
           ✓ ROSANetwork Ready Status:
           VPC ID: {{ vpc_resource.physicalId }}
@@ -104,12 +105,12 @@
           Total CloudFormation Resources: {{ network_status.resources | length }}
 
     - name: Wait additional time for AWS resource propagation
-      pause:
+      ansible.builtin.pause:
         seconds: "{{ aws_network_propagation_delay | default(30) }}"
       when: network_status.conditions | selectattr('type', 'equalto', 'ROSANetworkReady') | selectattr('status', 'equalto', 'True') | list | length > 0
 
     - name: Final validation - check all required resources are available
-      assert:
+      ansible.builtin.assert:
         that:
           - vpc_resource.physicalId is defined
           - network_status.subnets | length >= 1
@@ -118,13 +119,13 @@
         success_msg: "All network resources are available for cluster creation"
 
     - name: Set network facts for cluster creation
-      set_fact:
+      ansible.builtin.set_fact:
         rosa_network_vpc_id: "{{ vpc_resource.physicalId }}"
         rosa_network_subnets: "{{ network_status.subnets }}"
         rosa_network_ready: true
 
     - name: Display network readiness confirmation
-      debug:
+      ansible.builtin.debug:
         msg:
           - "✓ ROSANetwork is ready for cluster creation"
           - "✓ VPC: {{ rosa_network_vpc_id }}"
@@ -132,52 +133,52 @@
           - "✓ Network automation completed successfully"
 
     - name: Cleanup temporary file
-      file:
+      ansible.builtin.file:
         path: /tmp/rosanetwork_status.json
         state: absent
       changed_when: false
 
   rescue:
     - name: Handle network readiness timeout
-      debug:
+      ansible.builtin.debug:
         msg: "ROSANetwork readiness check timed out or failed"
 
     - name: Get current ROSANetwork status for debugging
-      shell: |
+      ansible.builtin.shell: |
         oc get rosanetwork "{{ rosa_network_config_name | default(cluster_name + '-network') }}" \
           -n "{{ rosa_hcp_namespace }}" -o json 2>/dev/null || echo '{"error": "Resource not found"}'
       register: debug_network_status_raw
       changed_when: false
-      ignore_errors: true
+      failed_when: false
 
     - name: Parse debug network status
-      set_fact:
+      ansible.builtin.set_fact:
         debug_network_status: "{{ debug_network_status_raw.stdout | from_json }}"
       when: debug_network_status_raw.stdout is defined
 
     - name: Display current status for debugging
-      debug:
+      ansible.builtin.debug:
         var: debug_network_status.status
       when:
         - debug_network_status is defined
         - debug_network_status.status is defined
 
     - name: Get ROSANetwork events for troubleshooting
-      shell: |
+      ansible.builtin.shell: |
         oc get events -n "{{ rosa_hcp_namespace }}" --field-selector \
           involvedObject.name="{{ rosa_network_config_name | default(cluster_name + '-network') }}" \
           -o json 2>/dev/null || echo '{"items": []}'
       register: network_events_raw
       changed_when: false
-      ignore_errors: true
+      failed_when: false
 
     - name: Parse network events
-      set_fact:
+      ansible.builtin.set_fact:
         network_events: "{{ network_events_raw.stdout | from_json }}"
       when: network_events_raw.stdout is defined
 
     - name: Display events for troubleshooting
-      debug:
+      ansible.builtin.debug:
         var: network_events.items
       when:
         - network_events is defined
@@ -185,7 +186,7 @@
         - network_events.items | length > 0
 
     - name: Provide troubleshooting guidance
-      debug:
+      ansible.builtin.debug:
         msg:
           - "ROSANetwork Troubleshooting Steps:"
           - "1. Check CAPA controller logs:"
@@ -196,12 +197,12 @@
           - "5. Check for AWS service limits or region issues"
 
     - name: Cleanup temporary file on error
-      file:
+      ansible.builtin.file:
         path: /tmp/rosanetwork_status.json
         state: absent
       changed_when: false
-      ignore_errors: true
+      failed_when: false
 
     - name: Fail the task
-      fail:
+      ansible.builtin.fail:
         msg: "ROSANetwork failed to become ready within timeout period"

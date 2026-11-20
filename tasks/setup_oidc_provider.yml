@@ -1,19 +1,24 @@
 ---
 - name: Check if user provided their own OIDC issuer URL
-  set_fact:
+  ansible.builtin.set_fact:
     oidc_provider_source: "user_provided"
     oidc_provider_setup_success: true
   when: oidc_issuer_url is defined and oidc_issuer_url | length > 0
 
 - name: Determine OCM access method
-  set_fact:
+  ansible.builtin.set_fact:
     ocm_has_token: "{{ ocm_token_result is defined and ocm_token_result.json is defined and ocm_token_result.json.access_token is defined }}"
   when: oidc_provider_source is not defined
 
 - name: Setup OIDC provider via OCM API (bearer token)
+  when:
+    - oidc_provider_source is not defined
+    - ocm_has_token | default(false) | bool
+    - cluster_id is defined
+
   block:
     - name: Query existing OIDC config from OCM API
-      uri:
+      ansible.builtin.uri:
         url: "{{ ocm_api_url }}/api/clusters_mgmt/v1/clusters/{{ cluster_id }}/oidc_config"
         method: GET
         headers:
@@ -27,20 +32,21 @@
       no_log: true
 
     - name: Set OIDC config exists flag
-      set_fact:
+      ansible.builtin.set_fact:
         oidc_config_exists: "{{ (ocm_oidc_config_result.status | default(404) | int) == 200 }}"
 
     - name: Extract existing OIDC issuer URL
-      set_fact:
+      ansible.builtin.set_fact:
         oidc_issuer_url: "{{ (ocm_oidc_config_result.json.issuer | default({})).url | default(ocm_oidc_config_result.json.issuer_url | default('')) }}"
         oidc_provider_source: "existing"
-        oidc_provider_setup_success: "{{ ((ocm_oidc_config_result.json.issuer | default({})).url | default(ocm_oidc_config_result.json.issuer_url | default(''))) | length > 0 }}"
+        oidc_provider_setup_success: "{{ ((ocm_oidc_config_result.json.issuer | default({})).url | default(ocm_oidc_config_result.json.issuer_url | default('')))
+          | length > 0 }}"
       when:
         - oidc_config_exists
         - ocm_oidc_config_result.json is defined
 
     - name: Create new OIDC config via OCM API
-      uri:
+      ansible.builtin.uri:
         url: "{{ ocm_api_url }}/api/clusters_mgmt/v1/oidc_configs"
         method: POST
         headers:
@@ -63,10 +69,11 @@
         - oidc_issuer_url is not defined or oidc_issuer_url | length == 0
 
     - name: Extract created OIDC issuer URL
-      set_fact:
+      ansible.builtin.set_fact:
         oidc_issuer_url: "{{ (ocm_create_oidc_result.json.issuer | default({})).url | default(ocm_create_oidc_result.json.issuer_url | default('')) }}"
         oidc_provider_source: "created"
-        oidc_provider_setup_success: "{{ ((ocm_create_oidc_result.json.issuer | default({})).url | default(ocm_create_oidc_result.json.issuer_url | default(''))) | length > 0 }}"
+        oidc_provider_setup_success: "{{ ((ocm_create_oidc_result.json.issuer | default({})).url | default(ocm_create_oidc_result.json.issuer_url | default('')))
+          | length > 0 }}"
       when:
         - ocm_create_oidc_result is defined
         - ocm_create_oidc_result.status is defined
@@ -75,19 +82,19 @@
 
   rescue:
     - name: Set OIDC provider setup failure on exception (token path)
-      set_fact:
+      ansible.builtin.set_fact:
         oidc_provider_setup_success: false
         oidc_provider_source: "failed"
 
+- name: Setup OIDC provider via ocm CLI (fallback)
   when:
     - oidc_provider_source is not defined
-    - ocm_has_token | default(false) | bool
+    - not (ocm_has_token | default(false) | bool)
     - cluster_id is defined
 
-- name: Setup OIDC provider via ocm CLI (fallback)
   block:
     - name: Query existing OIDC config via ocm CLI
-      shell: |
+      ansible.builtin.shell: |
         ocm get "/api/clusters_mgmt/v1/clusters/{{ cluster_id }}/oidc_config"
       register: ocm_cli_oidc_result
       failed_when: false
@@ -95,13 +102,13 @@
       no_log: true
 
     - name: Parse OIDC config from CLI response
-      set_fact:
+      ansible.builtin.set_fact:
         ocm_cli_oidc_json: "{{ ocm_cli_oidc_result.stdout | from_json }}"
       when: ocm_cli_oidc_result.rc == 0 and ocm_cli_oidc_result.stdout | length > 2
       failed_when: false
 
     - name: Extract OIDC issuer URL from CLI response
-      set_fact:
+      ansible.builtin.set_fact:
         oidc_issuer_url: "{{ (ocm_cli_oidc_json.issuer | default({})).url | default(ocm_cli_oidc_json.issuer_url | default('')) }}"
         oidc_provider_source: "existing_cli"
         oidc_provider_setup_success: "{{ ((ocm_cli_oidc_json.issuer | default({})).url | default(ocm_cli_oidc_json.issuer_url | default(''))) | length > 0 }}"
@@ -110,7 +117,7 @@
         - ocm_cli_oidc_json.id is defined
 
     - name: Create new OIDC config via ocm CLI
-      shell: |
+      ansible.builtin.shell: |
         echo '{"managed": true}' | ocm post "/api/clusters_mgmt/v1/oidc_configs"
       register: ocm_cli_create_oidc_result
       failed_when: false
@@ -121,7 +128,7 @@
         - oidc_issuer_url is not defined or oidc_issuer_url | length == 0
 
     - name: Parse created OIDC config from CLI response
-      set_fact:
+      ansible.builtin.set_fact:
         ocm_cli_created_oidc_json: "{{ ocm_cli_create_oidc_result.stdout | from_json }}"
       when:
         - ocm_cli_create_oidc_result is defined
@@ -130,26 +137,22 @@
       failed_when: false
 
     - name: Extract created OIDC issuer URL from CLI response
-      set_fact:
+      ansible.builtin.set_fact:
         oidc_issuer_url: "{{ (ocm_cli_created_oidc_json.issuer | default({})).url | default(ocm_cli_created_oidc_json.issuer_url | default('')) }}"
         oidc_provider_source: "created_cli"
-        oidc_provider_setup_success: "{{ ((ocm_cli_created_oidc_json.issuer | default({})).url | default(ocm_cli_created_oidc_json.issuer_url | default(''))) | length > 0 }}"
+        oidc_provider_setup_success: "{{ ((ocm_cli_created_oidc_json.issuer | default({})).url | default(ocm_cli_created_oidc_json.issuer_url | default(''))) | length
+          > 0 }}"
       when:
         - ocm_cli_created_oidc_json is defined
 
   rescue:
     - name: Set OIDC provider setup failure on exception (CLI path)
-      set_fact:
+      ansible.builtin.set_fact:
         oidc_provider_setup_success: false
         oidc_provider_source: "failed"
 
-  when:
-    - oidc_provider_source is not defined
-    - not (ocm_has_token | default(false) | bool)
-    - cluster_id is defined
-
 - name: Debug OIDC provider setup failure
-  debug:
+  ansible.builtin.debug:
     msg: |
       OIDC provider setup failed. External auth requires an OIDC provider.
       Manual steps required:
@@ -162,7 +165,7 @@
     - not oidc_provider_setup_success
 
 - name: Set default OIDC provider setup success if not defined
-  set_fact:
+  ansible.builtin.set_fact:
     oidc_provider_setup_success: false
     oidc_provider_source: "failed"
   when: oidc_provider_setup_success is not defined

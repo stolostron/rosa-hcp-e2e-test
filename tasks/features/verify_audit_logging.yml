@@ -142,14 +142,17 @@
         that:
           - boto3_s3_bucket_check.rc == 0
           - boto3_s3_bucket_check.stdout | trim == 'exists'
-        fail_msg: "FAIL: S3 bucket '{{ log_forward_s3_bucket }}' lookup failed or not found in AWS (output: {{ boto3_s3_bucket_check.stdout | default('') | trim }}, stderr: {{ boto3_s3_bucket_check.stderr | default('') | trim }})"
+        fail_msg: "FAIL: S3 bucket '{{ log_forward_s3_bucket }}' lookup failed or not found in AWS (output: {{ boto3_s3_bucket_check.stdout | default('') | trim }},
+          stderr: {{ boto3_s3_bucket_check.stderr | default('') | trim }})"
         success_msg: "PASS: S3 bucket '{{ log_forward_s3_bucket }}' confirmed in AWS"
       when: boto3_check.rc == 0 and log_forward_s3_bucket is defined and (log_forward_s3_bucket | length > 0)
 
-    - ansible.builtin.set_fact:
+    - name: Count this feature as passed
+      ansible.builtin.set_fact:
         features_passed: "{{ features_passed | int + 1 }}"
   rescue:
-    - ansible.builtin.include_tasks: "{{ playbook_dir }}/../tasks/verify_feature_rescue.yml"
+    - name: Record the feature failure
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../tasks/verify_feature_rescue.yml"
       vars:
         feature_id: audit_logging
         fail_detail: "log forwarding destinations not found in AWS"

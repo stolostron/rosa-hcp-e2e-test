@@ -8,7 +8,7 @@
     ocm_role_deletion_policy: "{{ ocm_role_deletion_policy | default('Retain') }}"
 
 - name: Delete ROSAOCMRoleConfig CR
-  ansible.builtin.shell:
+  ansible.builtin.command:
     cmd: oc delete rosaocmroleconfig "{{ ocm_role_config_name }}" --wait=true --timeout=120s
   register: delete_cr
   failed_when: false

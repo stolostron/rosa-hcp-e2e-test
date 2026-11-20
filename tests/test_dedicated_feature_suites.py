@@ -88,8 +88,13 @@ def test_dedicated_suite_renders_feature(suite_id, version, channel_group, tmp_p
         if task["name"] == "Extract private subnets for private cluster"
     )
     for task in private_step["block"]:
-        if "include_tasks" in task:
-            task["include_tasks"] = str(BASE_DIR / "tasks" / task["include_tasks"])
+        include_key = (
+            "ansible.builtin.include_tasks"
+            if "ansible.builtin.include_tasks" in task
+            else "include_tasks"
+        )
+        if include_key in task:
+            task[include_key] = str(BASE_DIR / "tasks" / task[include_key])
     creation = next(
         task
         for task in provisioning
@@ -106,7 +111,12 @@ def test_dedicated_suite_renders_feature(suite_id, version, channel_group, tmp_p
         if task["name"] == "Create RosaControlPlane from template"
     )
     render["vars"]["apply_immediately"] = False
-    render["include_tasks"] = str(BASE_DIR / "tasks" / render["include_tasks"])
+    render_include = (
+        "ansible.builtin.include_tasks"
+        if "ansible.builtin.include_tasks" in render
+        else "include_tasks"
+    )
+    render[render_include] = str(BASE_DIR / "tasks" / render[render_include])
     playbook_content = yaml.safe_dump(
         [
             {

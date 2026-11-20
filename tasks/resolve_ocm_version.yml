@@ -1,6 +1,6 @@
 ---
 - name: Skip OCM version resolution if already a pre-release version
-  set_fact:
+  ansible.builtin.set_fact:
     resolved_openshift_version: "{{ openshift_version }}"
   when: "'-' in openshift_version"
 
@@ -8,14 +8,14 @@
   when: "'-' not in openshift_version"
   block:
     - name: Set OCM API URL for version resolution
-      set_fact:
+      ansible.builtin.set_fact:
         _ocm_api_url: "{{ lookup('env', 'OCM_API_URL') | default(OCM_API_URL | default('https://api.stage.openshift.com', true), true) }}"
         _ocm_client_id: "{{ lookup('env', 'OCM_CLIENT_ID') | default(OCM_CLIENT_ID, true) }}"
         _ocm_client_secret: "{{ lookup('env', 'OCM_CLIENT_SECRET') | default(OCM_CLIENT_SECRET, true) }}"
       no_log: true
 
     - name: Get OCM bearer token for version resolution
-      uri:
+      ansible.builtin.uri:
         url: "https://sso.redhat.com/auth/realms/redhat-external/protocol/openid-connect/token"
         method: POST
         body_format: form-urlencoded
@@ -29,8 +29,9 @@
       no_log: true
 
     - name: Query OCM for available HCP versions
-      uri:
-        url: "{{ _ocm_api_url }}/api/clusters_mgmt/v1/versions?product=hcp&search={{ _version_search | urlencode }}&order={{ 'raw_id desc' | urlencode }}&size={{ _query_size }}"
+      ansible.builtin.uri:
+        url: "{{ _ocm_api_url }}/api/clusters_mgmt/v1/versions?product=hcp&search={{ _version_search | urlencode }}&order={{ 'raw_id desc' | urlencode }}&size={{
+          _query_size }}"
         method: GET
         headers:
           Authorization: "Bearer {{ _ocm_version_token.json.access_token }}"
@@ -39,48 +40,50 @@
         timeout: 15
       vars:
         _version_prefix: "{{ openshift_version.split('.')[:2] | join('.') }}"
-        _version_search: "raw_id like '{{ _version_prefix }}%' and rosa_enabled='true' and hosted_control_plane_enabled='true' and enabled='true' and channel_group='{{ channel_group | default('stable') }}'"
+        _version_search: "raw_id like '{{ _version_prefix }}%' and rosa_enabled='true' and hosted_control_plane_enabled='true' and enabled='true' and channel_group='{{
+          channel_group | default('stable') }}'"
         _query_size: "{{ 10 if reserve_upgrade_path | default(false) | bool else 1 }}"
       register: _ocm_versions_result
       no_log: true
 
     - name: Fail if no HCP versions available
-      fail:
+      ansible.builtin.fail:
         msg: >-
           No HCP-enabled versions found matching '{{ openshift_version }}'
           in channel group '{{ channel_group | default('stable') }}'
           on {{ _ocm_api_url }}.
           Check available versions with:
-          ocm get /api/clusters_mgmt/v1/versions --parameter search="raw_id like '{{ openshift_version }}%' and hosted_control_plane_enabled='true' and enabled='true' and channel_group='{{ channel_group | default('stable') }}'"
+          ocm get /api/clusters_mgmt/v1/versions --parameter search="raw_id like '{{ openshift_version }}%' and hosted_control_plane_enabled='true' and enabled='true'
+          and channel_group='{{ channel_group | default('stable') }}'"
       when: _ocm_versions_result.json.total == 0
 
     - name: Find versions with available upgrade path
-      set_fact:
+      ansible.builtin.set_fact:
         _upgradeable_versions: "{{ _ocm_versions_result.json['items'] | selectattr('available_upgrades', 'defined') | selectattr('available_upgrades') | list }}"
       when: reserve_upgrade_path | default(false) | bool
 
     - name: Select version with available upgrade path
-      set_fact:
+      ansible.builtin.set_fact:
         resolved_openshift_version: "{{ _upgradeable_versions[0].raw_id }}"
       when: reserve_upgrade_path | default(false) | bool and (_upgradeable_versions | default([]) | length > 0)
 
     - name: Set resolved OpenShift version
-      set_fact:
+      ansible.builtin.set_fact:
         resolved_openshift_version: "{{ _ocm_versions_result.json['items'][0].raw_id }}"
       when: resolved_openshift_version is not defined
 
     - name: Display resolved version
-      debug:
+      ansible.builtin.debug:
         msg: "Resolved OpenShift version: {{ openshift_version }} → {{ resolved_openshift_version }} (channel: {{ channel_group | default('stable') }})"
 
   rescue:
     - name: Warn about OCM version resolution failure
-      debug:
+      ansible.builtin.debug:
         msg: >-
           WARNING: Could not resolve version from OCM API.
           Using openshift_version as-is: {{ openshift_version }}.
           Error: {{ ansible_failed_result.msg | default('unknown') | regex_replace('Bearer [^ ]+', 'Bearer ***') }}
 
     - name: Fall back to normalized openshift_version
-      set_fact:
+      ansible.builtin.set_fact:
         resolved_openshift_version: "{{ openshift_version ~ '.0' if openshift_version.split('.') | length < 3 else openshift_version }}"

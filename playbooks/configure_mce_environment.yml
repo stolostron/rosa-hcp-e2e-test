@@ -19,7 +19,8 @@
       # output and archived in the JUnit XML whenever a play fails.
       no_log: true
 
-    - set_fact:
+    - name: Set MCE hub credentials from user variables
+      ansible.builtin.set_fact:
         ocp_user: "{{ lookup('env', 'OCP_HUB_CLUSTER_USER') | default(OCP_HUB_CLUSTER_USER, true) }}"
         ocp_password: "{{ lookup('env', 'OCP_HUB_CLUSTER_PASSWORD') | default(OCP_HUB_CLUSTER_PASSWORD, true) }}"
         api_url: "{{ lookup('env', 'OCP_HUB_API_URL') | default(OCP_HUB_API_URL, true) }}"
@@ -27,11 +28,11 @@
       no_log: true
 
     - name: Prepare ansible runner host
-      include_tasks: ../tasks/prepare_ansible_runner.yml
+      ansible.builtin.include_tasks: ../tasks/prepare_ansible_runner.yml
       when: not skip_ansible_runner | bool
 
     - name: Login to OpenShift Hub Cluster
-      include_tasks: ../tasks/login_ocp.yml
+      ansible.builtin.include_tasks: ../tasks/login_ocp.yml
 
     - name: Configure MCE CAPI/CAPA Environment
-      include_tasks: ../tasks/configure-capa-environment.yml
+      ansible.builtin.include_tasks: ../tasks/configure-capa-environment.yml
