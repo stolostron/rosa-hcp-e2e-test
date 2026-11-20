@@ -28,9 +28,8 @@ jobs:
         run: pip install yamllint
 
       - name: Run yamllint
-        run: |
-          yamllint -f parsable playbooks/ tasks/ || true
-          echo "YAML linting completed (warnings allowed)"
+        # Warnings (line length) are configured in .yamllint and baselined.
+        run: yamllint -f parsable --no-warnings playbooks/ tasks/
 
   ansible-lint:
     name: Ansible Linting
@@ -51,9 +50,8 @@ jobs:
           pip install ansible ansible-lint
 
       - name: Run ansible-lint
-        run: |
-          ansible-lint playbooks/ || true
-          echo "Ansible linting completed (warnings allowed)"
+        # Known backlog rules are baselined in .ansible-lint.
+        run: ansible-lint playbooks/
 
   ansible-syntax:
     name: Ansible Syntax Check
@@ -76,7 +74,7 @@ jobs:
         run: |
           for playbook in playbooks/*.yml; do
             echo "Checking syntax: $playbook"
-            ansible-playbook --syntax-check "$playbook" || echo "Syntax check failed for $playbook (may need vars)"
+            ansible-playbook --syntax-check "$playbook"
           done
 
   python-lint:
@@ -94,18 +92,14 @@ jobs:
           python-version: '3.11'
 
       - name: Install linting tools
-        run: |
-          pip install black pylint
+        # PyYAML is imported by run-test-suite.py and feature_manager.py.
+        run: pip install -r requirements.txt black pylint
 
       - name: Run black (format check)
-        run: |
-          black --check *.py || true
-          echo "Python formatting check completed"
+        run: black --check *.py
 
       - name: Run pylint
-        run: |
-          pylint *.py --disable=C,R || true
-          echo "Python linting completed (warnings allowed)"
+        run: pylint *.py --disable=C,R
 
   security-scan:
     name: Security Scanning

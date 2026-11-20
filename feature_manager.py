@@ -26,8 +26,12 @@ class FeatureManager:
 
     def __init__(self, base_dir: Path):
         self._base_dir = base_dir
-        self._registry = self._load_yaml(base_dir / "templates" / "schemas" / "feature-registry.yml")
-        self._compat = self._load_yaml(base_dir / "templates" / "schemas" / "version-compatibility.yml")
+        self._registry = self._load_yaml(
+            base_dir / "templates" / "schemas" / "feature-registry.yml"
+        )
+        self._compat = self._load_yaml(
+            base_dir / "templates" / "schemas" / "version-compatibility.yml"
+        )
 
         self._var_map = self._registry.get("var_map", {})
         self._cli_aliases = self._registry.get("cli_aliases", {})
@@ -54,7 +58,7 @@ class FeatureManager:
     def _load_yaml(path: Path) -> dict:
         if not path.exists():
             raise FileNotFoundError(f"Schema file not found: {path}")
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             data = yaml.safe_load(f)
         if not isinstance(data, dict):
             raise ValueError(f"Invalid YAML in {path}")
@@ -111,9 +115,7 @@ class FeatureManager:
         for exclusion_group in self._mutual_exclusions:
             present = [f for f in feature_names if f in exclusion_group]
             if len(present) > 1:
-                errors.append(
-                    f"Features {present} are mutually exclusive"
-                )
+                errors.append(f"Features {present} are mutually exclusive")
 
         return errors
 
@@ -145,7 +147,9 @@ class FeatureManager:
 
         return extra_vars
 
-    def check_required_inputs(self, feature_names: List[str], extra_vars: dict) -> List[str]:
+    def check_required_inputs(
+        self, feature_names: List[str], extra_vars: dict
+    ) -> List[str]:
         """Report features whose user-supplied inputs are missing from extra_vars.
 
         A feature declares what it needs in one of three ways, most specific first:
@@ -163,7 +167,8 @@ class FeatureManager:
             if any_of:
                 if not any(all(v in extra_vars for v in group) for group in any_of):
                     options = " OR ".join(
-                        " and ".join(f"-e {v}=<value>" for v in group) for group in any_of
+                        " and ".join(f"-e {v}=<value>" for v in group)
+                        for group in any_of
                     )
                     warnings.append(
                         f"Feature '{name}' requires {options}. "
@@ -190,11 +195,13 @@ class FeatureManager:
     def list_groups(self) -> List[dict]:
         results = []
         for name, group in self._feature_groups.items():
-            results.append({
-                "name": name,
-                "description": group.get("description", ""),
-                "features": group.get("features", []),
-            })
+            results.append(
+                {
+                    "name": name,
+                    "description": group.get("description", ""),
+                    "features": group.get("features", []),
+                }
+            )
         return results
 
     # ------------------------------------------------------------------
@@ -259,7 +266,9 @@ class FeatureManager:
         ocp_ver = _version_tuple(version)
         for feat_id in features:
             avail = self._feature_availability.get(feat_id, {})
-            min_ver = avail.get("min_version") or self._features.get(feat_id, {}).get("min_version")
+            min_ver = avail.get("min_version") or self._features.get(feat_id, {}).get(
+                "min_version"
+            )
             max_ver = avail.get("max_version")
             if min_ver and ocp_ver < _version_tuple(min_ver):
                 return False
@@ -319,7 +328,9 @@ class FeatureManager:
         extra_vars: Dict[str, object] = {}
         missing_env: Dict[str, List[str]] = {}
 
-        for var_name, raw in (self._scenario_setting(name, "extra_vars", {}) or {}).items():
+        for var_name, raw in (
+            self._scenario_setting(name, "extra_vars", {}) or {}
+        ).items():
             expanded, missing = self._expand_env(raw)
             if missing:
                 missing_env[var_name] = missing
@@ -358,23 +369,27 @@ class FeatureManager:
             if isinstance(entry, str):
                 stages.append({"suite": entry, "always": False})
             else:
-                stages.append({
-                    "suite": entry["suite"],
-                    "always": bool(entry.get("always", False)),
-                })
+                stages.append(
+                    {
+                        "suite": entry["suite"],
+                        "always": bool(entry.get("always", False)),
+                    }
+                )
         return stages
 
     def list_scenarios(self) -> List[dict]:
         results = []
         for name in sorted(self._scenarios):
-            results.append({
-                "name": name,
-                "description": self._scenarios[name].get("description", ""),
-                "features": self.scenario_features(name),
-                "versions": self.scenario_versions(name),
-                "stages": [s["suite"] for s in self.scenario_stages(name)],
-                "estimated_minutes": self._scenarios[name].get("estimated_minutes"),
-            })
+            results.append(
+                {
+                    "name": name,
+                    "description": self._scenarios[name].get("description", ""),
+                    "features": self.scenario_features(name),
+                    "versions": self.scenario_versions(name),
+                    "stages": [s["suite"] for s in self.scenario_stages(name)],
+                    "estimated_minutes": self._scenarios[name].get("estimated_minutes"),
+                }
+            )
         return results
 
     def list_features(self, version: Optional[str] = None) -> List[dict]:
@@ -403,17 +418,19 @@ class FeatureManager:
             if ocp_ver and max_ver and ocp_ver > _version_tuple(max_ver):
                 continue
 
-            results.append({
-                "id": feat_id,
-                "name": feat["name"],
-                "description": feat["description"],
-                "type": feat.get("type", "boolean"),
-                "default": feat.get("default"),
-                "phase": feat.get("phase", "Day1"),
-                "suite": feat.get("suite_name", ""),
-                "cli_alias": reverse_aliases.get(feat_id, ""),
-                "min_version": min_ver,
-                "var_name": self._var_map.get(feat_id, feat_id),
-            })
+            results.append(
+                {
+                    "id": feat_id,
+                    "name": feat["name"],
+                    "description": feat["description"],
+                    "type": feat.get("type", "boolean"),
+                    "default": feat.get("default"),
+                    "phase": feat.get("phase", "Day1"),
+                    "suite": feat.get("suite_name", ""),
+                    "cli_alias": reverse_aliases.get(feat_id, ""),
+                    "min_version": min_ver,
+                    "var_name": self._var_map.get(feat_id, feat_id),
+                }
+            )
 
         return results

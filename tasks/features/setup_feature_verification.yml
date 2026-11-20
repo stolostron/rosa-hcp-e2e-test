@@ -18,7 +18,7 @@
   when: deployment_mode != 'standalone'
 
 - name: Login to OpenShift Hub Cluster
-  ansible.builtin.include_tasks: "{{ playbook_dir }}/../tasks/login_ocp.yml"
+  ansible.builtin.include_tasks: "../login_ocp.yml"
   when: deployment_mode != 'standalone'
 
 - name: Validate cluster_name is provided
@@ -250,7 +250,8 @@
 
 - name: Log SSO reachability
   ansible.builtin.debug:
-    msg: "{{ 'SSO endpoint reachable (HTTP ' ~ sso_health_check.status ~ ')' if sso_health_check.status is defined and sso_health_check.status == 200 else 'SSO endpoint NOT reachable — HTTP ' ~ (sso_health_check.status | default('no response')) ~ '. OCM verification will be skipped.' }}"
+    msg: "{{ 'SSO endpoint reachable (HTTP ' ~ sso_health_check.status ~ ')' if sso_health_check.status is defined and sso_health_check.status == 200 else 'SSO endpoint
+      NOT reachable — HTTP ' ~ (sso_health_check.status | default('no response')) ~ '. OCM verification will be skipped.' }}"
   when: ocm_client_id | default('') | length > 0
 
 - name: Get OCM bearer token
@@ -272,7 +273,8 @@
 
 - name: Log OCM token exchange result
   ansible.builtin.debug:
-    msg: "{{ 'OCM token exchange succeeded' if (ocm_token_result.status | default(0) == 200 and (ocm_token_result.json | default({})).access_token is defined) else 'OCM token exchange failed (HTTP ' ~ (ocm_token_result.status | default('none')) ~ ') — credentials may be invalid or expired' }}"
+    msg: "{{ 'OCM token exchange succeeded' if (ocm_token_result.status | default(0) == 200 and (ocm_token_result.json | default({})).access_token is defined) else
+      'OCM token exchange failed (HTTP ' ~ (ocm_token_result.status | default('none')) ~ ') — credentials may be invalid or expired' }}"
   when: (ocm_client_id | default('') | length > 0) and (sso_health_check.status | default(0) == 200)
 
 - name: Query OCM for cluster details

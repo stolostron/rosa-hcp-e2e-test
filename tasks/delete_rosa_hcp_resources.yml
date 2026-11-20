@@ -16,7 +16,7 @@
     content: ""
     dest: "{{ agent_monitor_log }}"
     force: true
-    mode: '0644'
+    mode: "0644"
 
 - name: Initialize deletion failure tracking
   ansible.builtin.set_fact:
@@ -197,7 +197,7 @@
   when: resources_to_delete | length == 0
 
 - name: Emit agent context for ROSAControlPlane deletion wait
-  shell: |
+  ansible.builtin.shell: |
     echo "#AGENT_CONTEXT: resource_name=$CLUSTER_NAME namespace=$NAMESPACE resource_type=rosacontrolplane" | tee -a "$LOGFILE"
   environment:
     LOGFILE: "{{ agent_monitor_log }}"
@@ -209,7 +209,7 @@
     - "'not-found' not in rcp_exists.stdout"
 
 - name: Wait for ROSAControlPlane deletion to complete
-  shell: |
+  ansible.builtin.shell: |
     for i in $(seq 1 $RETRIES); do
       OUTPUT=$(oc get rosacontrolplane "$CLUSTER_NAME" -n "$NAMESPACE" 2>&1)
       RC=$?
@@ -237,7 +237,7 @@
     - "'not-found' not in rcp_exists.stdout"
 
 - name: Final check - verify ROSAControlPlane is actually gone
-  shell: |
+  ansible.builtin.shell: |
     for i in $(seq 1 18); do
       OUTPUT=$(oc get rosacontrolplane "$CLUSTER_NAME" -n "$NAMESPACE" 2>&1)
       RC=$?
@@ -266,7 +266,7 @@
     - wait_rcp.rc != 0
 
 - name: Display ROSAControlPlane deletion result
-  debug:
+  ansible.builtin.debug:
     msg: |
       {% if wait_rcp.rc == 0 or (final_rcp_check.rc | default(1)) == 0 %}
       ✅ ROSAControlPlane successfully deleted: {{ cluster_name }}
@@ -279,7 +279,7 @@
     - "'not-found' not in rcp_exists.stdout"
 
 - name: Warn if ROSAControlPlane still exists after all retries
-  set_fact:
+  ansible.builtin.set_fact:
     rcp_deletion_failed: true
   when:
     - wait_for_deletion | bool
@@ -288,7 +288,7 @@
     - (final_rcp_check.rc | default(1)) != 0
 
 - name: Display ROSAControlPlane timeout warning
-  debug:
+  ansible.builtin.debug:
     msg: |
       ⚠️  ROSAControlPlane {{ cluster_name }} still exists after timeout.
       Continuing with remaining resource cleanup...
@@ -296,13 +296,14 @@
   when: rcp_deletion_failed | default(false) | bool
 
 - name: Clean up additional security groups (before VPC deletion)
-  include_tasks: delete_security_group.yml
+  ansible.builtin.include_tasks: delete_security_group.yml
   when:
-    - (AWS_ACCESS_KEY_ID is defined and AWS_ACCESS_KEY_ID | length > 0 and AWS_SECRET_ACCESS_KEY is defined and AWS_SECRET_ACCESS_KEY | length > 0) or (lookup('env', 'AWS_ACCESS_KEY_ID') | length > 0 and lookup('env', 'AWS_SECRET_ACCESS_KEY') | length > 0)
+    - (AWS_ACCESS_KEY_ID is defined and AWS_ACCESS_KEY_ID | length > 0 and AWS_SECRET_ACCESS_KEY is defined and AWS_SECRET_ACCESS_KEY | length > 0) or
+      (lookup('env', 'AWS_ACCESS_KEY_ID') | length > 0 and lookup('env', 'AWS_SECRET_ACCESS_KEY') | length > 0)
     - (feature_security_groups_enabled | default(false) | bool) or (created_security_group_id is defined)
 
 - name: Delete ROSANetwork (after ROSAControlPlane deletion completes)
-  shell: |
+  ansible.builtin.shell: |
     oc delete rosanetwork {{ discovered_rosa_network_name }} -n {{ rosa_hcp_namespace }} --wait=false
   register: delete_rn
   failed_when: false
@@ -311,7 +312,7 @@
     - discovered_rosa_network_name != 'not-found'
 
 - name: Delete ManagedCluster (if exists)
-  shell: |
+  ansible.builtin.shell: |
     oc delete managedcluster {{ cluster_name }} --wait=false
   register: delete_mc
   failed_when: false
@@ -319,7 +320,7 @@
   when: deployment_mode != 'standalone'
 
 - name: Emit agent context for ROSANetwork deletion wait
-  shell: |
+  ansible.builtin.shell: |
     echo "#AGENT_CONTEXT: resource_name=$NETWORK_NAME namespace=$NAMESPACE resource_type=rosanetwork" | tee -a "$LOGFILE"
   environment:
     LOGFILE: "{{ agent_monitor_log }}"
@@ -458,7 +459,7 @@
     - discovered_rosa_network_name != 'not-found'
 
 - name: Final check - verify ROSANetwork is actually gone
-  shell: |
+  ansible.builtin.shell: |
     for i in $(seq 1 36); do
       OUTPUT=$(oc get rosanetwork "$NETWORK_NAME" -n "$NAMESPACE" 2>&1)
       RC=$?
@@ -488,7 +489,7 @@
     - wait_rn.rc != 0
 
 - name: Display ROSANetwork deletion result
-  debug:
+  ansible.builtin.debug:
     msg: |
       {% if wait_rn.rc == 0 or (final_rn_check.rc | default(1)) == 0 %}
       ✅ ROSANetwork successfully deleted: {{ discovered_rosa_network_name }}
@@ -502,7 +503,7 @@
     - discovered_rosa_network_name != 'not-found'
 
 - name: Warn if ROSANetwork still exists after all retries
-  set_fact:
+  ansible.builtin.set_fact:
     rosanetwork_deletion_failed: true
   when:
     - wait_for_deletion | bool
@@ -512,7 +513,7 @@
     - (final_rn_check.rc | default(1)) != 0
 
 - name: Display ROSANetwork timeout warning
-  debug:
+  ansible.builtin.debug:
     msg: |
       ⚠️  ROSANetwork {{ discovered_rosa_network_name }} still exists after timeout.
       Continuing with remaining resource cleanup...
@@ -531,7 +532,7 @@
 # ================================================================
 
 - name: Emit agent context for CloudFormation verification
-  shell: |
+  ansible.builtin.shell: |
     echo "#AGENT_CONTEXT: resource_name=$NETWORK_NAME namespace=$NAMESPACE resource_type=rosanetwork" | tee -a "$LOGFILE"
   environment:
     LOGFILE: "{{ agent_monitor_log }}"
@@ -559,7 +560,7 @@
     NETWORK_NAME: "{{ discovered_rosa_network_name }}"
     NAMESPACE: "{{ rosa_hcp_namespace }}"
     CFN_SCRIPT: "{{ playbook_dir }}/../scripts/check_cfn_stack_status.py"
-  shell: |
+  ansible.builtin.shell: |
     RETRIES=36
     echo "Verifying CloudFormation stack $STACK_NAME cleanup..." | tee -a "$LOGFILE"
     for i in $(seq 1 $RETRIES); do
@@ -611,7 +612,7 @@
     - discovered_rosa_network_name != 'not-found'
 
 - name: Display CloudFormation verification result
-  debug:
+  ansible.builtin.debug:
     msg: |
       {% if cfn_verify.rc == 0 %}
       ✅ CloudFormation stack {{ cluster_name }}-rosa-network-stack confirmed deleted
@@ -626,7 +627,7 @@
     - cfn_verify is defined
 
 - name: Delete ROSARoleConfig (after ROSANetwork deletion completes)
-  shell: |
+  ansible.builtin.shell: |
     oc delete rosaroleconfig {{ discovered_rosa_role_config_name }} -n {{ rosa_hcp_namespace }} --wait=false
   register: delete_rrc
   failed_when: false
@@ -635,7 +636,7 @@
     - discovered_rosa_role_config_name != 'not-found'
 
 - name: Emit agent context for ROSARoleConfig deletion wait
-  shell: |
+  ansible.builtin.shell: |
     echo "#AGENT_CONTEXT: resource_name=$ROLE_CONFIG_NAME namespace=$NAMESPACE resource_type=rosaroleconfig" | tee -a "$LOGFILE"
   environment:
     LOGFILE: "{{ agent_monitor_log }}"
@@ -648,7 +649,7 @@
     - discovered_rosa_role_config_name != 'not-found'
 
 - name: Wait for ROSARoleConfig deletion to complete
-  shell: |
+  ansible.builtin.shell: |
     for i in $(seq 1 $RETRIES); do
       OUTPUT=$(oc get rosaroleconfig "$ROLE_CONFIG_NAME" -n "$NAMESPACE" 2>&1)
       RC=$?
@@ -677,7 +678,7 @@
     - discovered_rosa_role_config_name != 'not-found'
 
 - name: Final check - verify ROSARoleConfig is actually gone
-  shell: |
+  ansible.builtin.shell: |
     for i in $(seq 1 18); do
       OUTPUT=$(oc get rosaroleconfig "$ROLE_CONFIG_NAME" -n "$NAMESPACE" 2>&1)
       RC=$?
@@ -707,7 +708,7 @@
     - wait_rrc.rc != 0
 
 - name: Display ROSARoleConfig deletion result
-  debug:
+  ansible.builtin.debug:
     msg: |
       {% if wait_rrc.rc == 0 or (final_rrc_check.rc | default(1)) == 0 %}
       ✅ ROSARoleConfig successfully deleted: {{ discovered_rosa_role_config_name }}
@@ -721,7 +722,7 @@
     - discovered_rosa_role_config_name != 'not-found'
 
 - name: Set deletion summary
-  set_fact:
+  ansible.builtin.set_fact:
     deletion_summary: |
       {% if ('cluster/' + cluster_name) in (resources_to_delete | default([])) %}
       • Core Cluster: {{ '✅ Deleted' if (delete_all is defined and (delete_all.rc | default(1)) == 0) else '⏳ Deletion initiated' }}
@@ -740,14 +741,14 @@
       {% endif %}
 
 - name: Display deletion summary
-  debug:
-    msg: |
+  ansible.builtin.debug:
+    msg: |2
 
       Deletion Summary:
       {{ deletion_summary }}
 
 - name: Fail if any resource deletion timed out
-  fail:
+  ansible.builtin.fail:
     msg: |
       One or more resources failed to delete within the timeout period.
       {{ '⚠️  ROSAControlPlane timed out' if (rcp_deletion_failed | default(false)) else '' }}

@@ -4,7 +4,7 @@
 
 - name: Configure the MCE CAPI/CAPA environment
   no_log: true
-  import_role:
+  ansible.builtin.import_role:
     name: configure-capa-environment
   vars:
     ocm_client_id: "{{ lookup('env', 'OCM_CLIENT_ID') | default(OCM_CLIENT_ID, true) }}"

@@ -1,8 +1,9 @@
+---
 # Version-Aware ROSA Control Plane Creation
 # Uses template resolver to find appropriate template for selected OpenShift version
 
 - name: Set cluster creation variables
-  set_fact:
+  ansible.builtin.set_fact:
     cluster_name: "{{ cluster_name | default('rosa-hcp-cluster') }}"
     template_name: "{{ template_name | default('rosa-control-plane') }}"
     template_category: "{{ template_category | default('cluster-configs') }}"
@@ -10,28 +11,28 @@
     template_debug: true
 
 - name: Resolve cluster config template
-  include_tasks: template_resolver.yml
+  ansible.builtin.include_tasks: template_resolver.yml
 
 - name: Validate cluster name
-  fail:
+  ansible.builtin.fail:
     msg: "Cluster name must be provided and cannot be empty"
   when: cluster_name == ""
 
 - name: Create output directory
-  file:
+  ansible.builtin.file:
     path: "{{ output_dir }}"
     state: directory
-    mode: '0755'
+    mode: "0755"
 
 - name: Generate version-specific ROSA control plane configuration
-  template:
+  ansible.builtin.template:
     src: "{{ resolved_template_path }}"
     dest: "{{ output_dir }}/{{ cluster_name }}-rosa-control-plane.yaml"
-    mode: '0644'
+    mode: "0644"
   register: control_plane_result
 
 - name: Display generated configuration info
-  debug:
+  ansible.builtin.debug:
     msg: |
       ROSA Control Plane configuration generated:
       - OpenShift Version: {{ openshift_version }}
@@ -40,20 +41,20 @@
       - Output File: {{ output_dir }}/{{ cluster_name }}-rosa-control-plane.yaml
 
 - name: Apply ROSA control plane configuration
-  shell: |
+  ansible.builtin.shell: |
     oc apply -f {{ output_dir }}/{{ cluster_name }}-rosa-control-plane.yaml
   when: apply_immediately | default(false) | bool
   register: apply_result
 
 - name: Display apply result
-  debug:
+  ansible.builtin.debug:
     msg: "{{ apply_result.stdout }}"
-  when: 
+  when:
     - apply_immediately | default(false) | bool
     - apply_result is defined
 
 - name: Display manual apply instructions
-  debug:
+  ansible.builtin.debug:
     msg: |
       To apply the configuration manually, run:
       oc apply -f {{ output_dir }}/{{ cluster_name }}-rosa-control-plane.yaml

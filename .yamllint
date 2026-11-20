@@ -1,0 +1,16 @@
+---
+extends: default
+
+rules:
+  # Ansible shell/command blocks and long Jinja expressions routinely exceed
+  # 80 columns. Reported as warnings, not failures.
+  line-length:
+    max: 200
+    level: warning
+  # Most task files are included, not run directly; `---` is not required.
+  document-start: disable
+  # Both `{ key: value }` and `{key: value}` are used across the repo.
+  braces: disable
+  # Allow nested task lists to start at the parent dash column.
+  indentation:
+    indent-sequences: whatever

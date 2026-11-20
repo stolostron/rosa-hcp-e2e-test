@@ -8,7 +8,7 @@
   register: hypershift_disable_result
   ignore_errors: true
 
-- name: Disable hypershift-local-hosting component  
+- name: Disable hypershift-local-hosting component
   shell: |
     oc patch mce {{ mce_name.stdout }} -p '[{"op": "add", "path": "/spec/overrides/components/-","value":{"name":"hypershift-local-hosting","enabled":false}}]' --type=json
   register: hypershift_local_hosting_disable_result
