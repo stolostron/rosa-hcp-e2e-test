@@ -329,11 +329,12 @@ class TestFeatureGroups:
 
     def test_resolve_combo_group(self, fm):
         features = fm.resolve_group("day1-combo")
-        assert len(features) == 4
+        assert len(features) == 5
         assert "cluster_autoscaler_expander" in features
         assert "image_registry" in features
         assert "parallel_upgrade" in features
         assert "disk_size" in features
+        assert "spot_market_options" in features
 
     def test_resolve_networking_group(self, fm):
         features = fm.resolve_group("day1-networking")
@@ -443,8 +444,16 @@ class TestScenarioVersions:
     def test_networking_gated_by_audit_logging(self, fm):
         assert fm.scenario_versions("day1-networking") == ["4.20", "4.21", "4.22", "5.0"]
 
-    def test_combo_gated_at_419(self, fm):
-        assert fm.scenario_versions("day1-combo") == ["4.19", "4.20", "4.21", "4.22", "5.0"]
+    def test_combo_gated_at_422(self, fm):
+        """Raised from 4.19 when spot_market_options (4.22) joined the group.
+
+        Deliberate: a scenario is only valid where every one of its features is,
+        and spotMarketOptions does not exist in the CAPA CRD before 4.22. Running
+        the pre-spot combo on an older version still works via explicit flags —
+        --feature autoscaler --feature image-registry --feature parallel-upgrade
+        --feature disk-size.
+        """
+        assert fm.scenario_versions("day1-combo") == ["4.22", "5.0"]
 
     def test_resolve_rejects_unavailable_version(self, fm):
         with pytest.raises(ScenarioError, match="not available on OpenShift 4.20"):
@@ -1546,6 +1555,7 @@ SCENARIO_RENDER_EXPECTATIONS = {
         ("image_registry", "ROSAControlPlane", "clusterRegistryConfig"),
         ("parallel_upgrade", "ROSAMachinePool", "updateConfig"),
         ("disk_size", "ROSAMachinePool", "volumeSize"),
+        ("spot_market_options", "ROSAMachinePool", "spotMarketOptions"),
     ],
     "day1-networking": [
         ("no_cni", "ROSAControlPlane", "network"),
@@ -1630,6 +1640,88 @@ class TestScenarioRendersThroughTemplates:
     def test_422_keeps_stable_channel(self, fm, scenario_env):
         specs = _render_scenario(fm, "day1-basic", "4.22", "rosa-controlplane-only.yaml.j2")
         assert specs["ROSAControlPlane"]["channelGroup"] == "stable"
+
+
+class TestSpotMarketOptions:
+    """ROSAMachinePool.spec.spotMarketOptions — kubernetes-sigs/cluster-api-provider-aws#6334.
+
+    maxPrice is rendered explicitly rather than left to the CRD default, so that
+    the value verify_spot_market_options.yml compares against is the one the
+    template asked for. These tests pin that contract.
+    """
+
+    @pytest.mark.parametrize("template", [
+        "rosa-controlplane-only.yaml.j2",
+        "rosa-combined-automation.yaml.j2",
+    ])
+    @pytest.mark.parametrize("version", ["4.22", "5.0"])
+    def test_defaults_to_on_demand_bid(self, fm, template, version):
+        extra_vars = _coerce_like_runner(fm.resolve_to_extra_vars(["spot_market_options"]))
+        docs = _render_template(template, version, extra_vars)
+        specs = {d["kind"]: d.get("spec", {}) for d in docs if "kind" in d}
+        assert specs["ROSAMachinePool"]["spotMarketOptions"] == {"maxPrice": "on-demand"}
+
+    def test_explicit_max_price_reaches_the_manifest(self, fm):
+        extra_vars = _coerce_like_runner({
+            **fm.resolve_to_extra_vars(["spot_market_options"]),
+            "spot_max_price": "0.5",
+        })
+        docs = _render_template("rosa-controlplane-only.yaml.j2", "4.22", extra_vars)
+        specs = {d["kind"]: d.get("spec", {}) for d in docs if "kind" in d}
+        assert specs["ROSAMachinePool"]["spotMarketOptions"]["maxPrice"] == "0.5"
+
+    def test_max_price_is_a_string_not_a_float(self, fm):
+        """The CRD types maxPrice as a string; an unquoted 0.5 would be rejected."""
+        extra_vars = _coerce_like_runner({
+            **fm.resolve_to_extra_vars(["spot_market_options"]),
+            "spot_max_price": "0.5",
+        })
+        docs = _render_template("rosa-controlplane-only.yaml.j2", "4.22", extra_vars)
+        specs = {d["kind"]: d.get("spec", {}) for d in docs if "kind" in d}
+        assert isinstance(specs["ROSAMachinePool"]["spotMarketOptions"]["maxPrice"], str)
+
+    def test_absent_when_not_requested(self, fm):
+        """An unrequested feature must render nothing — not an empty block."""
+        docs = _render_template("rosa-controlplane-only.yaml.j2", "4.22", {})
+        specs = {d["kind"]: d.get("spec", {}) for d in docs if "kind" in d}
+        assert "spotMarketOptions" not in specs["ROSAMachinePool"]
+
+    def test_alias_resolves(self, fm):
+        assert fm.resolve_alias("spot") == "spot_market_options"
+
+    def test_enable_flag_is_the_var_the_template_reads(self, fm):
+        extra_vars = fm.resolve_to_extra_vars(["spot_market_options"])
+        assert extra_vars["spot_instances"] == "true"
+
+    def test_rejected_below_min_version(self, fm):
+        errors = fm.validate_features(["spot_market_options"], "4.21")
+        assert len(errors) == 1
+        assert "4.22" in errors[0]
+
+    def test_valid_on_422(self, fm):
+        assert fm.validate_features(["spot_market_options"], "4.22") == []
+
+    def test_needs_no_user_input(self, fm):
+        """on-demand is a working default, so no -e is required to run the test."""
+        assert fm.check_required_inputs(["spot_market_options"], {}) == []
+
+    def test_registry_and_compat_agree_on_min_version(self, fm):
+        assert fm.get_feature("spot_market_options")["min_version"] == \
+            fm._feature_availability["spot_market_options"]["min_version"]
+
+    def test_verification_task_exists(self):
+        """playbooks/verify_feature_flags.yml includes it by this exact path."""
+        task = (Path(__file__).parent.parent / "tasks" / "features"
+                / "verify_spot_market_options.yml")
+        assert task.exists()
+
+    def test_in_crd_field_map_so_suite_21_accepts_it(self):
+        """setup_feature_verification.yml derives valid --feature values from
+        crd_field_map; a feature missing from it is rejected as unknown."""
+        playbook = (Path(__file__).parent.parent / "playbooks"
+                    / "verify_feature_flags.yml").read_text()
+        assert 'spot_market_options: {crd: "rosamachinepools' in playbook
+        assert 'field: "spotMarketOptions"}' in playbook
 
 
 class TestVersionTemplateParity:

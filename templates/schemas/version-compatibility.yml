@@ -70,6 +70,12 @@ feature_availability:
   fips:
     min_version: "4.21"
     max_version: null
+  # ROSAMachinePool.spec.spotMarketOptions landed in CAPA after the 4.21-era
+  # provider, so it is gated at 4.22. Until an MCE build ships a CRD carrying
+  # the field, suite 21 reports WARN (platform limitation), not FAIL.
+  spot_market_options:
+    min_version: "4.22"
+    max_version: null
   additional_tags:
     min_version: "4.18"
     max_version: null

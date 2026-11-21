@@ -31,6 +31,7 @@
       disk_size: {crd: "rosamachinepools.infrastructure.cluster.x-k8s.io", field: "volumeSize"}
       parallel_upgrade: {crd: "rosamachinepools.infrastructure.cluster.x-k8s.io", field: "updateConfig"}
       security_groups: {crd: "rosamachinepools.infrastructure.cluster.x-k8s.io", field: "additionalSecurityGroups"}
+      spot_market_options: {crd: "rosamachinepools.infrastructure.cluster.x-k8s.io", field: "spotMarketOptions"}
       audit_logging: {crd: "rosacontrolplanes.controlplane.cluster.x-k8s.io", field: "cloudWatchlogForwarder"}
       proxy_enabled: {crd: "rosacontrolplanes.controlplane.cluster.x-k8s.io", field: "proxy"}
       default_autoscaling: {crd: "rosacontrolplanes.controlplane.cluster.x-k8s.io", field: "defaultMachinePoolSpec"}
@@ -111,6 +112,10 @@
     - name: "CHECK: Additional Security Groups"
       ansible.builtin.include_tasks: "{{ playbook_dir }}/../tasks/features/verify_security_groups.yml"
       when: "'security_groups' in requested_features_list"
+
+    - name: "CHECK: Spot Instances"
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../tasks/features/verify_spot_market_options.yml"
+      when: "'spot_market_options' in requested_features_list"
 
     - name: "CHECK: Availability Zones"
       ansible.builtin.include_tasks: "{{ playbook_dir }}/../tasks/features/verify_availability_zones.yml"

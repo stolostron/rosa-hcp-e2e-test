@@ -318,3 +318,11 @@ spec:
     - {{ sg }}
 {% endfor %}
 {% endif %}
+{#  maxPrice is always emitted rather than relying on the CRD default, so the
+    value verification compares against is the value this template asked for.
+    "on-demand" bids the on-demand price with no separate cap — the safe CI
+    choice, since a numeric bid below the live Spot price yields no capacity. #}
+{% if spot_instances is defined and spot_instances | bool %}
+  spotMarketOptions:
+    maxPrice: "{{ spot_max_price | default('on-demand') }}"
+{% endif %}
