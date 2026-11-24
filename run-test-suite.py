@@ -31,6 +31,7 @@ import argparse
 import fcntl
 import json
 import os
+import signal
 import subprocess
 import sys
 import threading
@@ -46,6 +47,11 @@ import yaml
 # expand JUnit testcases and archives a dated copy alongside the other reports.
 FEATURE_VERIFICATION_FILE = "feature-verification.json"
 FEATURE_VERIFICATION_PLAYBOOK = "verify_feature_flags.yml"
+
+# How long to wait for the output reader once the playbook is gone. The reader
+# can be inside a synchronous agent callback that cannot be interrupted, so the
+# wait is bounded; a warning is logged if the reader is still running.
+READER_JOIN_TIMEOUT = 10
 
 # AI Agent Framework (optional - only imported if --ai-agent flag is used)
 try:
@@ -96,6 +102,19 @@ class Colors:
     ENDC = '\033[0m'
     BOLD = '\033[1m'
     UNDERLINE = '\033[4m'
+
+
+def _kill_process_group(process: subprocess.Popen) -> None:
+    """Kill the playbook and the workers Ansible forked from it.
+
+    SIGKILL on the direct child leaves task workers (and the shell commands
+    they run) alive, still talking to the cluster. The playbook is started in
+    its own session, so its pid is the process group to signal.
+    """
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass  # the group is already gone
 
 
 class TestSuiteRunner:
@@ -344,12 +363,23 @@ class TestSuiteRunner:
         print(f"\n{Colors.CYAN}⏳ Running: {playbook.get('description', playbook_name)}{Colors.ENDC}")
 
         start_time = time.time()
+        output_lines = []
 
         try:
             cmd = self._build_ansible_cmd(playbook_path, playbook)
 
             # Set timeout if specified
             timeout = playbook.get("timeout", None)
+
+            # One monotonic deadline for the process wait and the cleanup
+            # waits that follow it, so a dead worker cannot push the suite past
+            # its configured timeout.
+            deadline = time.monotonic() + timeout if timeout else None
+
+            def _remaining_budget(cap: float) -> float:
+                if deadline is None:
+                    return cap
+                return max(0.0, min(cap, deadline - time.monotonic()))
 
             # Execute playbook with real-time output streaming
             # This prevents Jenkins timeout issues on long-running operations
@@ -360,7 +390,8 @@ class TestSuiteRunner:
                 stdin=subprocess.DEVNULL,
                 text=True,
                 bufsize=1,  # Line buffered
-                cwd=self.base_dir
+                cwd=self.base_dir,
+                start_new_session=True,  # own process group, see _kill_process_group
             )
 
             # Start sidecar log file tailer for real-time agent monitoring.
@@ -395,7 +426,11 @@ class TestSuiteRunner:
                                                 if line:
                                                     try:
                                                         with self._agent_lock:
-                                                            self.monitor_agent.process_line(line)
+                                                            # The tailer may have waited on
+                                                            # this lock while the playbook was
+                                                            # stopped; skip the buffered line.
+                                                            if not sidecar_stop.is_set():
+                                                                self.monitor_agent.process_line(line)
                                                     except Exception:
                                                         pass
                                         last_pos = f.tell()
@@ -407,37 +442,79 @@ class TestSuiteRunner:
                     if self.verbosity > 0:
                         print(f"{Colors.CYAN}AI Agent sidecar monitoring: {sidecar_logfile}{Colors.ENDC}")
 
-            # Capture output while streaming it in real-time
-            output_lines = []
+            # Capture output while streaming it in real-time. The reader runs
+            # in its own thread so the main thread can enforce the timeout even
+            # when the playbook stops producing output.
+            reader_stop = threading.Event()
+
+            def _stream_output():
+                try:
+                    for line in process.stdout:
+                        if reader_stop.is_set():
+                            break
+                        # Print immediately (prevents timeout detection in CI/CD)
+                        print(line, end='')
+                        sys.stdout.flush()
+                        # Also store for later use
+                        output_lines.append(line)
+
+                        # AI Agent Hook: Process line in real-time for issue detection
+                        if self.ai_agent_enabled and self.monitor_agent:
+                            try:
+                                with self._agent_lock:
+                                    # The reader may have waited on this lock
+                                    # while the playbook was stopped; do not
+                                    # start a callback for the buffered line.
+                                    if not reader_stop.is_set():
+                                        self.monitor_agent.process_line(line)
+                            except Exception as e:
+                                if self.verbosity > 0:
+                                    print(f"{Colors.YELLOW}AI Agent Warning: {str(e)}{Colors.ENDC}")
+                except Exception as e:
+                    if self.verbosity > 0:
+                        print(f"{Colors.YELLOW}Output reader warning: {str(e)}{Colors.ENDC}")
+
+            reader_thread = threading.Thread(target=_stream_output, daemon=True)
+            reader_thread.start()
+
+            timed_out = False
             try:
-                for line in process.stdout:
-                    # Print immediately (prevents timeout detection in CI/CD)
-                    print(line, end='')
-                    sys.stdout.flush()
-                    # Also store for later use
-                    output_lines.append(line)
-
-                    # AI Agent Hook: Process line in real-time for issue detection
-                    if self.ai_agent_enabled and self.monitor_agent:
-                        try:
-                            with self._agent_lock:
-                                self.monitor_agent.process_line(line)
-                        except Exception as e:
-                            if self.verbosity > 0:
-                                print(f"{Colors.YELLOW}AI Agent Warning: {str(e)}{Colors.ENDC}")
-
-                # Wait for process to complete
-                returncode = process.wait(timeout=timeout)
-
+                # Enforce the timeout while the reader keeps streaming output.
+                wait_budget = (
+                    None if deadline is None else max(0.0, deadline - time.monotonic())
+                )
+                returncode = process.wait(timeout=wait_budget)
             except subprocess.TimeoutExpired:
-                process.kill()
+                timed_out = True
+                reader_stop.set()  # do not start callbacks for buffered lines
+                _kill_process_group(process)
                 process.wait()
                 raise  # Re-raise to be caught by outer exception handler
+            except BaseException:
+                # Ctrl+C must also stop the playbook's workers: it runs in its
+                # own session, so the terminal signal does not reach them.
+                reader_stop.set()
+                _kill_process_group(process)
+                process.wait()
+                raise
             finally:
-                # Stop the sidecar tailer thread
+                # Stop the sidecar tailer first so it stops competing for the
+                # agent lock with the reader's remaining output.
                 sidecar_stop.set()
+                # EOF normally arrives as soon as the playbook exits. If a
+                # worker outlives the leader and keeps stdout open, kill the
+                # group instead of waiting past the deadline.
+                reader_thread.join(timeout=_remaining_budget(READER_JOIN_TIMEOUT))
+                if reader_thread.is_alive() and not timed_out:
+                    _kill_process_group(process)
+                    reader_thread.join(timeout=_remaining_budget(5.0))
+                if reader_thread.is_alive():
+                    reason = "timeout" if timed_out else "playbook exit"
+                    print(
+                        f"{Colors.YELLOW}Output reader still busy after the {reason}{Colors.ENDC}"
+                    )
                 if sidecar_thread is not None:
-                    sidecar_thread.join(timeout=5)
+                    sidecar_thread.join(timeout=_remaining_budget(5.0))
 
             duration = time.time() - start_time
             output = ''.join(output_lines)
@@ -479,7 +556,8 @@ class TestSuiteRunner:
                 "success": False,
                 "is_error": True,
                 "error": f"Timeout after {timeout} seconds",
-                "duration": duration
+                "duration": duration,
+                "output": ''.join(output_lines)
             }
         except Exception as e:
             duration = time.time() - start_time
