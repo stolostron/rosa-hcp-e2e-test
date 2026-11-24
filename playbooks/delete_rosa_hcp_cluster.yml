@@ -47,6 +47,19 @@
     wait_for_deletion: true
     deletion_timeout: 3600  # 60 minutes (AWS resource cleanup can be slow)
 
+    # Per-resource deletion timeouts. delete_rosa_hcp_resources.yml already reads
+    # these (via `| default(deletion_timeout)`), but nothing defined them, so every
+    # resource silently fell back to the 60-minute global timeout — including
+    # ROSANetwork, which normally completes in 2-5 minutes. Setting them here makes
+    # a stuck resource fail in minutes rather than an hour.
+    # Override per run, e.g. -e rosacontrolplane_timeout=900
+    # Each value leaves headroom above the typical duration: the point is to
+    # fail a genuinely stuck resource in minutes rather than an hour, not to
+    # fail a slow-but-healthy one.
+    rosacontrolplane_timeout: 1800  # 30 minutes (typical 15-25 min)
+    rosanetwork_timeout: 600  # 10 minutes (typical 2-5 min)
+    rosaroleconfig_timeout: 600  # 10 minutes (typical <1 min, allows AWS API slowness)
+
   tasks:
     - name: Load user variables
       ansible.builtin.include_vars: "{{ item }}"
