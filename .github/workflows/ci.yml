@@ -2,9 +2,9 @@ name: CI/CD Pipeline
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main, dev]
   pull_request:
-    branches: [main, develop]
+    branches: [main, dev]
 
 permissions:
   contents: read
@@ -197,6 +197,26 @@ jobs:
         run: |
           ./run-test-suite.py --help
 
+  pytest:
+    name: Python Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.11'
+
+      - name: Install test dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Run pytest
+        run: python -m pytest tests agents scripts -q
+
   all-checks-passed:
     name: All CI Checks Passed
     runs-on: ubuntu-latest
@@ -207,6 +227,7 @@ jobs:
       - python-lint
       - security-scan
       - test-suite-dry-run
+      - pytest
     if: always()
     steps:
       - name: Check if all jobs passed
@@ -216,7 +237,8 @@ jobs:
              [[ "${{ needs.ansible-syntax.result }}" != "success" ]] || \
              [[ "${{ needs.python-lint.result }}" != "success" ]] || \
              [[ "${{ needs.security-scan.result }}" != "success" ]] || \
-             [[ "${{ needs.test-suite-dry-run.result }}" != "success" ]]; then
+             [[ "${{ needs.test-suite-dry-run.result }}" != "success" ]] || \
+             [[ "${{ needs.pytest.result }}" != "success" ]]; then
             echo "Some checks failed"
             exit 1
           else
