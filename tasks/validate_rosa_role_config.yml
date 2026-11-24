@@ -229,23 +229,23 @@
       {% endfor %}
   when: validation_failed
 
-rescue:
-  - name: Handle validation failure
-    debug:
-      msg: |
-        ROSARoleConfig validation encountered an error.
-        This could indicate the resource doesn't exist or there are permission issues.
+  rescue:
+    - name: Handle validation failure
+      debug:
+        msg: |
+          ROSARoleConfig validation encountered an error.
+          This could indicate the resource doesn't exist or there are permission issues.
 
-  - name: Set validation failure facts
-    set_fact:
-      rosa_role_config_validation_passed: false
-      rosa_role_config_validation_errors: ["Validation task failed due to exception"]
+    - name: Set validation failure facts
+      set_fact:
+        rosa_role_config_validation_passed: false
+        rosa_role_config_validation_errors: ["Validation task failed due to exception"]
 
-  - name: Display rescue information
-    debug:
-      msg: |
-        Validation failed with exception. Common causes:
-        - ROSARoleConfig resource not found
-        - Insufficient permissions to query resource
-        - CAPI/CAPA controllers not running
-        - Network connectivity issues
+    - name: Display rescue information
+      debug:
+        msg: |
+          Validation failed with exception. Common causes:
+          - ROSARoleConfig resource not found
+          - Insufficient permissions to query resource
+          - CAPI/CAPA controllers not running
+          - Network connectivity issues

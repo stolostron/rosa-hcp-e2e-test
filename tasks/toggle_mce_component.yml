@@ -1,4 +1,4 @@
-- name: Toggle {{ component }} in MCE 
+- name: Toggle {{ component }} in MCE
   block:
   - name: Construct patch string
     shell: |
@@ -13,4 +13,4 @@
     shell: |
       oc patch mce {{ mce_name.stdout }} -p '{{ patch_str.stdout }}' --type=json
     changed_when: true
-    register: patch_status  
+    register: patch_status

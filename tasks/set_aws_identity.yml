@@ -1,5 +1,6 @@
+---
 - name: Set the AWSClusterControllerIdentity
-  copy:
+  ansible.builtin.copy:
     content: |
       apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
       kind: AWSClusterControllerIdentity
@@ -8,7 +9,8 @@
       spec:
         allowedNamespaces: {}  # matches all namespaces
     dest: "{{ output_dir }}/aws_cluster-controller_identity.yaml"
+    mode: "0600"
 
 - name: Apply aws_cluster-controller_identity.yaml
-  shell: |
+  ansible.builtin.shell: |
     oc apply -f {{ output_dir }}/aws_cluster-controller_identity.yaml

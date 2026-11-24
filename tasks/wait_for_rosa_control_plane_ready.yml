@@ -1,13 +1,14 @@
+---
 - name: Wait for ROSA Control Plane status to be ready
-  shell: oc get rosacontrolplane {{ cluster_name }} -n {{ rosa_hcp_namespace | default('ns-rosa-hcp') }} -o json | jq -r '.status.ready'
+  ansible.builtin.shell: oc get rosacontrolplane {{ cluster_name }} -n {{ rosa_hcp_namespace | default('ns-rosa-hcp') }} -o json | jq -r '.status.ready'
   register: rcp_status
   until: rcp_status.stdout | bool
-  retries: "{{ 75 if retry_count is undefined else retry_count|int }}"
-  delay: "{{ 30 if delay is undefined else delay|int }}"
+  retries: "{{ 75 if retry_count is undefined else retry_count | int }}"
+  delay: "{{ 30 if delay is undefined else delay | int }}"
   ignore_errors: true
 
 - name: Get ROSA Control Plane full status on failure
-  shell: >
+  ansible.builtin.shell: >
     oc get rosacontrolplane {{ cluster_name }} -n {{ rosa_hcp_namespace | default('ns-rosa-hcp') }}
     -o json | jq -r '{
       ready: .status.ready,
@@ -20,7 +21,7 @@
   when: not (rcp_status.stdout | bool)
 
 - name: Get recent events for ROSA Control Plane on failure
-  shell: >
+  ansible.builtin.shell: >
     oc get events -n {{ rosa_hcp_namespace | default('ns-rosa-hcp') }}
     --field-selector involvedObject.name={{ cluster_name }}
     --sort-by='.lastTimestamp' -o json 2>/dev/null |
@@ -30,7 +31,7 @@
   when: not (rcp_status.stdout | bool)
 
 - name: Fail if ROSA Control Plane did not become ready
-  fail:
+  ansible.builtin.fail:
     msg: |
       ROSA HCP cluster did not become ready within the timeout period.
 
@@ -45,7 +46,7 @@
   when: not (rcp_status.stdout | bool)
 
 - name: Print the ROSA control plane is ready
-  debug:
+  ansible.builtin.debug:
     msg: |
       ROSA HCP Control Plane is READY!
 

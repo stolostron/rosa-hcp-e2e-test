@@ -211,62 +211,62 @@
 
   when: not rosa_rules_exist
 
-rescue:
-  - name: Handle ClusterRole update failure
-    debug:
-      msg: |
-        CAPA ClusterRole update failed.
-        Attempting to gather diagnostic information...
+  rescue:
+    - name: Handle ClusterRole update failure
+      debug:
+        msg: |
+          CAPA ClusterRole update failed.
+          Attempting to gather diagnostic information...
 
-  - name: Get current ClusterRole status for debugging
-    kubernetes.core.k8s_info:
-      api_version: rbac.authorization.k8s.io/v1
-      kind: ClusterRole
-      name: "{{ capa_clusterrole_name }}"
-    register: failed_clusterrole
-    failed_when: false
+    - name: Get current ClusterRole status for debugging
+      kubernetes.core.k8s_info:
+        api_version: rbac.authorization.k8s.io/v1
+        kind: ClusterRole
+        name: "{{ capa_clusterrole_name }}"
+      register: failed_clusterrole
+      failed_when: false
 
-  - name: Display failure information
-    debug:
-      msg: |
-        CAPA ClusterRole Update Failed:
-        {% if failed_clusterrole.resources | length > 0 %}
-        - Current Rules Count: {{ failed_clusterrole.resources[0].rules | length }}
-        - ClusterRole Generation: {{ failed_clusterrole.resources[0].metadata.generation | default('N/A') }}
-        {% else %}
-        - ClusterRole not found or not accessible
-        {% endif %}
+    - name: Display failure information
+      debug:
+        msg: |
+          CAPA ClusterRole Update Failed:
+          {% if failed_clusterrole.resources | length > 0 %}
+          - Current Rules Count: {{ failed_clusterrole.resources[0].rules | length }}
+          - ClusterRole Generation: {{ failed_clusterrole.resources[0].metadata.generation | default('N/A') }}
+          {% else %}
+          - ClusterRole not found or not accessible
+          {% endif %}
 
-  - name: Set failure facts
-    set_fact:
-      capa_clusterrole_update_successful: false
-      capa_clusterrole_update_failed: true
+    - name: Set failure facts
+      set_fact:
+        capa_clusterrole_update_successful: false
+        capa_clusterrole_update_failed: true
 
-  - name: Provide manual update guidance
-    debug:
-      msg: |
-        CAPA ClusterRole Update Failed - Manual Steps:
+    - name: Provide manual update guidance
+      debug:
+        msg: |
+          CAPA ClusterRole Update Failed - Manual Steps:
 
-        1. Backup current ClusterRole:
-           oc get clusterrole {{ capa_clusterrole_name }} -o yaml > capa-clusterrole-backup.yaml
+          1. Backup current ClusterRole:
+             oc get clusterrole {{ capa_clusterrole_name }} -o yaml > capa-clusterrole-backup.yaml
 
-        2. Edit ClusterRole to add ROSARoleConfig permissions:
-           oc edit clusterrole {{ capa_clusterrole_name }}
+          2. Edit ClusterRole to add ROSARoleConfig permissions:
+             oc edit clusterrole {{ capa_clusterrole_name }}
 
-        3. Add these rules to the ClusterRole:
-        {{ rosa_role_config_rules | to_nice_yaml | indent(10) }}
+          3. Add these rules to the ClusterRole:
+          {{ rosa_role_config_rules | to_nice_yaml | indent(10) }}
 
-        4. Restart CAPA controller:
-           oc rollout restart deployment/capa-controller-manager -n {{ capa_namespace }}
+          4. Restart CAPA controller:
+             oc rollout restart deployment/capa-controller-manager -n {{ capa_namespace }}
 
-        5. Restore from backup if needed:
-           oc apply -f {{ output_dir }}/capa-clusterrole-backup-{{ ansible_date_time.epoch }}.yaml
+          5. Restore from backup if needed:
+             oc apply -f {{ output_dir }}/capa-clusterrole-backup-{{ ansible_date_time.epoch }}.yaml
 
-  - name: Fail the task
-    fail:
-      msg: |
-        CAPA ClusterRole update failed.
-        Please check the diagnostic information above and consider manual update steps.
+    - name: Fail the task
+      fail:
+        msg: |
+          CAPA ClusterRole update failed.
+          Please check the diagnostic information above and consider manual update steps.
 
 - name: Display final ClusterRole status
   debug:

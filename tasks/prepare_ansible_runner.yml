@@ -4,17 +4,17 @@
 # For local development, this can be skipped with: -e skip_ansible_runner=true
 
 - name: Validate deployment_mode
-  fail:
+  ansible.builtin.fail:
     msg: "Invalid DEPLOYMENT_MODE '{{ deployment_mode }}'. Must be 'standalone' or 'mce'."
   when: deployment_mode not in ['standalone', 'mce']
 
 - name: Display Ansible Runner preparation message
-  debug:
+  ansible.builtin.debug:
     msg: "Preparing Ansible runner host environment..."
 
 - name: Ensure output directory exists
-  file:
+  ansible.builtin.file:
     path: "{{ output_dir | default('~/output') }}"
     state: directory
-    mode: '0755'
+    mode: "0755"
   when: output_dir is defined

@@ -195,80 +195,80 @@
 
   when: image_update_needed
 
-rescue:
-  - name: Handle CAPA controller update failure
-    debug:
-      msg: |
-        CAPA controller image update failed.
-        Attempting to gather diagnostic information...
+  rescue:
+    - name: Handle CAPA controller update failure
+      debug:
+        msg: |
+          CAPA controller image update failed.
+          Attempting to gather diagnostic information...
 
-  - name: Get current deployment status for debugging
-    kubernetes.core.k8s_info:
-      api_version: apps/v1
-      kind: Deployment
-      name: "{{ capa_controller_name }}"
-      namespace: "{{ capa_controller_namespace }}"
-    register: failed_capa_deployment
-    failed_when: false
+    - name: Get current deployment status for debugging
+      kubernetes.core.k8s_info:
+        api_version: apps/v1
+        kind: Deployment
+        name: "{{ capa_controller_name }}"
+        namespace: "{{ capa_controller_namespace }}"
+      register: failed_capa_deployment
+      failed_when: false
 
-  - name: Display failure information
-    debug:
-      msg: |
-        CAPA Controller Update Failed:
-        {% if failed_capa_deployment.resources | length > 0 %}
-        - Current Image: {{ failed_capa_deployment.resources[0].spec.template.spec.containers[0].image }}
-        - Available Replicas: {{ failed_capa_deployment.resources[0].status.availableReplicas | default(0) }}
-        - Conditions:
-        {% for condition in failed_capa_deployment.resources[0].status.conditions | default([]) %}
-          * {{ condition.type }}: {{ condition.status }} ({{ condition.reason | default('N/A') }})
-            Message: {{ condition.message | default('N/A') }}
-        {% endfor %}
-        {% endif %}
+    - name: Display failure information
+      debug:
+        msg: |
+          CAPA Controller Update Failed:
+          {% if failed_capa_deployment.resources | length > 0 %}
+          - Current Image: {{ failed_capa_deployment.resources[0].spec.template.spec.containers[0].image }}
+          - Available Replicas: {{ failed_capa_deployment.resources[0].status.availableReplicas | default(0) }}
+          - Conditions:
+          {% for condition in failed_capa_deployment.resources[0].status.conditions | default([]) %}
+            * {{ condition.type }}: {{ condition.status }} ({{ condition.reason | default('N/A') }})
+              Message: {{ condition.message | default('N/A') }}
+          {% endfor %}
+          {% endif %}
 
-  - name: Get deployment events for debugging
-    kubernetes.core.k8s_info:
-      api_version: v1
-      kind: Event
-      namespace: "{{ capa_controller_namespace }}"
-      field_selectors:
-        - involvedObject.name={{ capa_controller_name }}
-        - involvedObject.kind=Deployment
-    register: capa_deployment_events
-    failed_when: false
+    - name: Get deployment events for debugging
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Event
+        namespace: "{{ capa_controller_namespace }}"
+        field_selectors:
+          - involvedObject.name={{ capa_controller_name }}
+          - involvedObject.kind=Deployment
+      register: capa_deployment_events
+      failed_when: false
 
-  - name: Display deployment events
-    debug:
-      msg: |
-        Recent deployment events:
-        {% for event in capa_deployment_events.resources | sort(attribute='firstTimestamp') | reverse %}
-        - {{ event.firstTimestamp | default(event.eventTime) }}: {{ event.reason }} - {{ event.message }}
-        {% endfor %}
-    when: capa_deployment_events.resources is defined and capa_deployment_events.resources | length > 0
+    - name: Display deployment events
+      debug:
+        msg: |
+          Recent deployment events:
+          {% for event in capa_deployment_events.resources | sort(attribute='firstTimestamp') | reverse %}
+          - {{ event.firstTimestamp | default(event.eventTime) }}: {{ event.reason }} - {{ event.message }}
+          {% endfor %}
+      when: capa_deployment_events.resources is defined and capa_deployment_events.resources | length > 0
 
-  - name: Set failure facts
-    set_fact:
-      capa_controller_update_successful: false
-      capa_controller_update_failed: true
+    - name: Set failure facts
+      set_fact:
+        capa_controller_update_successful: false
+        capa_controller_update_failed: true
 
-  - name: Provide rollback guidance
-    debug:
-      msg: |
-        CAPA Controller Update Failed - Rollback Options:
+    - name: Provide rollback guidance
+      debug:
+        msg: |
+          CAPA Controller Update Failed - Rollback Options:
 
-        1. Manual rollback to previous image:
-           oc set image deployment/{{ capa_controller_name }} manager={{ current_image }} -n {{ capa_controller_namespace }}
+          1. Manual rollback to previous image:
+             oc set image deployment/{{ capa_controller_name }} manager={{ current_image }} -n {{ capa_controller_namespace }}
 
-        2. Restore from backup (if created):
-           oc apply -f {{ output_dir }}/capa-controller-backup-{{ ansible_date_time.epoch }}.yaml
+          2. Restore from backup (if created):
+             oc apply -f {{ output_dir }}/capa-controller-backup-{{ ansible_date_time.epoch }}.yaml
 
-        3. Check image availability:
-           - Verify the image {{ capa_new_image }} exists and is accessible
-           - Check image pull secrets if using private registry
+          3. Check image availability:
+             - Verify the image {{ capa_new_image }} exists and is accessible
+             - Check image pull secrets if using private registry
 
-  - name: Fail the task
-    fail:
-      msg: |
-        CAPA controller image update failed.
-        Previous image: {{ current_image }}
-        Target image: {{ capa_new_image }}
-        Please check the diagnostic information above and consider rollback options.
+    - name: Fail the task
+      fail:
+        msg: |
+          CAPA controller image update failed.
+          Previous image: {{ current_image }}
+          Target image: {{ capa_new_image }}
+          Please check the diagnostic information above and consider rollback options.

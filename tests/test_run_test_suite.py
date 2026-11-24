@@ -964,7 +964,7 @@ def test_artifact_archived_once_per_run(tmp_path, monkeypatch):
     monkeypatch.setattr(_module.json, "dump", counting_dump)
 
     for fmt in ("json", "html", "junit"):
-        runner.save_results(format=fmt)
+        runner.save_results(output_format=fmt)
 
     assert len(writes) == 1, f"archive written {len(writes)}x, expected once per run"
     assert list(tmp_path.rglob("feature-verification-*.json"))
@@ -978,7 +978,7 @@ def test_save_results_writes_one_junit_file_per_run(tmp_path):
     runner.results["suites"] = []
     runner.results["duration"] = 1.0
 
-    path = runner.save_results(format="junit")
+    path = runner.save_results(output_format="junit")
 
     xmls = list(tmp_path.rglob("*.xml"))
     assert xmls == [path], f"expected one JUnit file, found {xmls}"
@@ -993,8 +993,8 @@ def test_json_and_html_still_write_a_latest_copy(tmp_path):
     runner.results["suites"] = []
     runner.results["duration"] = 1.0
 
-    runner.save_results(format="json")
-    runner.save_results(format="html")
+    runner.save_results(output_format="json")
+    runner.save_results(output_format="html")
 
     assert (tmp_path / "latest-rosa-hcp-provision.json").exists()
     assert (tmp_path / "latest-rosa-hcp-provision.html").exists()

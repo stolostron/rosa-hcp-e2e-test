@@ -15,52 +15,52 @@
 # ================================================================
 
 - name: Set default value for cluster_name
-  set_fact:
+  ansible.builtin.set_fact:
     cluster_name: "test-cluster"
   when: cluster_name is not defined
 
 - name: Set default value for rosa_role_prefix
-  set_fact:
+  ansible.builtin.set_fact:
     rosa_role_prefix: "{{ cluster_name }}"
   when: rosa_role_prefix is not defined
 
 - name: Set default value for rosa_role_config_name
-  set_fact:
+  ansible.builtin.set_fact:
     rosa_role_config_name: "{{ cluster_name }}-roles"
   when: rosa_role_config_name is not defined
 
 - name: Set default value for rosa_network_name
-  set_fact:
+  ansible.builtin.set_fact:
     rosa_network_name: "{{ cluster_name }}-network"
   when: rosa_network_name is not defined
 
 - name: Set default value for network_cidr
-  set_fact:
+  ansible.builtin.set_fact:
     network_cidr: "10.0.0.0/16"
   when: network_cidr is not defined
 
 - name: Set default value for availability_zone_count
-  set_fact:
+  ansible.builtin.set_fact:
     availability_zone_count: 2
   when: availability_zone_count is not defined
 
 - name: Set default value for create_rosa_roles
-  set_fact:
+  ansible.builtin.set_fact:
     create_rosa_roles: false
   when: create_rosa_roles is not defined
 
 - name: Set default value for create_rosa_network
-  set_fact:
+  ansible.builtin.set_fact:
     create_rosa_network: false
   when: create_rosa_network is not defined
 
 - name: Override create_rosa_network when BYON is enabled
-  set_fact:
+  ansible.builtin.set_fact:
     create_rosa_network: false
   when: byon_vpc is defined and byon_vpc | bool
 
 - name: Validate BYON subnet IDs provided
-  fail:
+  ansible.builtin.fail:
     msg: >
       BYON (Bring Your Own Network) requires subnet IDs.
       Pass them with: -e 'byon_subnet_ids=["subnet-0abc1234","subnet-0def5678"]'
@@ -70,7 +70,7 @@
     - byon_subnet_ids is not defined or byon_subnet_ids | length == 0
 
 - name: Validate BYON subnet ID format
-  assert:
+  ansible.builtin.assert:
     that:
       - byon_subnet_ids | map('regex_search', '^subnet-([a-f0-9]{8}|[a-f0-9]{17})$') | select | list | length == byon_subnet_ids | length
     fail_msg: "FAIL: Invalid byon_subnet_ids format. Expected format: subnet-<8 or 17 hex chars>"
@@ -79,7 +79,7 @@
     - byon_subnet_ids is defined and byon_subnet_ids | length > 0
 
 - name: Validate BYON availability zones provided
-  fail:
+  ansible.builtin.fail:
     msg: >
       BYON (Bring Your Own Network) requires availability zones.
       Pass them with: -e 'byon_availability_zones=["us-west-2a","us-west-2b"]'
@@ -89,33 +89,42 @@
     - byon_availability_zones is not defined or byon_availability_zones | length == 0
 
 - name: Ensure boolean types for flags
-  set_fact:
+  ansible.builtin.set_fact:
     create_rosa_roles: "{{ create_rosa_roles | bool }}"
     create_rosa_network: "{{ create_rosa_network | bool }}"
 
 - name: Set default value for aws_region
-  set_fact:
+  ansible.builtin.set_fact:
     aws_region: "us-west-2"
   when: aws_region is not defined
 
 - name: Set default value for openshift_version
-  set_fact:
+  ansible.builtin.set_fact:
     openshift_version: "4.22.6"
   when: openshift_version is not defined
 
 - name: Set default value for rosa_hcp_namespace
-  set_fact:
+  ansible.builtin.set_fact:
     rosa_hcp_namespace: "ns-rosa-hcp"
   when: rosa_hcp_namespace is not defined
 
 - name: Resolve OpenShift version from OCM API
-  include_tasks: resolve_ocm_version.yml
+  ansible.builtin.include_tasks: resolve_ocm_version.yml
 
 - name: Detect core CAPI API version on hub cluster
-  include_tasks: detect_capi_core_api_version.yml
+  ansible.builtin.include_tasks: detect_capi_core_api_version.yml
+
+- name: Compute the resolved version reference note
+  ansible.builtin.set_fact:
+    _resolved_version_note: >-
+      {%- if resolved_openshift_version is defined and resolved_openshift_version != openshift_version %} (resolved from {{ openshift_version }}){% endif %}
+
+- name: Compute the resolved version display
+  ansible.builtin.set_fact:
+    _resolved_version_display: "{{ resolved_openshift_version | default(openshift_version) }}{{ _resolved_version_note }}"
 
 - name: Display provisioning plan
-  debug:
+  ansible.builtin.debug:
     msg: |
       ═══════════════════════════════════════════════════════════════
       🚀 ROSA HCP Cluster Provisioning Plan
@@ -124,7 +133,7 @@
       Cluster Name: {{ cluster_name }}
       Namespace: {{ rosa_hcp_namespace }}
       AWS Region: {{ aws_region }}
-      OpenShift Version: {{ resolved_openshift_version | default(openshift_version) }}{% if resolved_openshift_version is defined and resolved_openshift_version != openshift_version %} (resolved from {{ openshift_version }}){% endif %}
+      OpenShift Version: {{ _resolved_version_display }}
 
       Automation Options:
       ├─ Create RosaRoleConfig: {{ '✓ Enabled' if (create_rosa_roles | bool) else '✗ Disabled' }}
@@ -149,7 +158,7 @@
   when: create_rosa_roles | bool or create_rosa_network | bool
   block:
     - name: Fail if AWS credentials are missing
-      fail:
+      ansible.builtin.fail:
         msg: |
           ❌ AWS Automation Failed: Missing AWS credentials
 
@@ -173,11 +182,10 @@
           - Uncheck "Create ROSANetwork"
           - Manually provide AWS IAM roles, OIDC, and VPC/subnets
       when:
-        - (AWS_ACCESS_KEY_ID is not defined or AWS_ACCESS_KEY_ID == '') or
-          (AWS_SECRET_ACCESS_KEY is not defined or AWS_SECRET_ACCESS_KEY == '')
+        - (AWS_ACCESS_KEY_ID is not defined or AWS_ACCESS_KEY_ID == '') or (AWS_SECRET_ACCESS_KEY is not defined or AWS_SECRET_ACCESS_KEY == '')
 
     - name: Credentials check passed
-      debug:
+      ansible.builtin.debug:
         msg: "✅ AWS credentials are present and will be validated during resource creation"
 
 # ================================================================
@@ -187,8 +195,8 @@
   when: create_rosa_roles | bool
   block:
     - name: Display RosaRoleConfig creation message
-      debug:
-        msg: |
+      ansible.builtin.debug:
+        msg: |2
 
           ⏳ STEP 1/3: Creating RosaRoleConfig
           ───────────────────────────────────────────────────────────
@@ -199,17 +207,17 @@
           • OIDC Provider
 
     - name: Create RosaRoleConfig resource
-      include_tasks: create_rosa_role_config.yml
+      ansible.builtin.include_tasks: create_rosa_role_config.yml
       vars:
         rcp_version: "{{ resolved_openshift_version | default(openshift_version) }}"
 
     - name: Wait for RosaRoleConfig to be ready
-      include_tasks: wait_for_rosa_roles.yml
+      ansible.builtin.include_tasks: wait_for_rosa_roles.yml
       vars:
         wait_timeout: 600
 
     - name: RosaRoleConfig creation complete
-      debug:
+      ansible.builtin.debug:
         msg: |
           ✅ STEP 1 COMPLETE: RosaRoleConfig created successfully
 
@@ -221,8 +229,8 @@
 
 - name: Skip RosaRoleConfig creation
   when: not (create_rosa_roles | bool)
-  debug:
-    msg: |
+  ansible.builtin.debug:
+    msg: |2
 
       ⏩ STEP 1/3: Skipping RosaRoleConfig creation
       ───────────────────────────────────────────────────────────
@@ -235,8 +243,8 @@
   when: create_rosa_network | bool
   block:
     - name: Display ROSANetwork creation message
-      debug:
-        msg: |
+      ansible.builtin.debug:
+        msg: |2
 
           ⏳ STEP 2/3: Creating ROSANetwork
           ───────────────────────────────────────────────────────────
@@ -249,18 +257,18 @@
           • Route Tables
 
     - name: Create ROSANetwork resource
-      include_tasks: create_rosa_network.yml
+      ansible.builtin.include_tasks: create_rosa_network.yml
       vars:
         rosa_network_config_name: "{{ rosa_network_name }}"
         vpc_cidr_block: "{{ network_cidr }}"
 
     - name: Wait for ROSANetwork to be ready
-      include_tasks: wait_for_rosa_network.yml
+      ansible.builtin.include_tasks: wait_for_rosa_network.yml
       vars:
         wait_timeout: 900
 
     - name: ROSANetwork creation complete
-      debug:
+      ansible.builtin.debug:
         msg: |
           ✅ STEP 2 COMPLETE: ROSANetwork created successfully
 
@@ -272,8 +280,8 @@
 
 - name: Skip ROSANetwork creation
   when: not (create_rosa_network | bool)
-  debug:
-    msg: |
+  ansible.builtin.debug:
+    msg: |2
 
       ⏩ STEP 2/3: Skipping ROSANetwork creation
       ───────────────────────────────────────────────────────────
@@ -289,8 +297,8 @@
     - create_rosa_network | bool
   block:
     - name: Display security group creation message
-      debug:
-        msg: |
+      ansible.builtin.debug:
+        msg: |2
 
           ⏳ STEP 2.5: Creating AWS Security Group
           ───────────────────────────────────────────────────────────
@@ -298,7 +306,7 @@
           ROSAMachinePool.spec.additionalSecurityGroups testing.
 
     - name: Create security group in cluster VPC
-      include_tasks: create_security_group.yml
+      ansible.builtin.include_tasks: create_security_group.yml
 
 # ================================================================
 # STEP 2.6: Extract private subnets (if --feature private)
@@ -309,8 +317,8 @@
     - cluster_private_subnets is not defined or (cluster_private_subnets | length == 0)
   block:
     - name: Display private subnet extraction message
-      debug:
-        msg: |
+      ansible.builtin.debug:
+        msg: |2
 
           ⏳ STEP 2.6: Extracting Private Subnets
           ───────────────────────────────────────────────────────────
@@ -322,7 +330,7 @@
           {% endif %}
 
     - name: Extract private subnets
-      include_tasks: extract_private_subnets.yml
+      ansible.builtin.include_tasks: extract_private_subnets.yml
 
 # ================================================================
 # STEP 3: Create RosaControlPlane
@@ -330,8 +338,8 @@
 - name: Create RosaControlPlane with references to automated resources
   block:
     - name: Display RosaControlPlane creation message
-      debug:
-        msg: |
+      ansible.builtin.debug:
+        msg: |2
 
           ⏳ STEP 3/3: Creating RosaControlPlane
           ───────────────────────────────────────────────────────────
@@ -344,37 +352,33 @@
           {% endif %}
 
     - name: Determine which template to use (auto-select unless overridden)
-      set_fact:
+      ansible.builtin.set_fact:
         cluster_template_name: >-
-          {%- if cluster_template_name is defined and cluster_template_name -%}{{ cluster_template_name }}{%- elif (create_rosa_roles | bool) or (create_rosa_network | bool) -%}rosa-controlplane-only{%- else -%}rosa-control-plane{%- endif -%}
+          {%- if cluster_template_name is defined and cluster_template_name -%}{{ cluster_template_name }}{%- elif (create_rosa_roles | bool) or (create_rosa_network
+          | bool) -%}rosa-controlplane-only{%- else -%}rosa-control-plane{%- endif -%}
         selected_template_category: >-
-          {%- if selected_template_category is defined and selected_template_category -%}{{ selected_template_category }}{%- elif (create_rosa_roles | bool) or (create_rosa_network | bool) -%}features{%- else -%}cluster-configs{%- endif -%}
+          {%- if selected_template_category is defined and selected_template_category -%}{{ selected_template_category }}{%- elif (create_rosa_roles | bool) or (create_rosa_network
+          | bool) -%}features{%- else -%}cluster-configs{%- endif -%}
 
     - name: Display selected template
-      debug:
+      ansible.builtin.debug:
         msg: |
           Selected template: {{ cluster_template_name }}
           Template category: {{ selected_template_category }}
           Template path: templates/versions/{{ openshift_version }}/{{ selected_template_category }}/{{ cluster_template_name }}.yaml.j2
 
     - name: Build availability zones list from count
-      set_fact:
+      ansible.builtin.set_fact:
         availability_zones_list: "{{ (availability_zones_list_string | from_yaml) }}"
       vars:
         availability_zones_list_string: >-
-          {%- if availability_zone_count | int == 1 -%}
-          ['{{ aws_region }}a']
-          {%- elif availability_zone_count | int == 2 -%}
-          ['{{ aws_region }}a', '{{ aws_region }}b']
-          {%- elif availability_zone_count | int == 3 -%}
-          ['{{ aws_region }}a', '{{ aws_region }}b', '{{ aws_region }}c']
-          {%- else -%}
-          ['{{ aws_region }}a']
-          {%- endif -%}
+          {%- if availability_zone_count | int == 1 -%} ['{{ aws_region }}a']{%- elif availability_zone_count | int == 2 -%} ['{{ aws_region }}a', '{{ aws_region
+          }}b']{%- elif availability_zone_count | int == 3 -%} ['{{ aws_region }}a', '{{ aws_region }}b', '{{ aws_region }}c']{%- else -%} ['{{ aws_region }}a']{%-
+          endif -%}
       when: create_rosa_network | bool
 
     - name: Set rosa_network_config for template
-      set_fact:
+      ansible.builtin.set_fact:
         rosa_network_config:
           identity_name: "default"
           cidr_block: "{{ network_cidr }}"
@@ -382,7 +386,7 @@
       when: create_rosa_network | bool
 
     - name: Set rosa_role_config for template
-      set_fact:
+      ansible.builtin.set_fact:
         rosa_role_config:
           identity_name: "default"
           prefix: "{{ rosa_role_prefix }}"
@@ -391,14 +395,14 @@
       when: create_rosa_roles | bool
 
     - name: Set cluster network configuration
-      set_fact:
+      ansible.builtin.set_fact:
         cluster_network:
           machine_cidr: "10.0.0.0/16"
           pod_cidr: "10.128.0.0/14"
           service_cidr: "172.30.0.0/16"
 
     - name: Set template variables for cluster creation
-      set_fact:
+      ansible.builtin.set_fact:
         template_vars:
           cluster_name: "{{ cluster_name }}"
           rcp_version: "{{ resolved_openshift_version | default(openshift_version) }}"
@@ -410,7 +414,7 @@
           create_rosa_network: "{{ create_rosa_network | bool }}"
 
     - name: Create RosaControlPlane from template
-      include_tasks: create_rosa_control_plane_versioned.yml
+      ansible.builtin.include_tasks: create_rosa_control_plane_versioned.yml
       vars:
         template_name: "{{ cluster_template_name }}"
         template_category: "{{ selected_template_category }}"
@@ -418,7 +422,7 @@
         apply_immediately: true
 
     - name: RosaControlPlane creation complete
-      debug:
+      ansible.builtin.debug:
         msg: |
           ✅ STEP 3 COMPLETE: RosaControlPlane created successfully
 
@@ -437,8 +441,8 @@
 - name: Wait for ROSA HCP cluster provisioning to complete
   block:
     - name: Display cluster readiness wait message
-      debug:
-        msg: |
+      ansible.builtin.debug:
+        msg: |2
 
           ⏳ STEP 4/4: Waiting for ROSA HCP Cluster to be Ready
           ───────────────────────────────────────────────────────────
@@ -451,10 +455,10 @@
           Monitoring: oc get rosacontrolplane {{ cluster_name }} -n {{ rosa_hcp_namespace }} -w
 
     - name: Wait for ROSAControlPlane to be ready
-      include_tasks: wait_for_rosa_control_plane_ready.yml
+      ansible.builtin.include_tasks: wait_for_rosa_control_plane_ready.yml
 
     - name: Cluster ready confirmation
-      debug:
+      ansible.builtin.debug:
         msg: |
           STEP 4 COMPLETE: ROSA HCP cluster is READY!
 
@@ -465,8 +469,8 @@
 # FINAL: Provisioning Complete
 # ================================================================
 - name: Display final provisioning summary
-  debug:
-    msg: |
+  ansible.builtin.debug:
+    msg: |2
 
       ✅ ✅ ✅ ROSA HCP CLUSTER PROVISIONING COMPLETE! ✅ ✅ ✅
 

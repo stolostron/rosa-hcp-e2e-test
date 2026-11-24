@@ -36,12 +36,14 @@
           - ocm_disk_node_pools.json['items'][0].root_volume | length > 0
         success_msg: "PASS: OCM node pool root_volume data available for cross-check"
       when: ocm_available and ocm_disk_node_pools is defined and ocm_disk_node_pools.json is defined
-      ignore_errors: true
+      failed_when: false
 
-    - ansible.builtin.set_fact:
+    - name: Count this feature as passed
+      ansible.builtin.set_fact:
         features_passed: "{{ features_passed | int + 1 }}"
   rescue:
-    - ansible.builtin.include_tasks: "{{ playbook_dir }}/../tasks/verify_feature_rescue.yml"
+    - name: Record the feature failure
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../tasks/verify_feature_rescue.yml"
       vars:
         feature_id: disk_size
         fail_detail: "volume size does not match expected"

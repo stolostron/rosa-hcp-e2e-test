@@ -94,4 +94,3 @@
     jq -r '.items[].metadata | select(.labels["backplaneconfig.name"]=="{{ mce_name.stdout }}") | .name' | grep -E '{{ component_name }}|{{ component }}'
   register: namespace_names
   ignore_errors: true
-

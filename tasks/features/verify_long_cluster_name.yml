@@ -14,7 +14,8 @@
         success_msg: >-
           PASS: rosaClusterName length = {{ rcp.spec.rosaClusterName | default('') | length }} chars
 
-    - ansible.builtin.set_fact:
+    - name: Count this feature as passed
+      ansible.builtin.set_fact:
         features_passed: "{{ features_passed | int + 1 }}"
   rescue:
     - name: Fail if long_cluster_name was explicitly requested but cluster name is short

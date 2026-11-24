@@ -14,4 +14,3 @@
 - name: Print the results
   debug:
     msg: "results: {{ results.stdout }}"
-

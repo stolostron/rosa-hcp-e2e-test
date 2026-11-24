@@ -14,7 +14,7 @@
   ansible.builtin.file:
     path: "{{ output_dir }}"
     state: directory
-    mode: '0755'
+    mode: "0755"
 
 - name: Check if ROSAOCMRoleConfig CRD is registered on cluster
   ansible.builtin.shell:
@@ -33,7 +33,7 @@
   ansible.builtin.template:
     src: "{{ playbook_dir }}/../templates/common/rosa-ocm-role.yaml.j2"
     dest: "{{ output_dir }}/{{ ocm_role_config_name }}.yaml"
-    mode: '0644'
+    mode: "0644"
 
 - name: Display ROSAOCMRoleConfig manifest info
   ansible.builtin.debug:
@@ -46,7 +46,7 @@
       - Manifest: {{ output_dir }}/{{ ocm_role_config_name }}.yaml
 
 - name: Apply ROSAOCMRoleConfig to cluster
-  ansible.builtin.shell:
+  ansible.builtin.command:
     cmd: oc apply -f "{{ output_dir }}/{{ ocm_role_config_name }}.yaml"
   register: apply_ocm_role
   changed_when: apply_ocm_role.rc == 0

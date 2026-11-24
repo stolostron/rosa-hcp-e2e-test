@@ -1,3 +1,4 @@
+---
 # ======================================================
 # Wait for CAPI/CAPA Controllers to be Ready
 # ======================================================
@@ -8,7 +9,7 @@
 - name: CAPI controller readiness check
   block:
     - name: Wait for CAPI controller deployment to be created
-      shell: |
+      ansible.builtin.shell: |
         oc --context='{{ ocp_context }}' get deploy -n {{ capi_namespace }} -ojson |\
         jq -r '.items[] | select(.metadata.name | contains("capi-controller-manager")) | .metadata.name' | head -n1
       register: capi_deploy_check
@@ -18,11 +19,11 @@
       changed_when: false
 
     - name: Display CAPI controller deployment found
-      debug:
+      ansible.builtin.debug:
         msg: "✓ CAPI controller deployment found: {{ capi_deploy_check.stdout | trim }}"
 
     - name: Wait for CAPI controller to be ready
-      shell: |
+      ansible.builtin.shell: |
         oc --context='{{ ocp_context }}' get deploy {{ capi_deploy_check.stdout | trim }} -n {{ capi_namespace }} -ojson |\
         jq -r 'if (.status.availableReplicas // 0) > 0 and (.status.availableReplicas == .status.replicas) then "ready" else "not ready" end'
       register: capi_ready_check
@@ -32,12 +33,12 @@
       changed_when: false
 
     - name: Display CAPI controller ready status
-      debug:
+      ansible.builtin.debug:
         msg: "✅ CAPI controller is READY - {{ capi_deploy_check.stdout | trim }}"
 
   rescue:
     - name: Gather CAPI controller pod diagnostics
-      shell: |
+      ansible.builtin.shell: |
         echo "=== CAPI Deployment ==="
         oc --context='{{ ocp_context }}' get deploy -n {{ capi_namespace }} || true
         echo ""
@@ -54,7 +55,7 @@
       failed_when: false
 
     - name: Fail with CAPI controller diagnostics
-      fail:
+      ansible.builtin.fail:
         msg: |
           ❌ CAPI controller failed to become ready in {{ capi_namespace }}.
           Check the CAPI installation — likely cause is an image pull failure or crash loop.
@@ -64,7 +65,7 @@
 - name: CAPA controller readiness check
   block:
     - name: Wait for CAPA controller deployment to be created
-      shell: |
+      ansible.builtin.shell: |
         oc --context='{{ ocp_context }}' get deploy -n {{ capa_namespace }} -ojson |\
         jq -r '.items[] | select(.metadata.name | contains("capa-controller-manager")) | .metadata.name' | head -n1
       register: capa_deploy_check
@@ -74,11 +75,11 @@
       changed_when: false
 
     - name: Display CAPA controller deployment found
-      debug:
+      ansible.builtin.debug:
         msg: "✓ CAPA controller deployment found: {{ capa_deploy_check.stdout | trim }}"
 
     - name: Wait for CAPA controller to be ready
-      shell: |
+      ansible.builtin.shell: |
         oc --context='{{ ocp_context }}' get deploy {{ capa_deploy_check.stdout | trim }} -n {{ capa_namespace }} -ojson |\
         jq -r 'if (.status.availableReplicas // 0) > 0 and (.status.availableReplicas == .status.replicas) then "ready" else "not ready" end'
       register: capa_ready_check
@@ -88,12 +89,12 @@
       changed_when: false
 
     - name: Display CAPA controller ready status
-      debug:
+      ansible.builtin.debug:
         msg: "✅ CAPA controller is READY - {{ capa_deploy_check.stdout | trim }}"
 
   rescue:
     - name: Gather CAPA controller pod diagnostics
-      shell: |
+      ansible.builtin.shell: |
         echo "=== CAPA Deployment ==="
         oc --context='{{ ocp_context }}' get deploy -n {{ capa_namespace }} || true
         echo ""
@@ -110,7 +111,7 @@
       failed_when: false
 
     - name: Fail with CAPA controller diagnostics
-      fail:
+      ansible.builtin.fail:
         msg: |
           ❌ CAPA controller failed to become ready in {{ capa_namespace }}.
           Check the CAPA installation — likely cause is an image pull failure or crash loop.
@@ -120,7 +121,7 @@
 - name: CAPA webhook readiness check
   block:
     - name: Wait for CAPA webhook service endpoints to be registered
-      shell: |
+      ansible.builtin.shell: |
         oc --context='{{ ocp_context }}' get endpoints capa-webhook-service \
           -n {{ capa_namespace }} \
           -o jsonpath='{.subsets[0].addresses[0].ip}' 2>/dev/null || echo ""
@@ -131,7 +132,7 @@
       changed_when: false
 
     - name: Wait for CAPA webhook serving cert to be issued by service-ca
-      shell: |
+      ansible.builtin.shell: |
         oc --context='{{ ocp_context }}' get secret capa-webhook-service-cert \
           -n {{ capa_namespace }} -o jsonpath='{.data.tls\.crt}' 2>/dev/null || echo ""
       register: capa_webhook_cert_check
@@ -141,7 +142,7 @@
       changed_when: false
 
     - name: Wait for CAPA webhook caBundle to be injected by service-ca
-      shell: |
+      ansible.builtin.shell: |
         check_cabundle() {
           json=$(oc --context='{{ ocp_context }}' get "$1" "$2" -o json 2>/dev/null) || return 1
           printf '%s\n' "$json" |
@@ -160,12 +161,12 @@
       changed_when: false
 
     - name: Display CAPA webhook ready status
-      debug:
+      ansible.builtin.debug:
         msg: "✅ CAPA webhook ready: endpoint {{ capa_webhook_check.stdout | trim }}, serving cert issued, caBundle injected"
 
   rescue:
     - name: Gather CAPA webhook diagnostics
-      shell: |
+      ansible.builtin.shell: |
         echo "=== capa-webhook-service Endpoints ==="
         oc --context='{{ ocp_context }}' get endpoints capa-webhook-service -n {{ capa_namespace }} -o yaml || true
         echo ""
@@ -189,7 +190,7 @@
       failed_when: false
 
     - name: Fail with CAPA webhook diagnostics
-      fail:
+      ansible.builtin.fail:
         msg: |
           ❌ CAPA webhook not ready in {{ capa_namespace }} (endpoints, service-ca serving cert,
           or injected caBundle missing). Applying webhook-validated resources (e.g.
@@ -198,8 +199,8 @@
           {{ capa_webhook_diagnostics.stdout | default('(no diagnostic output collected)') }}
 
 - name: Controllers readiness summary
-  debug:
-    msg: |
+  ansible.builtin.debug:
+    msg: |2
 
       ✅ ✅ ✅ CAPI/CAPA CONTROLLERS ARE READY! ✅ ✅ ✅
 

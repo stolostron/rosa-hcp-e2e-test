@@ -15,15 +15,8 @@
   register: ocm_role_status_raw
   until:
     - (ocm_role_status_raw.stdout | from_json).status is defined
-    - (
-        (
-          (ocm_role_status_raw.stdout | from_json).status.conditions | default([])
-          | selectattr('type', 'defined')
-          | selectattr('status', 'equalto', 'True')
-          | selectattr('type', 'in', ['Ready', 'ROSAOCMRoleConfigReady'])
-          | list | length
-        ) > 0
-      )
+    - ( ( (ocm_role_status_raw.stdout | from_json).status.conditions | default([]) | selectattr('type', 'defined') | selectattr('status', 'equalto', 'True') |
+      selectattr('type', 'in', ['Ready', 'ROSAOCMRoleConfigReady']) | list | length ) > 0 )
   retries: "{{ (max_wait_time | int / poll_interval | int) | int }}"
   delay: "{{ poll_interval | int }}"
   changed_when: false
