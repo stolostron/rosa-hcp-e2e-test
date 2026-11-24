@@ -11,6 +11,7 @@ Validates runner functionality without executing playbooks:
 """
 
 import importlib.util
+import threading
 from pathlib import Path
 
 BASE_DIR = Path(__file__).parent.parent
@@ -54,6 +55,7 @@ def test_load_all_suite_files():
     suite_ids = [
         "05-verify-mce-environment",
         "10-configure-mce-environment",
+        "11-install-capi-standalone",
         "20-rosa-hcp-provision",
         "27-rosa-hcp-add-machinepool",
         "28-rosa-hcp-delete-machinepool",
@@ -161,51 +163,62 @@ def test_build_ansible_cmd_complex_dict():
 
 
 def test_build_ansible_cmd_simple_vars():
+    import json
     runner = _make_runner(extra_vars={"simple_key": "simple_value"})
     cmd = runner._build_ansible_cmd(Path("playbooks/test.yml"), {})
-    assert "simple_key=simple_value" in cmd
+
+    json_args = [cmd[i + 1] for i, arg in enumerate(cmd) if arg == "-e"]
+    assert len(json_args) == 1, "All extra vars must be one JSON blob"
+    parsed_json = json.loads(json_args[0])
+    assert parsed_json["simple_key"] == "simple_value"
+
+
+def test_build_ansible_cmd_preserves_spaces_and_types():
+    import json
+    runner = _make_runner(
+        extra_vars={"flag": True, "count": 3, "message": "hello world"}
+    )
+    cmd = runner._build_ansible_cmd(Path("playbooks/test.yml"), {})
+
+    json_args = [cmd[i + 1] for i, arg in enumerate(cmd) if arg == "-e"]
+    assert len(json_args) == 1, "All extra vars must be one JSON blob"
+    parsed_json = json.loads(json_args[0])
+
+    assert parsed_json["flag"] is True
+    assert parsed_json["count"] == 3
+    assert parsed_json["message"] == "hello world"
+    assert not any(arg.startswith("message=") for arg in cmd)
 
 
 # ================================================================
 # Suite Label Extraction
 # ================================================================
 
-def test_extract_suite_label_configure():
+def test_extract_suite_label_drops_only_the_number_prefix():
     runner = _make_runner()
-    assert runner._extract_suite_label("10-configure-mce-environment") == "configure"
+    assert runner._extract_suite_label("10-configure-mce-environment") == \
+        "configure-mce-environment"
 
 
-def test_extract_suite_label_provision():
+def test_extract_suite_label_keeps_the_whole_slug():
     runner = _make_runner()
-    assert runner._extract_suite_label("20-rosa-hcp-provision") == "provision"
+    assert runner._extract_suite_label("20-rosa-hcp-provision") == "rosa-hcp-provision"
+    assert runner._extract_suite_label("30-rosa-hcp-delete") == "rosa-hcp-delete"
+    assert runner._extract_suite_label("05-verify-mce-environment") == \
+        "verify-mce-environment"
 
 
-def test_extract_suite_label_delete():
+def test_extract_suite_label_without_a_prefix_is_unchanged():
     runner = _make_runner()
-    assert runner._extract_suite_label("30-rosa-hcp-delete") == "delete"
+    assert runner._extract_suite_label("something-unknown") == "something-unknown"
 
 
-def test_extract_suite_label_verify():
+def test_suite_labels_are_unique_across_suites():
+    """Each suite must own its latest-<label> report."""
     runner = _make_runner()
-    assert runner._extract_suite_label("05-verify-mce-environment") == "verify"
-
-
-def test_extract_suite_label_toggle():
-    runner = _make_runner()
-    label = runner._extract_suite_label("40-enable-capi-disable-hypershift")
-    assert label == "toggle", f"Expected 'toggle', got '{label}'"
-
-
-def test_extract_suite_label_lifecycle():
-    runner = _make_runner()
-    assert runner._extract_suite_label("23-rosa-hcp-full-lifecycle") == "lifecycle"
-
-
-def test_extract_suite_label_fallback():
-    runner = _make_runner()
-    label = runner._extract_suite_label("99-something-unknown")
-    assert isinstance(label, str) and len(label) > 0, \
-        "Fallback label should be a non-empty string"
+    labels = [runner._extract_suite_label(s["id"])
+              for s in runner.list_test_suites()]
+    assert len(labels) == len(set(labels)), f"duplicate suite labels: {labels}"
 
 
 # ================================================================
@@ -235,13 +248,107 @@ def test_tag_filter_no_match():
 
 
 # ================================================================
-# Runner Initialization
+# Suite Dependencies
 # ================================================================
 
-def test_runner_dry_run_flag():
-    runner = _make_runner(dry_run=True)
-    assert runner.dry_run is True
+def _suite(suite_id, depends_on=None):
+    suite = {"id": suite_id, "name": suite_id, "tags": []}
+    if depends_on:
+        suite["depends_on"] = depends_on
+    return suite
 
+
+def test_depends_on_orders_the_dependency_first():
+    runner = _make_runner()
+    suites = [_suite("b", ["a"]), _suite("a"), _suite("c")]
+    ordered = runner._order_by_dependencies(suites)
+    assert [s["id"] for s in ordered] == ["a", "b", "c"]
+
+
+def test_depends_on_keeps_independent_order():
+    runner = _make_runner()
+    suites = [_suite("20"), _suite("21"), _suite("30")]
+    ordered = runner._order_by_dependencies(suites)
+    assert [s["id"] for s in ordered] == ["20", "21", "30"]
+
+
+def test_depends_on_ignores_dependencies_outside_the_selection():
+    """A tag run cannot run suites the tag did not select."""
+    runner = _make_runner()
+    ordered = runner._order_by_dependencies([_suite("b", ["a"])])
+    assert [s["id"] for s in ordered] == ["b"]
+
+
+def test_dependent_suite_is_skipped_when_dependency_fails(monkeypatch):
+    runner = _make_runner()
+    monkeypatch.setattr(
+        runner, "list_test_suites",
+        lambda: [_suite("a"), _suite("b", ["a"]), _suite("c")],
+    )
+    ran = []
+
+    def fake_run(suite_id):
+        ran.append(suite_id)
+        return suite_id != "a"
+
+    monkeypatch.setattr(runner, "run_test_suite", fake_run)
+
+    assert runner.run_all_suites() is False
+    assert ran == ["a", "c"], "b must not run after its dependency failed"
+
+
+def test_always_suite_runs_after_dependency_fails(monkeypatch):
+    """Cleanup suites must still run when provisioning failed."""
+    runner = _make_runner()
+    cleanup = _suite("c", ["a"])
+    cleanup["always"] = True
+    monkeypatch.setattr(
+        runner, "list_test_suites", lambda: [_suite("a"), _suite("b", ["a"]), cleanup]
+    )
+    ran = []
+    monkeypatch.setattr(
+        runner, "run_test_suite", lambda suite_id: ran.append(suite_id) or suite_id != "a"
+    )
+
+    assert runner.run_all_suites() is False
+    assert ran == ["a", "c"], "the always suite must run even though 'a' failed"
+
+
+def test_suite_runs_when_dependency_is_not_selected(monkeypatch):
+    runner = _make_runner()
+    monkeypatch.setattr(runner, "list_test_suites", lambda: [_suite("b", ["a"])])
+    ran = []
+    monkeypatch.setattr(
+        runner, "run_test_suite", lambda suite_id: ran.append(suite_id) or True
+    )
+
+    assert runner.run_all_suites() is True
+    assert ran == ["b"]
+
+
+def test_run_test_suite_reports_only_its_own_outcome(monkeypatch):
+    runner = _make_runner()
+    runner.results["failed"] = 1  # an earlier suite failed
+    monkeypatch.setattr(
+        runner, "load_test_suite",
+        lambda suite_id: {"name": "suite", "playbooks": [{"name": "p"}]},
+    )
+    monkeypatch.setattr(
+        runner, "run_playbook",
+        lambda playbook, suite_name: {
+            "name": "p", "file": "f", "description": "", "test_case_id": "",
+            "success": True, "duration": 0.0,
+        },
+    )
+    monkeypatch.setattr(runner, "_print_suite_header", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "_print_suite_summary", lambda *a, **k: None)
+
+    assert runner.run_test_suite("suite") is True
+
+
+# ================================================================
+# Runner Initialization
+# ================================================================
 
 def test_runner_ai_agent_disabled():
     runner = _make_runner(ai_agent_enabled=False)
@@ -857,7 +964,365 @@ def test_artifact_archived_once_per_run(tmp_path, monkeypatch):
     monkeypatch.setattr(_module.json, "dump", counting_dump)
 
     for fmt in ("json", "html", "junit"):
-        runner.save_results(format=fmt)
+        runner.save_results(output_format=fmt)
 
     assert len(writes) == 1, f"archive written {len(writes)}x, expected once per run"
     assert list(tmp_path.rglob("feature-verification-*.json"))
+
+
+def test_save_results_writes_one_junit_file_per_run(tmp_path):
+    """A run must produce exactly one file for Jenkins' test-results/**/*.xml glob."""
+    runner = _make_runner()
+    runner.results_dir = tmp_path
+    runner.suite_label = "rosa-hcp-provision"
+    runner.results["suites"] = []
+    runner.results["duration"] = 1.0
+
+    path = runner.save_results(output_format="junit")
+
+    xmls = list(tmp_path.rglob("*.xml"))
+    assert xmls == [path], f"expected one JUnit file, found {xmls}"
+    assert not list(tmp_path.glob("latest*.xml")), \
+        "a latest-*.xml copy would be counted twice by Jenkins"
+
+
+def test_json_and_html_still_write_a_latest_copy(tmp_path):
+    runner = _make_runner()
+    runner.results_dir = tmp_path
+    runner.suite_label = "rosa-hcp-provision"
+    runner.results["suites"] = []
+    runner.results["duration"] = 1.0
+
+    runner.save_results(output_format="json")
+    runner.save_results(output_format="html")
+
+    assert (tmp_path / "latest-rosa-hcp-provision.json").exists()
+    assert (tmp_path / "latest-rosa-hcp-provision.html").exists()
+
+
+def test_total_tests_accumulates_across_suites(monkeypatch):
+    """A multi-suite run reports every executed playbook, not just the last suite."""
+    runner = _make_runner()
+
+    def fake_playbook(playbook, suite_name):
+        return {
+            "name": playbook.get("name", ""),
+            "file": playbook.get("file", ""),
+            "description": "",
+            "test_case_id": "",
+            "success": True,
+            "is_error": False,
+            "error": None,
+            "duration": 0.0,
+        }
+
+    monkeypatch.setattr(runner, "run_playbook", fake_playbook)
+    monkeypatch.setattr(runner, "_print_suite_header", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "_print_suite_summary", lambda *a, **k: None)
+
+    first = runner.load_test_suite("20-rosa-hcp-provision")
+    second = runner.load_test_suite("30-rosa-hcp-delete")
+    runner.run_test_suite("20-rosa-hcp-provision")
+    runner.run_test_suite("30-rosa-hcp-delete")
+
+    expected = len(first["playbooks"]) + len(second["playbooks"])
+    assert runner.results["total_tests"] == expected
+    assert runner.results["total_tests"] == (
+        runner.results["passed"] + runner.results["failed"]
+    )
+
+
+# ================================================================
+# main() exit codes
+# ================================================================
+
+def test_main_returns_1_without_a_suite(monkeypatch):
+    monkeypatch.setattr(_module.sys, "argv", ["run-test-suite.py"])
+    assert _module.main() == 1
+
+
+def test_main_returns_0_when_suite_passes(monkeypatch):
+    monkeypatch.setattr(
+        _module.sys, "argv",
+        ["run-test-suite.py", "20-rosa-hcp-provision", "--no-save"],
+    )
+    monkeypatch.setattr(
+        _module.TestSuiteRunner, "run_test_suite",
+        lambda self, suite_id: True,
+    )
+    assert _module.main() == 0
+
+
+def test_main_returns_1_when_suite_fails(monkeypatch):
+    monkeypatch.setattr(
+        _module.sys, "argv",
+        ["run-test-suite.py", "20-rosa-hcp-provision", "--no-save"],
+    )
+    monkeypatch.setattr(
+        _module.TestSuiteRunner, "run_test_suite",
+        lambda self, suite_id: False,
+    )
+    assert _module.main() == 1
+
+
+# ================================================================
+# Timeout enforcement
+# ================================================================
+
+def test_run_playbook_enforces_timeout_while_streaming(monkeypatch):
+    class FakeProcess:
+        pid = 12345
+
+        def __init__(self):
+            self.stdout = iter(["line one\n", "line two\n"])
+            self.returncode = None
+
+        def wait(self, timeout=None):
+            if timeout is not None:
+                raise _module.subprocess.TimeoutExpired("ansible-playbook", timeout)
+            self.returncode = -9
+            return self.returncode
+
+    fake = FakeProcess()
+    popen_kwargs = {}
+
+    def fake_popen(*args, **kwargs):
+        popen_kwargs.update(kwargs)
+        return fake
+
+    killpg_calls = []
+    monkeypatch.setattr(_module.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(
+        _module.os, "killpg", lambda pid, sig: killpg_calls.append((pid, sig))
+    )
+
+    runner = _make_runner()
+    result = runner.run_playbook(
+        {
+            "name": "timeout-test",
+            "file": "playbooks/create_rosa_hcp_cluster.yml",
+            "description": "timeout test",
+            "timeout": 0.1,
+        },
+        "test-suite",
+    )
+
+    assert result["success"] is False
+    assert "Timeout" in result["error"]
+    assert "line one" in result["output"]
+    assert popen_kwargs["start_new_session"] is True, (
+        "the playbook needs its own session so a timeout can kill its workers"
+    )
+    assert killpg_calls == [(FakeProcess.pid, _module.signal.SIGKILL)], (
+        "a timeout must kill the whole process group, not just ansible-playbook"
+    )
+
+
+def test_run_playbook_waits_for_the_reader_before_returning(monkeypatch):
+    """A normal exit must not abandon the reader (and its agent callbacks)."""
+
+    class FakeProcess:
+        pid = 111
+        stdout = iter([])
+
+        def wait(self, timeout=None):
+            return 0
+
+    class FakeThread:
+        def __init__(self, *args, **kwargs):
+            self.joins = []
+
+        def start(self):
+            pass
+
+        def join(self, timeout=None):
+            self.joins.append(timeout)
+
+        def is_alive(self):
+            return False
+
+    threads = []
+
+    def fake_thread(*args, **kwargs):
+        thread = FakeThread()
+        threads.append(thread)
+        return thread
+
+    monkeypatch.setattr(_module.threading, "Thread", fake_thread)
+    monkeypatch.setattr(_module.subprocess, "Popen", lambda *a, **k: FakeProcess())
+
+    runner = _make_runner()
+    result = runner.run_playbook(
+        {"name": "ok", "file": "playbooks/create_rosa_hcp_cluster.yml", "timeout": 5}, "s"
+    )
+
+    assert result["success"] is True
+    budget = threads[0].joins[0]
+    assert 0 < budget <= 5.0, (
+        "the normal path must wait for the reader only within the playbook deadline"
+    )
+
+
+def test_run_playbook_bounds_the_wait_for_a_stuck_reader(monkeypatch, capsys):
+    """A reader stuck in an agent callback must not hold up the next suite."""
+
+    class FakeProcess:
+        pid = 222
+
+        def __init__(self):
+            self.stdout = iter([])
+
+        def wait(self, timeout=None):
+            if timeout is not None:
+                raise _module.subprocess.TimeoutExpired("ansible-playbook", timeout)
+            return -9
+
+    class StuckThread:
+        def __init__(self, *args, **kwargs):
+            self.joins = []
+
+        def start(self):
+            pass
+
+        def join(self, timeout=None):
+            self.joins.append(timeout)
+
+        def is_alive(self):
+            return True
+
+    threads = []
+
+    def fake_thread(*args, **kwargs):
+        thread = StuckThread()
+        threads.append(thread)
+        return thread
+
+    monkeypatch.setattr(_module.threading, "Thread", fake_thread)
+    monkeypatch.setattr(_module.subprocess, "Popen", lambda *a, **k: FakeProcess())
+    monkeypatch.setattr(_module, "READER_JOIN_TIMEOUT", 0.1)
+    monkeypatch.setattr(_module.os, "killpg", lambda *args: None)
+
+    runner = _make_runner()
+    result = runner.run_playbook(
+        {
+            "name": "stuck-reader",
+            "file": "playbooks/create_rosa_hcp_cluster.yml",
+            "timeout": 0.1,
+        },
+        "s",
+    )
+
+    assert result["success"] is False
+    budget = threads[0].joins[0]
+    assert 0 < budget <= 0.1, "the post-timeout wait must be bounded"
+    assert "still busy after the timeout" in capsys.readouterr().out
+
+
+def test_run_playbook_kills_lingering_workers_after_a_successful_leader(monkeypatch):
+    """A worker left holding stdout is killed; the leader's zero exit is the result."""
+
+    class FakeProcess:
+        pid = 333
+
+        def __init__(self):
+            self.stdout = iter([])
+
+        def wait(self, timeout=None):
+            return 0
+
+    class StuckThread:
+        def __init__(self, *args, **kwargs):
+            self.joins = []
+
+        def start(self):
+            pass
+
+        def join(self, timeout=None):
+            self.joins.append(timeout)
+
+        def is_alive(self):
+            return True
+
+    threads = []
+
+    def fake_thread(*args, **kwargs):
+        thread = StuckThread()
+        threads.append(thread)
+        return thread
+
+    killpg_calls = []
+    monkeypatch.setattr(_module.threading, "Thread", fake_thread)
+    monkeypatch.setattr(_module.subprocess, "Popen", lambda *a, **k: FakeProcess())
+    monkeypatch.setattr(_module.os, "killpg", lambda *args: killpg_calls.append(args))
+    monkeypatch.setattr(_module, "READER_JOIN_TIMEOUT", 0.1)
+
+    runner = _make_runner()
+    result = runner.run_playbook(
+        {
+            "name": "lingering-worker",
+            "file": "playbooks/create_rosa_hcp_cluster.yml",
+            "timeout": 10,
+        },
+        "s",
+    )
+
+    assert result["success"] is True, "the leader's exit code is the playbook result"
+    assert killpg_calls == [(FakeProcess.pid, _module.signal.SIGKILL)]
+    assert 0 < threads[0].joins[0] <= 0.1
+    assert threads[0].joins[1] <= 5.0, "the second wait is bounded too"
+
+
+def test_reader_rechecks_stop_after_waiting_for_the_agent_lock(monkeypatch):
+    """A line buffered while the reader waits on the agent lock is not reported
+    after the playbook was stopped."""
+
+    class FakeProcess:
+        pid = 444
+
+        def __init__(self):
+            self.stdout = iter(["buffered line\n"])
+
+        def wait(self, timeout=None):
+            if timeout is not None:
+                raise _module.subprocess.TimeoutExpired("ansible-playbook", timeout)
+            return -9
+
+    class FakeAgent:
+        def __init__(self):
+            self.lines = []
+
+        def process_line(self, line):
+            self.lines.append(line)
+
+    real_thread = threading.Thread
+    created = []
+
+    def fake_thread(*args, **kwargs):
+        thread = real_thread(*args, **kwargs)
+        created.append(thread)
+        return thread
+
+    agent = FakeAgent()
+    runner = _make_runner()
+    runner.ai_agent_enabled = True
+    runner.monitor_agent = agent
+    runner._agent_lock.acquire()  # the reader blocks here
+    try:
+        monkeypatch.setattr(_module.threading, "Thread", fake_thread)
+        monkeypatch.setattr(_module.subprocess, "Popen", lambda *a, **k: FakeProcess())
+        monkeypatch.setattr(_module.os, "killpg", lambda *args: None)
+        result = runner.run_playbook(
+            {
+                "name": "lock-contention",
+                "file": "playbooks/create_rosa_hcp_cluster.yml",
+                "timeout": 0.1,
+            },
+            "s",
+        )
+    finally:
+        runner._agent_lock.release()
+
+    created[0].join(timeout=1)
+    assert not created[0].is_alive()
+    assert result["success"] is False
+    assert agent.lines == [], "the stop must be rechecked after the lock is acquired"

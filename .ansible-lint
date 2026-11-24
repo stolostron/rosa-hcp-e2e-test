@@ -1,0 +1,14 @@
+---
+# Existing backlog, listed here instead of hidden behind `|| true` in CI.
+# These rules still report, but they do not fail the build. Burn them down
+# deliberately; new findings in any other rule fail.
+warn_list:
+  - risky-shell-pipe
+  - no-changed-when
+  - var-naming[pattern]
+  - schema[playbook]
+  - jinja[invalid]
+  - no-relative-paths
+
+exclude_paths:
+  - .venv/

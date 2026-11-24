@@ -43,7 +43,8 @@ def test_no_upgrade_path_is_reported():
         reported = [
             task
             for task in _tasks(filename)
-            if task.get("debug") and NO_UPGRADE_PATH in str(task.get("when", ""))
+            if (task.get("debug") or task.get("ansible.builtin.debug")) and \
+            NO_UPGRADE_PATH in str(task.get("when", ""))
         ]
         assert reported, (
             f"{filename} must report why the upgrade was skipped"
@@ -55,7 +56,7 @@ def test_no_upgrade_path_ends_the_play():
         end_tasks = [
             task
             for task in _tasks(filename)
-            if task.get("meta") == "end_play"
+            if (task.get("meta") or task.get("ansible.builtin.meta")) == "end_play"
             and NO_UPGRADE_PATH in str(task.get("when", ""))
         ]
         assert end_tasks, (

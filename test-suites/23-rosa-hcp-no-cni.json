@@ -1,9 +1,7 @@
 {
   "name": "CAPA No-CNI (BYO-CNI) Cluster Provisioning - OpenShift 5.0 RC",
   "description": "Provision a ROSA HCP No-CNI cluster using CAPA with automated network and role configuration on OpenShift 5.0.0-ec.6, candidate channel. The ROSAControlPlane network block sets networkType: Other, disabling the default OVNKubernetes CNI so the user brings and installs their own CNI plugin (ACM-21174-NoCNI).",
-  "version": "1.0.0",
   "tags": ["rosa", "hcp", "provisioning", "network-automation", "role-automation", "no-cni", "byo-cni", "5.0", "features"],
-  "environment": "mce",
   "playbooks": [
     {
       "name": "Create CAPA No-CNI Cluster",
@@ -17,38 +15,9 @@
         "create_rosa_role_config": true,
         "vpc_cidr_block": "10.0.0.0/16",
         "availability_zone_count": 2,
-        "aws_region": "us-west-2",
-        "capi_namespace": "ns-rosa-hcp",
         "cluster_template_name": "rosa-controlplane-only",
         "selected_template_category": "features",
         "no_cni": true
       }
     }
-  ],
-  "documentation": {
-    "overview": "This test suite defaults to the OpenShift 5.0 release candidate (5.0.0-ec.6, candidate channel). It uses the versioned rosa-controlplane-only feature template with no_cni=true, setting network.networkType: Other on the ROSAControlPlane. ROSANetwork and ROSARoleConfig are created by the provisioning tasks. The same feature path supports an openshift_version override to 4.22; override channel_group as needed for the target release.",
-    "prerequisites": [
-      "MCE 5.0 RC hub cluster with CAPI/CAPA configured",
-      "AWS credentials (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY) in vars/user_vars.yml",
-      "OpenShift cluster login credentials configured",
-      "rosa-creds-secret created in multicluster-engine namespace"
-    ],
-    "quick_start": {
-      "basic_usage": "./run-test-suite.py 23-rosa-hcp-no-cni -e name_prefix=qe6",
-      "description": "Using name_prefix automatically sets cluster_name and domain_prefix consistently"
-    },
-    "customization": {
-      "openshift_version": "OpenShift version to deploy (default: 5.0.0-ec.6, candidate channel)",
-      "channel_group": "Update channel: stable, fast, or candidate (this suite uses candidate for the 5.0 RC)",
-      "no_cni": "Sets ROSAControlPlane network.networkType to Other using the versioned feature template",
-      "aws_region": "AWS region for deployment (default: us-west-2)"
-    },
-    "expected_results": [
-      "ROSANetwork resource created with CloudFormation stack",
-      "ROSARoleConfig resource created with IAM roles and OIDC",
-      "ROSAControlPlane applied with network.networkType: Other (BYO-CNI)",
-      "Cluster provisioned without the default OVNKubernetes CNI",
-      "User can install and manage their own CNI plugin on the cluster"
-    ]
-  }
-}
+  ]}

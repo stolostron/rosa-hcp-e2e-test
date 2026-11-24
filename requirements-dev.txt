@@ -1,0 +1,9 @@
+-r requirements.txt
+
+# Test runner
+pytest>=8
+
+# Tests render the Ansible templates and run one offline playbook
+jinja2>=3
+pyyaml>=6
+ansible>=9

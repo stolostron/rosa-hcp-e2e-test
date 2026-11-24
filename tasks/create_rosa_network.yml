@@ -2,28 +2,28 @@
 # Create ROSANetwork for automated VPC and subnet provisioning
 
 - name: Set ROSANetwork template variables
-  set_fact:
+  ansible.builtin.set_fact:
     template_name: "rosa-network-config"
     template_category: "features"
     template_extension: ".yaml.j2"
     template_debug: true
 
 - name: Resolve ROSANetwork template
-  include_tasks: template_resolver.yml
+  ansible.builtin.include_tasks: template_resolver.yml
 
 - name: Create output directory for ROSANetwork
-  file:
+  ansible.builtin.file:
     path: "{{ output_dir }}"
     state: directory
-    mode: '0755'
+    mode: "0755"
 
 - name: "Create ROSANetwork for cluster {{ cluster_name }}"
   block:
     - name: Generate ROSANetwork from template
-      template:
+      ansible.builtin.template:
         src: "{{ resolved_template_path }}"
         dest: "{{ output_dir }}/{{ cluster_name }}-rosa-network.yaml"
-        mode: '0644'
+        mode: "0644"
       vars:
         rosa_network_config:
           name: "{{ rosa_network_config_name | default(cluster_name + '-network') }}"
@@ -33,26 +33,28 @@
           tags: "{{ network_tags | default({'Environment': 'test', 'TestCase': 'ACM-21174', 'CreatedBy': 'ansible-automation'}) }}"
 
     - name: Check if ROSANetwork already exists
-      shell: |
+      ansible.builtin.shell: |
         oc get rosanetwork {{ rosa_network_config_name | default(cluster_name + '-network') }} -n {{ rosa_hcp_namespace }} -o json 2>/dev/null || echo '{}'
       register: existing_rosa_network
       failed_when: false
       changed_when: false
 
     - name: Check if existing ROSANetwork is ready
-      set_fact:
-        rosa_network_exists: "{{ ((existing_rosa_network.stdout if existing_rosa_network.stdout is mapping else (existing_rosa_network.stdout | from_json)).metadata.name | default('', true)) != '' }}"
+      ansible.builtin.set_fact:
+        rosa_network_exists: "{{ ((existing_rosa_network.stdout if existing_rosa_network.stdout is mapping else (existing_rosa_network.stdout | from_json)).metadata.name
+          | default('', true)) != '' }}"
         rosa_network_is_ready: false
 
     - name: Check existing network ready status
-      set_fact:
+      ansible.builtin.set_fact:
         rosa_network_is_ready: true
       when:
         - rosa_network_exists | default(false) | bool
-        - ((existing_rosa_network.stdout if existing_rosa_network.stdout is mapping else (existing_rosa_network.stdout | from_json)).status.conditions | default([], true) | selectattr('type', 'equalto', 'ROSANetworkReady') | selectattr('status', 'equalto', 'True') | list) | length > 0
+        - ((existing_rosa_network.stdout if existing_rosa_network.stdout is mapping else (existing_rosa_network.stdout | from_json)).status.conditions |
+          default([], true) | selectattr('type', 'equalto', 'ROSANetworkReady') | selectattr('status', 'equalto', 'True') | list) | length > 0
 
     - name: Display existing ROSANetwork status
-      debug:
+      ansible.builtin.debug:
         msg: |
           ✅ ROSANetwork {{ rosa_network_config_name | default(cluster_name + '-network') }} already exists and is Ready
           Skipping creation and using existing network.
@@ -61,7 +63,7 @@
         - rosa_network_is_ready | default(false) | bool
 
     - name: Display ROSANetwork configuration
-      debug:
+      ansible.builtin.debug:
         msg:
           - "Creating ROSANetwork: {{ rosa_network_config_name | default(cluster_name + '-network') }}"
           - "Availability Zones: {{ aws_availability_zones | default([aws_region + 'a', aws_region + 'b']) | join(', ') }}"
@@ -71,25 +73,26 @@
         - not (rosa_network_exists | default(false) | bool and rosa_network_is_ready | default(false) | bool)
 
     - name: Apply ROSANetwork to cluster
-      shell: |
+      ansible.builtin.shell: |
         oc apply -f {{ output_dir }}/{{ cluster_name }}-rosa-network.yaml
       register: rosa_network_result
       when:
         - not (rosa_network_exists | default(false) | bool and rosa_network_is_ready | default(false) | bool)
 
     - name: Display ROSANetwork creation result
-      debug:
+      ansible.builtin.debug:
         msg: "ROSANetwork creation initiated successfully"
       when:
         - rosa_network_result is defined
         - rosa_network_result is succeeded
 
     - name: Wait for ROSANetwork to be fully ready
-      shell: |
+      ansible.builtin.shell: |
         oc get rosanetwork {{ rosa_network_config_name | default(cluster_name + '-network') }} -n {{ rosa_hcp_namespace }} -o json 2>/dev/null || echo '{}'
       register: network_ready_status
       until:
-        - ((network_ready_status.stdout if network_ready_status.stdout is mapping else (network_ready_status.stdout | from_json)).status.conditions | default([], true) | selectattr('type', 'equalto', 'ROSANetworkReady') | selectattr('status', 'equalto', 'True') | list) | length > 0
+        - ((network_ready_status.stdout if network_ready_status.stdout is mapping else (network_ready_status.stdout | from_json)).status.conditions |
+          default([], true) | selectattr('type', 'equalto', 'ROSANetworkReady') | selectattr('status', 'equalto', 'True') | list) | length > 0
       retries: "{{ (rosa_network_ready_timeout | default(1200) / 30) | int }}"
       delay: 30
       changed_when: false
@@ -97,7 +100,7 @@
         - not (rosa_network_exists | default(false) | bool and rosa_network_is_ready | default(false) | bool)
 
     - name: Use existing ready ROSANetwork
-      set_fact:
+      ansible.builtin.set_fact:
         network_ready_status:
           stdout: "{{ existing_rosa_network.stdout | to_json if existing_rosa_network.stdout is mapping else existing_rosa_network.stdout }}"
       when:
@@ -105,7 +108,7 @@
         - rosa_network_is_ready | default(false) | bool
 
     - name: Fetch final ROSANetwork status with complete subnet information
-      shell: |
+      ansible.builtin.shell: |
         oc get rosanetwork {{ rosa_network_config_name | default(cluster_name + '-network') }} -n {{ rosa_hcp_namespace }} -o json 2>/dev/null || echo '{}'
       register: final_network_status
       changed_when: false
@@ -113,7 +116,7 @@
         - not (rosa_network_exists | default(false) | bool and rosa_network_is_ready | default(false) | bool)
 
     - name: Use final status for newly created network
-      set_fact:
+      ansible.builtin.set_fact:
         network_ready_status:
           stdout: "{{ final_network_status.stdout }}"
       when:
@@ -121,14 +124,18 @@
         - final_network_status.stdout is defined
 
     - name: Extract network information from status
-      set_fact:
-        vpc_id: "{{ (((network_ready_status.stdout if network_ready_status.stdout is mapping else (network_ready_status.stdout | from_json)).status.resources | default([]) | selectattr('logicalId', 'equalto', 'VPC') | map(attribute='physicalId') | list | first)) | default('') }}"
-        subnet_info: "{{ (network_ready_status.stdout if network_ready_status.stdout is mapping else (network_ready_status.stdout | from_json)).status.subnets | default([]) }}"
-        network_resources: "{{ (network_ready_status.stdout if network_ready_status.stdout is mapping else (network_ready_status.stdout | from_json)).status.resources | default([]) }}"
-        network_ready_condition: "{{ ((network_ready_status.stdout if network_ready_status.stdout is mapping else (network_ready_status.stdout | from_json)).status.conditions | default([]) | selectattr('type', 'equalto', 'ROSANetworkReady') | selectattr('status', 'equalto', 'True') | list | length) > 0 }}"
+      ansible.builtin.set_fact:
+        vpc_id: "{{ (((network_ready_status.stdout if network_ready_status.stdout is mapping else (network_ready_status.stdout | from_json)).status.resources | default([])
+          | selectattr('logicalId', 'equalto', 'VPC') | map(attribute='physicalId') | list | first)) | default('') }}"
+        subnet_info: "{{ (network_ready_status.stdout if network_ready_status.stdout is mapping else (network_ready_status.stdout | from_json)).status.subnets | default([])
+          }}"
+        network_resources: "{{ (network_ready_status.stdout if network_ready_status.stdout is mapping else (network_ready_status.stdout | from_json)).status.resources
+          | default([]) }}"
+        network_ready_condition: "{{ ((network_ready_status.stdout if network_ready_status.stdout is mapping else (network_ready_status.stdout | from_json)).status.conditions
+          | default([]) | selectattr('type', 'equalto', 'ROSANetworkReady') | selectattr('status', 'equalto', 'True') | list | length) > 0 }}"
 
     - name: Validate network creation success
-      assert:
+      ansible.builtin.assert:
         that:
           - vpc_id != ""
           - subnet_info | length > 0
@@ -137,7 +144,7 @@
         success_msg: "ROSANetwork created successfully with VPC and subnets"
 
     - name: Display created network resources
-      debug:
+      ansible.builtin.debug:
         msg:
           - "✓ ROSANetwork creation completed successfully"
           - "VPC ID: {{ vpc_id }}"
@@ -148,33 +155,34 @@
 
   rescue:
     - name: Handle ROSANetwork creation failure
-      debug:
+      ansible.builtin.debug:
         msg: "Failed to create ROSANetwork: {{ ansible_failed_result.msg | default('Unknown error') }}"
 
     - name: Get ROSANetwork status for debugging
-      shell: |
+      ansible.builtin.shell: |
         oc get rosanetwork {{ rosa_network_config_name | default(cluster_name + '-network') }} -n {{ rosa_hcp_namespace }} -o json 2>/dev/null || echo '{}'
       register: debug_network_status
       ignore_errors: true
       changed_when: false
 
     - name: Display ROSANetwork status for debugging
-      debug:
+      ansible.builtin.debug:
         var: debug_network_status.stdout
-      when: ((debug_network_status.stdout if debug_network_status.stdout is mapping else (debug_network_status.stdout | from_json)).metadata.name | default('')) != ''
+      when: ((debug_network_status.stdout if debug_network_status.stdout is mapping else (debug_network_status.stdout | from_json)).metadata.name | default(''))
+        != ''
 
     - name: Get ROSANetwork events for troubleshooting
-      shell: |
+      ansible.builtin.shell: |
         oc get events -n {{ rosa_hcp_namespace }} --field-selector involvedObject.name={{ rosa_network_config_name | default(cluster_name + '-network') }} -o json 2>/dev/null || echo '{"items":[]}'
       register: network_events
       ignore_errors: true
       changed_when: false
 
     - name: Display ROSANetwork events for troubleshooting
-      debug:
+      ansible.builtin.debug:
         var: network_events.stdout
       when: ((network_events.stdout if network_events.stdout is mapping else (network_events.stdout | from_json))['items'] | default([])) | length > 0
 
     - name: Fail the task
-      fail:
+      ansible.builtin.fail:
         msg: "ROSANetwork creation failed for cluster {{ cluster_name }}"

@@ -20,7 +20,7 @@
       no_log: true
 
     - name: Set AWS credentials
-      set_fact:
+      ansible.builtin.set_fact:
         aws_access_key_id: "{{ lookup('env', 'AWS_ACCESS_KEY_ID') | default(AWS_ACCESS_KEY_ID, true) }}"
         aws_secret_access_key: "{{ lookup('env', 'AWS_SECRET_ACCESS_KEY') | default(AWS_SECRET_ACCESS_KEY, true) }}"
         aws_region: "{{ lookup('env', 'AWS_REGION') | default(AWS_REGION | default('us-east-1', true), true) }}"
@@ -29,7 +29,7 @@
       no_log: true
 
     - name: Prepare ansible runner host
-      include_tasks: ../tasks/prepare_ansible_runner.yml
+      ansible.builtin.include_tasks: ../tasks/prepare_ansible_runner.yml
       when: not skip_ansible_runner | bool
 
     - name: Clone cluster-api-installer
@@ -44,15 +44,15 @@
       until: clone_capi_result is not failed
 
     - name: Create capi-system namespace
-      shell: |
+      ansible.builtin.shell: |
         oc create namespace capi-system --dry-run=client -o yaml | oc apply -f -
 
     - name: Create capa-system namespace
-      shell: |
+      ansible.builtin.shell: |
         oc create namespace capa-system --dry-run=client -o yaml | oc apply -f -
 
     - name: Create quay.io pull secret for CAPI controller image
-      shell: |
+      ansible.builtin.shell: |
         oc create secret docker-registry capi-manager-pull-credentials \
           --docker-server=quay.io \
           --docker-username="$QUAY_USER" \
@@ -65,7 +65,7 @@
       no_log: true
 
     - name: Create quay.io pull secret for CAPA controller image
-      shell: |
+      ansible.builtin.shell: |
         oc create secret docker-registry capa-manager-pull-credentials \
           --docker-server=quay.io \
           --docker-username="$QUAY_USER" \
@@ -78,19 +78,19 @@
       no_log: true
 
     - name: Generate AWS B64 encoded credentials
-      shell: |
+      ansible.builtin.shell: |
         printf '[default]\naws_access_key_id = "%s"\naws_secret_access_key = "%s"\nregion = "%s"\n' \
           "{{ aws_access_key_id }}" "{{ aws_secret_access_key }}" "{{ aws_region }}" | base64 -w 0
       register: aws_b64_credentials
       no_log: true
 
     - name: Set credentials value from generated output
-      set_fact:
+      ansible.builtin.set_fact:
         aws_b64_credentials_value: "{{ aws_b64_credentials.stdout }}"
       no_log: true
 
     - name: Install CAPI core controllers via Helm (standalone adjustments applied)
-      shell: |
+      ansible.builtin.shell: |
         set -o pipefail
         helm template {{ output_dir }}/cluster-api-installer/charts/cluster-api \
           --include-crds \
@@ -102,23 +102,23 @@
         executable: /bin/bash
 
     - name: Link quay.io pull secret to CAPI controller service account
-      shell: |
+      ansible.builtin.shell: |
         oc secrets link capi-manager capi-manager-pull-credentials --for=pull -n capi-system
       when: quay_username != '' and quay_password != ''
 
     - name: Restart CAPI controller to pick up pull credentials
-      shell: |
+      ansible.builtin.shell: |
         oc rollout restart deployment/capi-controller-manager -n capi-system
       when: quay_username != '' and quay_password != ''
 
     - name: Remove MCE webhook (not needed in standalone mode)
-      shell: |
+      ansible.builtin.shell: |
         oc delete mutatingwebhookconfiguration mce-capi-webhook-config-configuration --ignore-not-found
         oc delete deployment mce-capi-webhook-config -n capi-system --ignore-not-found
         oc delete service mce-capi-webhook-config-service -n capi-system --ignore-not-found
 
     - name: Install CAPA controllers via Helm
-      shell: |
+      ansible.builtin.shell: |
         helm template {{ output_dir }}/cluster-api-installer/charts/cluster-api-provider-aws \
           --include-crds \
           --namespace capa-system \
@@ -126,22 +126,22 @@
         | oc apply -n capa-system -f - --server-side --force-conflicts
 
     - name: Link quay.io pull secret to CAPA controller service account
-      shell: |
+      ansible.builtin.shell: |
         oc secrets link capa-controller-manager capa-manager-pull-credentials --for=pull -n capa-system
       when: quay_username != '' and quay_password != ''
 
     - name: Patch CAPA bootstrap credentials secret
-      shell: |
+      ansible.builtin.shell: |
         oc patch secret capa-manager-bootstrap-credentials -n capa-system \
           --type merge -p '{"data":{"credentials":"{{ aws_b64_credentials_value }}"}}'
       no_log: true
 
     - name: Restart CAPA controller to pick up credentials
-      shell: |
+      ansible.builtin.shell: |
         oc rollout restart deployment/capa-controller-manager -n capa-system
 
     - name: Get current kube context
-      shell: oc config current-context
+      ansible.builtin.command: oc config current-context
       register: current_context
       changed_when: false
 
@@ -150,14 +150,14 @@
         ocp_context: "{{ current_context.stdout | trim }}"
 
     - name: Wait for CAPI/CAPA controllers to be ready
-      include_tasks: ../tasks/wait-for-capi-capa-ready.yml
+      ansible.builtin.include_tasks: ../tasks/wait-for-capi-capa-ready.yml
 
-    - name: Create {{ rosa_hcp_namespace }} namespace
-      shell: |
+    - name: Create namespace {{ rosa_hcp_namespace }}
+      ansible.builtin.shell: |
         oc create namespace {{ rosa_hcp_namespace }} --dry-run=client -o yaml | oc apply -f -
 
     - name: Create rosa-creds-secret
-      include_tasks: ../tasks/create_rosa_creds_secret.yml
+      ansible.builtin.include_tasks: ../tasks/create_rosa_creds_secret.yml
 
     - name: Set the AWSClusterControllerIdentity
-      include_tasks: ../tasks/set_aws_identity.yml
+      ansible.builtin.include_tasks: ../tasks/set_aws_identity.yml

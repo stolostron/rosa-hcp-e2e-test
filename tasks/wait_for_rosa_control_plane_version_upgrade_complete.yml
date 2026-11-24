@@ -1,4 +1,3 @@
-
 - name: Wait for ROSA Control Plane version upgrade to be complete.
   shell: >
     oc get rosacontrolplane -n {{ rosa_hcp_namespace | default('ns-rosa-hcp') }} -o json |

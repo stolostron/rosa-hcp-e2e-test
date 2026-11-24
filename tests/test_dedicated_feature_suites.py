@@ -58,11 +58,12 @@ def test_dedicated_suite_renders_feature(suite_id, version, channel_group, tmp_p
     expected_version = version or "5.0.0-ec.6"
     assert variables["openshift_version"] == expected_version
     assert variables["channel_group"] == (channel_group or "candidate")
-    assert variables["create_rosa_network"] == "True"
-    assert variables["create_rosa_role_config"] == "True"
+    assert variables["create_rosa_network"] is True
+    assert variables["create_rosa_role_config"] is True
     variables.update(
         cluster_name="offline-feature",
         rosa_hcp_namespace="offline-ns",
+        aws_region="us-west-2",
         deployment_mode="mce",
         domain_prefix="offline",
         machine_pool={},
@@ -87,8 +88,13 @@ def test_dedicated_suite_renders_feature(suite_id, version, channel_group, tmp_p
         if task["name"] == "Extract private subnets for private cluster"
     )
     for task in private_step["block"]:
-        if "include_tasks" in task:
-            task["include_tasks"] = str(BASE_DIR / "tasks" / task["include_tasks"])
+        include_key = (
+            "ansible.builtin.include_tasks"
+            if "ansible.builtin.include_tasks" in task
+            else "include_tasks"
+        )
+        if include_key in task:
+            task[include_key] = str(BASE_DIR / "tasks" / task[include_key])
     creation = next(
         task
         for task in provisioning
@@ -105,7 +111,12 @@ def test_dedicated_suite_renders_feature(suite_id, version, channel_group, tmp_p
         if task["name"] == "Create RosaControlPlane from template"
     )
     render["vars"]["apply_immediately"] = False
-    render["include_tasks"] = str(BASE_DIR / "tasks" / render["include_tasks"])
+    render_include = (
+        "ansible.builtin.include_tasks"
+        if "ansible.builtin.include_tasks" in render
+        else "include_tasks"
+    )
+    render[render_include] = str(BASE_DIR / "tasks" / render[render_include])
     playbook_content = yaml.safe_dump(
         [
             {

@@ -224,7 +224,6 @@ Feature Flags:
 
 Execution:
   -e KEY=VALUE                Extra Ansible variables (repeatable)
-  --dry-run                   Ansible check mode (no changes)
   -v / -vv / -vvv / -vvvv    Increase verbosity
 
 AI Agent:
@@ -240,17 +239,70 @@ Output:
 
 | Test Suite | Description |
 |------------|-------------|
-| `05-verify-mce-environment` | Validate MCE/CAPI/CAPA environment configuration before provisioning |
-| `10-configure-mce-environment` | Set up MCE environment for CAPI/CAPA cluster provisioning |
-| `20-rosa-hcp-provision` | Provision a ROSA HCP cluster with automated network and role configuration (supports `--feature` flags) |
-| `21-verify-feature-flags` | Verify provisioned cluster feature flags match requested configuration |
-| `25-rosa-hcp-upgrade-control-plane` | Upgrade ROSA HCP control plane to next available OpenShift version |
-| `26-rosa-hcp-upgrade-machine-pool` | Upgrade ROSA HCP machine pool to next available OpenShift version |
-| `27-rosa-hcp-add-machinepool` | Add a new MachinePool + ROSAMachinePool pair to an existing cluster |
-| `28-rosa-hcp-delete-machinepool` | Delete a MachinePool + ROSAMachinePool pair from an existing cluster |
-| `30-rosa-hcp-delete` | Delete ROSA HCP cluster and CAPA automation resources (ROSANetwork, ROSARoleConfig) |
-| `40-enable-capi-disable-hypershift` | Switch MCE from HyperShift to CAPI/CAPA |
-| `41-disable-capi-enable-hypershift` | Switch MCE from CAPI/CAPA to HyperShift |
+| [`05-verify-mce-environment`](docs/test-suites/05-verify-mce-environment.md) | Validate MCE/CAPI/CAPA environment configuration before provisioning |
+| [`10-configure-mce-environment`](docs/test-suites/10-configure-mce-environment.md) | Set up MCE environment for CAPI/CAPA cluster provisioning |
+| [`11-install-capi-standalone`](docs/test-suites/11-install-capi-standalone.md) | Install CAPI/CAPA controllers via Helm charts for standalone mode |
+| [`15-verify-rosa-ocm-role`](docs/test-suites/15-verify-rosa-ocm-role.md) | Verify ROSAOCMRoleConfig creation, reconciliation, status, and Retain deletion |
+| [`20-rosa-hcp-provision`](docs/test-suites/20-rosa-hcp-provision.md) | Provision a ROSA HCP cluster with automated network and role configuration (supports `--feature` flags) |
+| [`21-verify-feature-flags`](docs/test-suites/21-verify-feature-flags.md) | Verify provisioned cluster feature flags match requested configuration |
+| [`22-rosa-hcp-private`](docs/test-suites/22-rosa-hcp-private.md) | Provision a PrivateLink ROSA HCP cluster (OpenShift 5.0 RC) |
+| [`23-rosa-hcp-no-cni`](docs/test-suites/23-rosa-hcp-no-cni.md) | Provision a no-CNI (BYO-CNI) ROSA HCP cluster (OpenShift 5.0 RC) |
+| [`25-rosa-hcp-upgrade-control-plane`](docs/test-suites/25-rosa-hcp-upgrade-control-plane.md) | Upgrade ROSA HCP control plane to next available OpenShift version |
+| [`26-rosa-hcp-upgrade-machine-pool`](docs/test-suites/26-rosa-hcp-upgrade-machine-pool.md) | Upgrade ROSA HCP machine pool to next available OpenShift version |
+| [`27-rosa-hcp-add-machinepool`](docs/test-suites/27-rosa-hcp-add-machinepool.md) | Add a new MachinePool + ROSAMachinePool pair to an existing cluster |
+| [`28-rosa-hcp-delete-machinepool`](docs/test-suites/28-rosa-hcp-delete-machinepool.md) | Delete a MachinePool + ROSAMachinePool pair from an existing cluster |
+| [`30-rosa-hcp-delete`](docs/test-suites/30-rosa-hcp-delete.md) | Delete ROSA HCP cluster and CAPA automation resources (ROSANetwork, ROSARoleConfig) |
+| [`40-enable-capi-disable-hypershift`](docs/test-suites/40-enable-capi-disable-hypershift.md) | Switch MCE from HyperShift to CAPI/CAPA |
+| [`41-disable-capi-enable-hypershift`](docs/test-suites/41-disable-capi-enable-hypershift.md) | Switch MCE from CAPI/CAPA to HyperShift |
+
+### Per-run inputs
+
+Region, namespace, and the OCM role name are not hardcoded in the suite
+definitions. Override them with `-e`:
+
+```bash
+./run-test-suite.py 20-rosa-hcp-provision \
+  -e aws_region=us-east-1 \
+  -e rosa_hcp_namespace=my-ns
+
+./run-test-suite.py 15-verify-rosa-ocm-role \
+  -e ocm_role_config_name=my-role
+```
+
+Defaults:
+
+- `aws_region`: from `-e`, otherwise the `AWS_REGION` environment variable or
+  `vars/user_vars.yml`, otherwise the playbook default (usually `us-west-2`;
+  the standalone install playbook defaults to `us-east-1` when `AWS_REGION` is
+  unset)
+- `rosa_hcp_namespace`: `ns-rosa-hcp` from `vars/vars.yml`
+- `ocm_role_config_name`: `shared-ocm-role` from the verify playbook
+
+The Jenkins pipeline exposes `AWS_REGION` and `ROSA_HCP_NAMESPACE` as
+parameters and passes them to the ROSA HCP suites.
+
+### Suite dependencies
+
+A suite can declare the suites it needs in `depends_on`:
+
+```json
+"depends_on": ["20-rosa-hcp-provision"]
+```
+
+On `--all` and `--tag` runs, declared dependencies that are part of the same
+selection run first, and a suite is skipped when a dependency selected with it
+failed. A dependency the selection does not include is ignored — `--tag full`
+still provisions without adding `10-configure-mce-environment`, which it did
+not select. Single-suite runs are not affected.
+
+Cleanup and restore suites are marked `always` and still run when their
+dependency failed, so partially created resources are deleted and hub settings
+restored:
+
+```json
+"depends_on": ["20-rosa-hcp-provision"],
+"always": true
+```
 
 ## Feature Flag System
 
@@ -511,9 +563,6 @@ python3 -m pytest tests/ -v
 # Maximum verbosity
 ./run-test-suite.py 20-rosa-hcp-provision -vvv
 
-# Dry-run mode (validates but doesn't execute)
-./run-test-suite.py 20-rosa-hcp-provision --dry-run
-
 # Validate feature flags only (no cluster connection needed)
 ./run-test-suite.py 20-rosa-hcp-provision --validate-only --feature no-cni
 
@@ -523,14 +572,24 @@ ansible-playbook playbooks/create_rosa_hcp_cluster.yml --syntax-check
 
 ### Test Results
 
+`<label>` is the suite ID without its ordering prefix
+(`20-rosa-hcp-provision` → `rosa-hcp-provision`), so it is unique per suite.
+
 ```
 test-results/
-├── feature-verification.json              # latest per-feature results (suite 21)
-├── latest-<label>.xml                      # latest JUnit report
+├── feature-verification.json               # latest per-feature results (suite 21)
+├── latest-<label>.json                    # latest JSON report
+├── latest-<label>.html                    # latest HTML report
 └── <date>/
-    ├── test-run-<label>-<timestamp>.xml
+    ├── test-run-<label>-<timestamp>.xml   # one JUnit report per run
+    ├── test-run-<label>-<timestamp>.json
+    ├── test-run-<label>-<timestamp>.html
     └── feature-verification-<label>-<timestamp>.json
 ```
+
+Only the dated `test-run-*.xml` is written: Jenkins consumes
+`test-results/**/*.xml`, so a `latest-*.xml` copy would make every testcase be
+counted twice.
 
 ### Per-Feature Verification Results
 

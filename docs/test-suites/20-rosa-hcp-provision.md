@@ -1,0 +1,79 @@
+# CAPA Cluster Provisioning
+
+| Field | Value |
+|---|---|
+| **Suite ID** | `20-rosa-hcp-provision` |
+| **Tags** | `rosa`, `hcp`, `provisioning`, `network-automation`, `role-automation`, `smoke`, `full` |
+| **Playbooks** | 1 |
+
+## Overview
+
+This test suite provisions ROSA HCP clusters using the enhanced create_rosa_hcp_cluster.yml playbook with support for automated network and IAM role creation.
+
+## Prerequisites
+
+- MCE/ACM hub cluster with CAPI/CAPA configured
+- AWS credentials (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY) in vars/user_vars.yml
+- OpenShift cluster login credentials configured
+- rosa-creds-secret created in multicluster-engine namespace
+
+## Quick start
+
+```bash
+./run-test-suite.py 20-rosa-hcp-provision -e name_prefix=qe6
+```
+
+Using name_prefix automatically sets cluster_name to '{prefix}-rosa-hcp' and domain_prefix to '{prefix}', making it easy to name all resources consistently
+
+## Automation features
+
+### ROSANetwork
+
+**Enabled by default:** Yes
+
+Automatically creates VPC, subnets, and networking resources via CloudFormation
+
+**Configuration:**
+
+- **`vpc_cidr_block`:** CIDR block for the VPC (default: 10.0.0.0/16)
+- **`availability_zone_count`:** Number of availability zones 1-3 (default: 1)
+
+### ROSARoleConfig
+
+**Enabled by default:** Yes
+
+Automatically creates AWS IAM roles (installer, support, worker) and OIDC provider
+
+**Configuration:**
+
+- **`role_prefix`:** Prefix for IAM role names (defaults to cluster name)
+
+## Customization
+
+- **`name_prefix`:** Simple prefix to name all resources consistently (e.g., 'qe6' creates 'qe6-rosa-hcp' cluster). Automatically sets cluster_name and domain_prefix. RECOMMENDED for easy naming.
+- **`cluster_name`:** Name of the cluster (auto-generated random name by default, or derived from name_prefix)
+- **`domain_prefix`:** Domain prefix for cluster API URL (required, max 15 chars, or derived from name_prefix)
+- **`openshift_version`:** OpenShift version to deploy. Not pinned by this suite — defaults to openshift_version in vars/vars.yml, override with -e openshift_version=&lt;version&gt;. Resolved to the latest available build via OCM.
+- **`aws_region`:** AWS region for deployment (default: us-west-2)
+- **`channel_group`:** Update channel: stable, fast, or candidate (default: stable)
+
+## Expected results
+
+- ROSANetwork resource created (if enabled) with CloudFormation stack
+- ROSARoleConfig resource created (if enabled) with IAM roles and OIDC
+- ROSAControlPlane resource applied successfully
+- Cluster appears in CAPI resources
+- Cluster provisioning begins in AWS
+- Playbook waits for ROSAControlPlane status.ready to become true (STEP 4)
+- Cluster fully provisioned and ready (max wait: 37.5 minutes)
+
+## Monitoring
+
+```bash
+oc get rosacontrolplane -n ns-rosa-hcp
+oc get rosanetwork -n ns-rosa-hcp
+oc get rosaroleconfig -n ns-rosa-hcp
+oc describe rosacontrolplane <cluster-name> -n ns-rosa-hcp
+oc get rosacontrolplane <cluster-name> -n ns-rosa-hcp -o jsonpath='{.status.ready}' - Check cluster ready status
+oc get rosacontrolplane <cluster-name> -n ns-rosa-hcp -w - Watch cluster status changes
+```

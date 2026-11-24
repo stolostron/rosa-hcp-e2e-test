@@ -1,9 +1,7 @@
 {
   "name": "CAPA Private (PrivateLink) Cluster Provisioning - OpenShift 5.0 RC",
   "description": "Provision a ROSA HCP PrivateLink cluster using CAPA with automated network and role configuration on OpenShift 5.0.0-ec.6, candidate channel. The ROSAControlPlane sets endpointAccess: Private, disabling the public API server and public ingress so all access is via AWS PrivateLink (ACM-21174-Private).",
-  "version": "1.0.0",
   "tags": ["rosa", "hcp", "provisioning", "network-automation", "role-automation", "private", "privatelink", "5.0", "features"],
-  "environment": "mce",
   "playbooks": [
     {
       "name": "Create CAPA Private Cluster",
@@ -17,38 +15,9 @@
         "create_rosa_role_config": true,
         "vpc_cidr_block": "10.0.0.0/16",
         "availability_zone_count": 2,
-        "aws_region": "us-west-2",
-        "capi_namespace": "ns-rosa-hcp",
         "cluster_template_name": "rosa-controlplane-only",
         "selected_template_category": "features",
         "private": true
       }
     }
-  ],
-  "documentation": {
-    "overview": "This test suite defaults to the OpenShift 5.0 release candidate (5.0.0-ec.6, candidate channel). It uses the versioned rosa-controlplane-only feature template with private=true, setting endpointAccess: Private and extracting only private subnets from the automated ROSANetwork. ROSANetwork and ROSARoleConfig are created by the provisioning tasks. The same feature path supports an openshift_version override to 4.22; override channel_group as needed for the target release.",
-    "prerequisites": [
-      "MCE 5.0 RC hub cluster with CAPI/CAPA configured",
-      "AWS credentials (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY) in vars/user_vars.yml",
-      "OpenShift cluster login credentials configured",
-      "rosa-creds-secret created in multicluster-engine namespace"
-    ],
-    "quick_start": {
-      "basic_usage": "./run-test-suite.py 22-rosa-hcp-private -e name_prefix=qe6",
-      "description": "Using name_prefix automatically sets cluster_name and domain_prefix consistently"
-    },
-    "customization": {
-      "openshift_version": "OpenShift version to deploy (default: 5.0.0-ec.6, candidate channel)",
-      "channel_group": "Update channel: stable, fast, or candidate (this suite uses candidate for the 5.0 RC)",
-      "private": "Enables PrivateLink and private-only subnets using the versioned feature template",
-      "aws_region": "AWS region for deployment (default: us-west-2)"
-    },
-    "expected_results": [
-      "ROSANetwork resource created with CloudFormation stack",
-      "ROSARoleConfig resource created with IAM roles and OIDC",
-      "ROSAControlPlane applied with endpointAccess: Private (PrivateLink)",
-      "Cluster provisioned with no public API server or public ingress",
-      "Cluster reachable only over AWS PrivateLink"
-    ]
-  }
-}
+  ]}

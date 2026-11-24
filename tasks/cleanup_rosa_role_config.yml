@@ -136,7 +136,7 @@
 
             - name: Handle force cleanup if enabled
               block:
-                - name: Force remove finalizers (WARNING: This bypasses AWS cleanup)
+                - name: "Force remove finalizers (WARNING: This bypasses AWS cleanup)"
                   kubernetes.core.k8s:
                     api_version: infrastructure.cluster.x-k8s.io/v1beta2
                     kind: ROSARoleConfig

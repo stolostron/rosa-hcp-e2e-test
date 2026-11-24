@@ -31,4 +31,3 @@
     rcp_name: "{{ rosacontrolplane_name.stdout }}"
     current_version: "{{ rcp_current_version.stdout }}"
     requested_version: "{{ rcp_requested_version.stdout }}"
-

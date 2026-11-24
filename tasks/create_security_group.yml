@@ -1,25 +1,25 @@
 ---
 - name: Validate cluster_name is safe for AWS tags
-  assert:
+  ansible.builtin.assert:
     that:
       - cluster_name is match('^[a-zA-Z0-9-]+$')
     fail_msg: "cluster_name '{{ cluster_name }}' contains unsafe characters for AWS tags"
 
 - name: Get VPC ID from ROSANetwork status
-  shell: >
+  ansible.builtin.shell: >
     oc get rosanetwork {{ rosa_network_name }} -n {{ rosa_hcp_namespace }}
     -o jsonpath='{.status.resources[?(@.logicalId=="VPC")].physicalId}'
   register: vpc_id_result
   failed_when: vpc_id_result.rc != 0 or vpc_id_result.stdout == ''
 
 - name: Validate VPC ID format
-  assert:
+  ansible.builtin.assert:
     that:
       - vpc_id_result.stdout is match('^vpc-[a-f0-9]+$')
     fail_msg: "Invalid VPC ID: {{ vpc_id_result.stdout }}"
 
 - name: Set VPC ID fact
-  set_fact:
+  ansible.builtin.set_fact:
     sg_vpc_id: "{{ vpc_id_result.stdout }}"
 
 - name: Check for existing security group by name and VPC
@@ -28,7 +28,7 @@
     AWS_ACCESS_KEY_ID: "{{ AWS_ACCESS_KEY_ID }}"
     AWS_SECRET_ACCESS_KEY: "{{ AWS_SECRET_ACCESS_KEY }}"
     AWS_DEFAULT_REGION: "{{ aws_region | default('us-west-2') }}"
-  shell: |
+  ansible.builtin.shell: |
     RESULT=$(aws ec2 describe-security-groups \
       --filters "Name=group-name,Values={{ cluster_name }}-test-sg" \
                 "Name=vpc-id,Values={{ sg_vpc_id }}" \
@@ -49,7 +49,7 @@
         AWS_ACCESS_KEY_ID: "{{ AWS_ACCESS_KEY_ID }}"
         AWS_SECRET_ACCESS_KEY: "{{ AWS_SECRET_ACCESS_KEY }}"
         AWS_DEFAULT_REGION: "{{ aws_region | default('us-west-2') }}"
-      shell: |
+      ansible.builtin.shell: |
         aws ec2 create-tags \
           --resources "{{ existing_sg_result.stdout | trim }}" \
           --tags Key=rosa-cluster,Value={{ cluster_name }} \
@@ -57,7 +57,7 @@
                  Key=automation.acm.redhat.com/test-case,Value=SC-04
       failed_when: false
     - name: Set existing SG fact
-      set_fact:
+      ansible.builtin.set_fact:
         created_security_group_id: "{{ existing_sg_result.stdout | trim }}"
 
 - name: Create security group in cluster VPC
@@ -69,7 +69,7 @@
         AWS_ACCESS_KEY_ID: "{{ AWS_ACCESS_KEY_ID }}"
         AWS_SECRET_ACCESS_KEY: "{{ AWS_SECRET_ACCESS_KEY }}"
         AWS_DEFAULT_REGION: "{{ aws_region | default('us-west-2') }}"
-      shell: |
+      ansible.builtin.shell: |
         SG_ID=$(aws ec2 create-security-group \
           --group-name "{{ cluster_name }}-test-sg" \
           --description "Test security group for ROSA HCP cluster {{ cluster_name }}" \
@@ -92,22 +92,22 @@
         echo "$SG_ID"
       register: create_sg_result
     - name: Set created security group ID
-      set_fact:
+      ansible.builtin.set_fact:
         created_security_group_id: "{{ create_sg_result.stdout | trim }}"
 
 - name: Validate security group ID
-  assert:
+  ansible.builtin.assert:
     that:
       - created_security_group_id is defined
       - created_security_group_id is match('^sg-[a-f0-9]+$')
     fail_msg: "Invalid security group ID: {{ created_security_group_id | default('undefined') }}"
 
 - name: Set additional_security_groups for template rendering
-  set_fact:
+  ansible.builtin.set_fact:
     additional_security_groups: "{{ (additional_security_groups | default([])) + [created_security_group_id] }}"
 
 - name: Display security group result
-  debug:
+  ansible.builtin.debug:
     msg: |
       Security Group: {{ created_security_group_id }}
       VPC: {{ sg_vpc_id }}
