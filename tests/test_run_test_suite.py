@@ -248,6 +248,105 @@ def test_tag_filter_no_match():
 
 
 # ================================================================
+# Suite Dependencies
+# ================================================================
+
+def _suite(suite_id, depends_on=None):
+    suite = {"id": suite_id, "name": suite_id, "tags": []}
+    if depends_on:
+        suite["depends_on"] = depends_on
+    return suite
+
+
+def test_depends_on_orders_the_dependency_first():
+    runner = _make_runner()
+    suites = [_suite("b", ["a"]), _suite("a"), _suite("c")]
+    ordered = runner._order_by_dependencies(suites)
+    assert [s["id"] for s in ordered] == ["a", "b", "c"]
+
+
+def test_depends_on_keeps_independent_order():
+    runner = _make_runner()
+    suites = [_suite("20"), _suite("21"), _suite("30")]
+    ordered = runner._order_by_dependencies(suites)
+    assert [s["id"] for s in ordered] == ["20", "21", "30"]
+
+
+def test_depends_on_ignores_dependencies_outside_the_selection():
+    """A tag run cannot run suites the tag did not select."""
+    runner = _make_runner()
+    ordered = runner._order_by_dependencies([_suite("b", ["a"])])
+    assert [s["id"] for s in ordered] == ["b"]
+
+
+def test_dependent_suite_is_skipped_when_dependency_fails(monkeypatch):
+    runner = _make_runner()
+    monkeypatch.setattr(
+        runner, "list_test_suites",
+        lambda: [_suite("a"), _suite("b", ["a"]), _suite("c")],
+    )
+    ran = []
+
+    def fake_run(suite_id):
+        ran.append(suite_id)
+        return suite_id != "a"
+
+    monkeypatch.setattr(runner, "run_test_suite", fake_run)
+
+    assert runner.run_all_suites() is False
+    assert ran == ["a", "c"], "b must not run after its dependency failed"
+
+
+def test_always_suite_runs_after_dependency_fails(monkeypatch):
+    """Cleanup suites must still run when provisioning failed."""
+    runner = _make_runner()
+    cleanup = _suite("c", ["a"])
+    cleanup["always"] = True
+    monkeypatch.setattr(
+        runner, "list_test_suites", lambda: [_suite("a"), _suite("b", ["a"]), cleanup]
+    )
+    ran = []
+    monkeypatch.setattr(
+        runner, "run_test_suite", lambda suite_id: ran.append(suite_id) or suite_id != "a"
+    )
+
+    assert runner.run_all_suites() is False
+    assert ran == ["a", "c"], "the always suite must run even though 'a' failed"
+
+
+def test_suite_runs_when_dependency_is_not_selected(monkeypatch):
+    runner = _make_runner()
+    monkeypatch.setattr(runner, "list_test_suites", lambda: [_suite("b", ["a"])])
+    ran = []
+    monkeypatch.setattr(
+        runner, "run_test_suite", lambda suite_id: ran.append(suite_id) or True
+    )
+
+    assert runner.run_all_suites() is True
+    assert ran == ["b"]
+
+
+def test_run_test_suite_reports_only_its_own_outcome(monkeypatch):
+    runner = _make_runner()
+    runner.results["failed"] = 1  # an earlier suite failed
+    monkeypatch.setattr(
+        runner, "load_test_suite",
+        lambda suite_id: {"name": "suite", "playbooks": [{"name": "p"}]},
+    )
+    monkeypatch.setattr(
+        runner, "run_playbook",
+        lambda playbook, suite_name: {
+            "name": "p", "file": "f", "description": "", "test_case_id": "",
+            "success": True, "duration": 0.0,
+        },
+    )
+    monkeypatch.setattr(runner, "_print_suite_header", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "_print_suite_summary", lambda *a, **k: None)
+
+    assert runner.run_test_suite("suite") is True
+
+
+# ================================================================
 # Runner Initialization
 # ================================================================
 

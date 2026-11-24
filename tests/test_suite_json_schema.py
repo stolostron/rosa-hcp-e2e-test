@@ -107,6 +107,8 @@ def test_schema_lists_only_runner_read_fields():
         "description",
         "tags",
         "stopOnFailure",
+        "depends_on",
+        "always",
         "playbooks",
     }
 
@@ -143,3 +145,37 @@ def test_suites_do_not_hardcode_per_run_inputs():
         "Per-run inputs must come from -e/Jenkins, not suite JSON:\n"
         + "\n".join(offenders)
     )
+
+
+def test_depends_on_targets_exist():
+    suite_ids = {suite_file.stem for suite_file in SUITE_FILES}
+    unknown = [
+        f"{suite_file.stem} -> {dependency}"
+        for suite_file in SUITE_FILES
+        for dependency in _load_suite(suite_file).get("depends_on", [])
+        if dependency not in suite_ids
+    ]
+    assert not unknown, f"depends_on points at unknown suites: {unknown}"
+
+
+def test_depends_on_has_no_cycles():
+    graph = {
+        suite_file.stem: _load_suite(suite_file).get("depends_on", [])
+        for suite_file in SUITE_FILES
+    }
+    state = {}
+
+    def visit(suite_id, path):
+        if state.get(suite_id) == "done":
+            return
+        assert state.get(suite_id) != "visiting", (
+            f"dependency cycle: {' -> '.join(path + [suite_id])}"
+        )
+        state[suite_id] = "visiting"
+        for dependency in graph.get(suite_id, []):
+            if dependency in graph:
+                visit(dependency, path + [suite_id])
+        state[suite_id] = "done"
+
+    for suite_id in graph:
+        visit(suite_id, [])

@@ -281,6 +281,29 @@ Defaults:
 The Jenkins pipeline exposes `AWS_REGION` and `ROSA_HCP_NAMESPACE` as
 parameters and passes them to the ROSA HCP suites.
 
+### Suite dependencies
+
+A suite can declare the suites it needs in `depends_on`:
+
+```json
+"depends_on": ["20-rosa-hcp-provision"]
+```
+
+On `--all` and `--tag` runs, declared dependencies that are part of the same
+selection run first, and a suite is skipped when a dependency selected with it
+failed. A dependency the selection does not include is ignored — `--tag full`
+still provisions without adding `10-configure-mce-environment`, which it did
+not select. Single-suite runs are not affected.
+
+Cleanup and restore suites are marked `always` and still run when their
+dependency failed, so partially created resources are deleted and hub settings
+restored:
+
+```json
+"depends_on": ["20-rosa-hcp-provision"],
+"always": true
+```
+
 ## Feature Flag System
 
 The framework supports composable Day 1 feature testing via `--feature` CLI flags. Features are defined in `templates/schemas/feature-registry.yml` and resolved by `feature_manager.py`.

@@ -2,6 +2,8 @@
   "name": "Disable CAPI/CAPA, Enable Hypershift",
   "description": "Switch MCE from CAPI/CAPA to Hypershift for hosted control plane management",
   "tags": ["mce", "hypershift", "capi", "configuration", "component-management"],
+  "depends_on": ["10-configure-mce-environment"],
+  "always": true,
   "playbooks": [
     {
       "name": "Disable CAPI/CAPA and Enable Hypershift",
