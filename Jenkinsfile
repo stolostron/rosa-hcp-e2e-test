@@ -228,19 +228,19 @@ pipeline {
                                 GROUP_FLAG="--feature-group ${FEATURE_GROUP}"
                             fi
                             # Build extra vars from EXTRA_FEATURE_VARS and ETCD_KMS_ARN
-                            EXTRA_VARS=""
+                            set --
                             if [ -n "${ETCD_KMS_ARN}" ]; then
-                                EXTRA_VARS="${EXTRA_VARS} -e etcd_encryption_kms_arn=${ETCD_KMS_ARN}"
+                                set -- "$@" -e "etcd_encryption_kms_arn=${ETCD_KMS_ARN}"
                             fi
                             if [ -n "${EXTRA_FEATURE_VARS}" ]; then
                                 for var in ${EXTRA_FEATURE_VARS}; do
-                                    EXTRA_VARS="${EXTRA_VARS} -e \"${var}\""
+                                    set -- "$@" -e "${var}"
                                 done
                             fi
                             # Validate feature names, version compatibility, dependencies, and
                             # required inputs — no cluster connection needed, exits before ansible
                             ./run-test-suite.py 20-rosa-hcp-provision --validate-only ${FEATURE_FLAGS} \
-                              ${GROUP_FLAG} ${EXTRA_VARS}
+                              ${GROUP_FLAG} "$@"
                         '''
                         echo "Feature validation passed for: ${env.CLUSTER_FEATURES} ${env.FEATURE_GROUP}"
                     }
@@ -291,13 +291,13 @@ pipeline {
                                     GROUP_FLAG="--feature-group ${FEATURE_GROUP}"
                                 fi
                                 # Build extra vars from EXTRA_FEATURE_VARS and ETCD_KMS_ARN
-                                EXTRA_VARS=""
+                                set --
                                 if [ -n "${ETCD_KMS_ARN}" ]; then
-                                    EXTRA_VARS="${EXTRA_VARS} -e etcd_encryption_kms_arn=${ETCD_KMS_ARN}"
+                                    set -- "$@" -e "etcd_encryption_kms_arn=${ETCD_KMS_ARN}"
                                 fi
                                 if [ -n "${EXTRA_FEATURE_VARS}" ]; then
                                     for var in ${EXTRA_FEATURE_VARS}; do
-                                        EXTRA_VARS="${EXTRA_VARS} -e \"${var}\""
+                                        set -- "$@" -e "${var}"
                                     done
                                 fi
                                 # Execute the ROSA HCP provisioning test suite with maximum verbosity
@@ -312,7 +312,7 @@ pipeline {
                                   -e AWS_REGION="${AWS_REGION}" \
                                   -e name_prefix="${NAME_PREFIX}" \
                                   -e OCM_API_URL="${OCM_API_URL}" \
-                                  ${EXTRA_VARS}
+                                  "$@"
                             '''
                         }
                         // Archive provisioning test results, including AI agent logs
@@ -367,13 +367,13 @@ pipeline {
                                     GROUP_FLAG="--feature-group ${FEATURE_GROUP}"
                                 fi
                                 # Build extra vars from EXTRA_FEATURE_VARS and ETCD_KMS_ARN
-                                EXTRA_VARS=""
+                                set --
                                 if [ -n "${ETCD_KMS_ARN}" ]; then
-                                    EXTRA_VARS="${EXTRA_VARS} -e etcd_encryption_kms_arn=${ETCD_KMS_ARN}"
+                                    set -- "$@" -e "etcd_encryption_kms_arn=${ETCD_KMS_ARN}"
                                 fi
                                 if [ -n "${EXTRA_FEATURE_VARS}" ]; then
                                     for var in ${EXTRA_FEATURE_VARS}; do
-                                        EXTRA_VARS="${EXTRA_VARS} -e \"${var}\""
+                                        set -- "$@" -e "${var}"
                                     done
                                 fi
                                 ./run-test-suite.py 21-verify-feature-flags --format junit -v --ai-agent ${FEATURE_FLAGS} ${GROUP_FLAG} \
@@ -382,7 +382,7 @@ pipeline {
                                   -e MCE_NAMESPACE="${MCE_NAMESPACE}" \
                                   -e rosa_hcp_namespace="${ROSA_HCP_NAMESPACE}" \
                                   -e cluster_name="${NAME_PREFIX}-rosa-hcp" \
-                                  ${EXTRA_VARS}
+                                  "$@"
                             '''
                         }
                     }
