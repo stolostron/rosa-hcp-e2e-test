@@ -101,15 +101,60 @@ def test_per_resource_timeouts_do_not_exceed_the_global_timeout():
             )
 
 
-def test_retries_are_derived_from_the_timeouts():
+def test_each_wait_loop_gets_its_own_timeout():
     """
-    Each wait loop should compute RETRIES from its own timeout rather than
-    hardcoding a count, otherwise changing the timeout has no effect.
+    Each wait loop must receive its own timeout, otherwise changing the value
+    has no effect.
     """
     text = DELETION_TASKS.read_text(encoding="utf-8")
     for resource in ("rosacontrolplane", "rosanetwork", "rosaroleconfig"):
-        pattern = rf"RETRIES:.*{resource}_timeout"
+        pattern = rf"TIMEOUT:.*{resource}_timeout"
         assert re.search(pattern, text), (
-            f"no RETRIES expression derives from {resource}_timeout — the wait "
-            "loop is probably using a hardcoded retry count"
+            f"no TIMEOUT expression derives from {resource}_timeout — the wait "
+            "loop is probably using a hardcoded budget"
         )
+
+
+def test_wait_loops_are_deadline_based_not_iteration_based():
+    """
+    The wait loops must bound themselves by wall-clock deadline, not by a retry
+    count derived as timeout/10.
+
+    That derivation assumed a fixed 10s sleep. Once exponential backoff was
+    added (1s..30s) the retry count no longer corresponded to elapsed time: a
+    300s timeout expired after 40s, and a 3600s one ran for 8420s. Deriving a
+    count from a timeout is only safe if the sleep interval is constant, so the
+    loops take a TIMEOUT and compute a DEADLINE instead.
+    """
+    tasks = yaml.safe_load(DELETION_TASKS.read_text(encoding="utf-8"))
+    checked = 0
+    for task in tasks or []:
+        name = task.get("name", "") if isinstance(task, dict) else ""
+        if not name.startswith("Wait for ROSA"):
+            continue
+        checked += 1
+        shell = task.get("ansible.builtin.shell")
+        body = shell["cmd"] if isinstance(shell, dict) else shell
+
+        assert "DEADLINE=" in body, f"{name}: no DEADLINE — loop is not time-bounded"
+        assert re.search(r"while\s+\[", body), f"{name}: expected a while loop"
+        assert not re.search(r"for\s+i\s+in\s+\$\(seq\s+1\s+\$RETRIES\)", body), (
+            f"{name}: still iterates a RETRIES count derived from the timeout"
+        )
+
+    assert checked == 3, f"expected 3 ROSA wait loops, found {checked}"
+
+
+def test_backoff_uses_posix_arithmetic():
+    """
+    `**` is a bash extension. These run under /bin/sh, which is dash on most
+    CI images, where `$((2 ** n))` is a syntax error. Use `$((1 << n))`.
+    """
+    text = DELETION_TASKS.read_text(encoding="utf-8")
+    # Match `**` only inside an arithmetic expansion, so prose mentioning it
+    # (including the comment that warns against it) does not trip the test.
+    offenders = re.findall(r"\$\(\([^)]*\*\*[^)]*\)\)", text)
+    assert not offenders, (
+        f"found `**` exponentiation in arithmetic: {offenders} — not valid "
+        "POSIX sh, use `1 << n` instead"
+    )
