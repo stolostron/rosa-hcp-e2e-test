@@ -270,8 +270,9 @@
         fi
       fi
 
-      # Backoff 1,2,4,8,16,30s - poll tightly at first, then back off. Uses
-      # << not ** : ** is a bash extension and this runs under /bin/sh.
+      # Backoff pattern: 1s×20 attempts, then 2s×20, then 4s×20, 8s×20, 16s×20, 30s (capped).
+      # This provides tight polling early (good for fast deletions) then gradually backs off.
+      # Uses << not **: ** is a bash extension and this runs under /bin/sh.
       EXPONENT=$(((ATTEMPT - 1) / 20))
       [ "$EXPONENT" -gt 5 ] && EXPONENT=5
       SLEEP_TIME=$((1 << EXPONENT))
