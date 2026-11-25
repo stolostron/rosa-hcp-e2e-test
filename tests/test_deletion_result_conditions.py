@@ -119,12 +119,17 @@ def _task_by_name(name):
     raise AssertionError(f"Task not found in {TASK_FILE.name}: {name}")
 
 
+def _module_args(task, module):
+    """A task's module arguments, whether or not it uses the FQCN."""
+    for key in (f"ansible.builtin.{module}", module):
+        if key in task:
+            return task[key]
+    raise AssertionError(f"Not a {module} task: {task.get('name')}")
+
+
 def _message_of(task):
     """The ``msg`` of a debug task, whether or not it uses the FQCN."""
-    for key in ("ansible.builtin.debug", "debug"):
-        if key in task:
-            return task[key]["msg"]
-    raise AssertionError(f"Not a debug task: {task.get('name')}")
+    return _module_args(task, "debug")["msg"]
 
 
 def _when_items(task):
@@ -196,7 +201,7 @@ def _build_probe_playbook(results_file):
     tasks.append(
         {
             "name": "Evaluate deletion summary",
-            "ansible.builtin.set_fact": summary_task["set_fact"],
+            "ansible.builtin.set_fact": _module_args(summary_task, "set_fact"),
         }
     )
 
