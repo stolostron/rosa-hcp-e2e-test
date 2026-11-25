@@ -881,10 +881,23 @@ def test_shell_loop_task_file_has_streaming_output():
             f"{wait_task_name} should use shell loop, not Ansible until"
         assert "retries" not in wait_t, \
             f"{wait_task_name} should use shell loop, not Ansible retries"
-        assert "for " in shell_cmd and "seq" in shell_cmd, \
-            f"{wait_task_name} should have a shell for/seq loop"
-        assert "FAILED - RETRYING" in shell_cmd, \
-            f"{wait_task_name} should echo FAILED - RETRYING for agent detection"
+        # A shell loop of either form is fine. The property that matters is
+        # that iteration happens in the shell (so echo streams immediately),
+        # not in Ansible. The wait loops are deadline-based `while` loops; the
+        # final-check tasks still use `for`/`seq` with a fixed count.
+        has_for_loop = "for " in shell_cmd and "seq" in shell_cmd
+        has_while_loop = "while " in shell_cmd
+        assert has_for_loop or has_while_loop, \
+            f"{wait_task_name} should iterate in the shell (for/seq or while)"
+
+        # Each attempt must emit a line so progress streams to the console and
+        # the job is not mistaken for hung. "PROGRESS:" is the current marker;
+        # "FAILED - RETRYING" is the older Ansible-style wording still used by
+        # the fixed-count final-check tasks. Nothing parses either string --
+        # machine-readable state goes through #AGENT_CONTEXT, which
+        # agents/monitoring_agent.py consumes -- so accept both.
+        assert "PROGRESS:" in shell_cmd or "FAILED - RETRYING" in shell_cmd, \
+            f"{wait_task_name} should echo a per-attempt progress line"
         assert resource.lower() in shell_cmd.lower(), \
             f"{wait_task_name} should include resource type in echo for pattern matching"
 

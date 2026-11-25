@@ -1,4 +1,3 @@
----
 # ================================================================
 # Delete ROSA HCP Resources Task File
 # ================================================================
@@ -209,25 +208,92 @@
     - "'not-found' not in rcp_exists.stdout"
 
 - name: Wait for ROSAControlPlane deletion to complete
+  # Deadline-based, not iteration-based: TIMEOUT is wall-clock seconds, so the
+  # configured value means what it says regardless of the backoff schedule.
+  # (An earlier revision derived a retry count as timeout/10 while sleeping
+  # 1-30s, which made a 300s timeout expire in 40s and a 3600s one run 8420s.)
   ansible.builtin.shell: |
-    for i in $(seq 1 $RETRIES); do
-      OUTPUT=$(oc get rosacontrolplane "$CLUSTER_NAME" -n "$NAMESPACE" 2>&1)
+    START_TIME=$(date +%s)
+    DEADLINE=$((START_TIME + TIMEOUT))
+    STUCK_COUNTER=0
+    ATTEMPT=0
+    PARSE_TS='import sys,datetime;s=sys.stdin.read().strip().replace("Z","+00:00");print(int(datetime.datetime.fromisoformat(s).timestamp()))'
+
+    while [ "$(date +%s)" -lt "$DEADLINE" ]; do
+      ATTEMPT=$((ATTEMPT + 1))
+      NOW=$(date +%s)
+      ELAPSED=$((NOW - START_TIME))
+
+      OUTPUT=$(oc get rosacontrolplane "$CLUSTER_NAME" -n "$NAMESPACE" -o json 2>&1)
       RC=$?
+
       if [ $RC -ne 0 ]; then
         if echo "$OUTPUT" | grep -qi "not found\|NotFound\|no resources found"; then
-          echo "ROSAControlPlane deleted successfully" | tee -a "$LOGFILE"
+          echo "ROSAControlPlane deleted successfully (attempt $ATTEMPT, ${ELAPSED}s elapsed)" | tee -a "$LOGFILE"
           exit 0
         fi
         echo "WARNING: oc get failed unexpectedly (rc=$RC): $OUTPUT" | tee -a "$LOGFILE"
+      else
+        DELETION_TS=$(echo "$OUTPUT" | jq -r '.metadata.deletionTimestamp // empty' 2>/dev/null)
+        if [ -n "$DELETION_TS" ]; then
+          # Portable ISO-8601 -> epoch. GNU and BSD `date` disagree on parsing,
+          # so use python3, which ansible already requires. Degrades to 0 (skip
+          # stuck detection) rather than failing the deletion.
+          DELETION_EPOCH=$(printf '%s' "$DELETION_TS" | python3 -c "$PARSE_TS" 2>/dev/null || echo 0)
+          case "$DELETION_EPOCH" in ''|*[!0-9]*) DELETION_EPOCH=0 ;; esac
+
+          if [ "$DELETION_EPOCH" -gt 0 ]; then
+            AGE=$((NOW - DELETION_EPOCH))
+
+            # Deletion pending far longer than this resource normally takes is
+            # treated as stuck, but only after 3 consecutive observations so a
+            # single slow reconcile does not abort a healthy deletion.
+            if [ "$AGE" -gt "$STUCK_AFTER" ]; then
+              STUCK_COUNTER=$((STUCK_COUNTER + 1))
+              if [ "$STUCK_COUNTER" -ge 3 ]; then
+                echo "#AGENT_CONTEXT: resource_name=$CLUSTER_NAME resource_type=rosacontrolplane status=stuck_deleting age_seconds=$AGE" | tee -a "$LOGFILE"
+                echo "ROSAControlPlane stuck in deletion for ${AGE}s (3 consecutive checks) - early exit" | tee -a "$LOGFILE"
+                exit 1
+              fi
+            else
+              STUCK_COUNTER=0
+            fi
+
+            FINALIZERS=$(echo "$OUTPUT" | jq -r '.metadata.finalizers | length' 2>/dev/null || echo 0)
+            case "$FINALIZERS" in ''|*[!0-9]*) FINALIZERS=0 ;; esac
+            if [ "$FINALIZERS" -gt 0 ] && [ "$AGE" -gt "$FINALIZER_STUCK_AFTER" ]; then
+              echo "#AGENT_CONTEXT: resource_name=$CLUSTER_NAME resource_type=rosacontrolplane status=stuck_on_finalizer age_seconds=$AGE" | tee -a "$LOGFILE"
+              echo "ROSAControlPlane stuck on finalizer for ${AGE}s - early exit" | tee -a "$LOGFILE"
+              exit 1
+            fi
+          fi
+        fi
       fi
-      echo "FAILED - RETRYING: [localhost]: Wait for rosacontrolplane $CLUSTER_NAME deletion to complete ($((RETRIES - i)) retries left)." | tee -a "$LOGFILE"
-      sleep 10
+
+      # Backoff pattern: 1s×20 attempts, then 2s×20, then 4s×20, 8s×20, 16s×20, 30s (capped).
+      # This provides tight polling early (good for fast deletions) then gradually backs off.
+      # Uses << not **: ** is a bash extension and this runs under /bin/sh.
+      EXPONENT=$(((ATTEMPT - 1) / 20))
+      [ "$EXPONENT" -gt 5 ] && EXPONENT=5
+      SLEEP_TIME=$((1 << EXPONENT))
+      [ "$SLEEP_TIME" -gt 30 ] && SLEEP_TIME=30
+
+      # Never sleep past the deadline.
+      REMAINING=$((DEADLINE - $(date +%s)))
+      [ "$REMAINING" -le 0 ] && break
+      [ "$SLEEP_TIME" -gt "$REMAINING" ] && SLEEP_TIME="$REMAINING"
+
+      echo "PROGRESS: attempt $ATTEMPT (${ELAPSED}s of ${TIMEOUT}s) - ROSAControlPlane still deleting, retrying in ${SLEEP_TIME}s..." | tee -a "$LOGFILE"
+      sleep "$SLEEP_TIME"
     done
-    echo "Timed out waiting for ROSAControlPlane deletion" | tee -a "$LOGFILE"
+
+    echo "Timed out waiting for ROSAControlPlane deletion after $(($(date +%s) - START_TIME))s" | tee -a "$LOGFILE"
     exit 1
   environment:
     LOGFILE: "{{ agent_monitor_log }}"
-    RETRIES: "{{ (rosacontrolplane_timeout | default(deletion_timeout) | int / 10) | int }}"
+    TIMEOUT: "{{ [rosacontrolplane_timeout | default(deletion_timeout) | int, 1] | max }}"
+    STUCK_AFTER: "{{ rosacontrolplane_stuck_after | default(1200) | int }}"
+    FINALIZER_STUCK_AFTER: "{{ finalizer_stuck_after | default(300) | int }}"
     CLUSTER_NAME: "{{ cluster_name }}"
     NAMESPACE: "{{ rosa_hcp_namespace }}"
   register: wait_rcp
@@ -340,34 +406,74 @@
     LOGFILE: "{{ agent_monitor_log }}"
     STACK_NAME: "{{ discovered_cf_stack_name | default(cluster_name + '-rosa-network-stack') }}"
     REGION: "{{ aws_region | default('us-west-2') }}"
-    RETRIES: "{{ (rosanetwork_timeout | default(deletion_timeout) | int / 10) | int }}"
+    TIMEOUT: "{{ [rosanetwork_timeout | default(deletion_timeout) | int, 1] | max }}"
+    STUCK_AFTER: "{{ rosanetwork_stuck_after | default(1200) | int }}"
+    FINALIZER_STUCK_AFTER: "{{ finalizer_stuck_after | default(300) | int }}"
+    CF_CHECK_INTERVAL: "{{ cf_check_interval | default(30) | int }}"
     NETWORK_NAME: "{{ discovered_rosa_network_name }}"
     NAMESPACE: "{{ rosa_hcp_namespace }}"
   ansible.builtin.shell:
     cmd: |
-      ITERATION_COUNT=0
+      START_TIME=$(date +%s)
+      DEADLINE=$((START_TIME + TIMEOUT))
+      STUCK_COUNTER=0
+      ATTEMPT=0
+      PARSE_TS='import sys,datetime;s=sys.stdin.read().strip().replace("Z","+00:00");print(int(datetime.datetime.fromisoformat(s).timestamp()))'
       MAX_CF_RETRIES=3
       CF_RETRY_COUNT=0
-      for i in $(seq 1 $RETRIES); do
-        OUTPUT=$(oc get rosanetwork "$NETWORK_NAME" -n "$NAMESPACE" 2>&1)
+      LAST_CF_CHECK=0
+
+      while [ "$(date +%s)" -lt "$DEADLINE" ]; do
+        ATTEMPT=$((ATTEMPT + 1))
+        NOW=$(date +%s)
+        ELAPSED=$((NOW - START_TIME))
+
+        OUTPUT=$(oc get rosanetwork "$NETWORK_NAME" -n "$NAMESPACE" -o json 2>&1)
         RC=$?
         if [ $RC -ne 0 ]; then
           if echo "$OUTPUT" | grep -qi "not found\|NotFound\|no resources found"; then
-            echo "ROSANetwork deleted successfully" | tee -a "$LOGFILE"
+            echo "ROSANetwork deleted successfully (attempt $ATTEMPT, ${ELAPSED}s elapsed)" | tee -a "$LOGFILE"
             exit 0
           fi
           echo "WARNING: oc get failed unexpectedly (rc=$RC): $OUTPUT" | tee -a "$LOGFILE"
+        else
+          DELETION_TS=$(echo "$OUTPUT" | jq -r '.metadata.deletionTimestamp // empty' 2>/dev/null)
+          if [ -n "$DELETION_TS" ]; then
+            DELETION_EPOCH=$(printf '%s' "$DELETION_TS" | python3 -c "$PARSE_TS" 2>/dev/null || echo 0)
+            case "$DELETION_EPOCH" in ''|*[!0-9]*) DELETION_EPOCH=0 ;; esac
+
+            if [ "$DELETION_EPOCH" -gt 0 ]; then
+              AGE=$((NOW - DELETION_EPOCH))
+              if [ "$AGE" -gt "$STUCK_AFTER" ]; then
+                STUCK_COUNTER=$((STUCK_COUNTER + 1))
+                if [ "$STUCK_COUNTER" -ge 3 ]; then
+                  echo "#AGENT_CONTEXT: resource_name=$NETWORK_NAME resource_type=rosanetwork status=stuck_deleting age_seconds=$AGE" | tee -a "$LOGFILE"
+                  echo "ROSANetwork stuck in deletion for ${AGE}s (3 consecutive checks) - early exit" | tee -a "$LOGFILE"
+                  exit 1
+                fi
+              else
+                STUCK_COUNTER=0
+              fi
+
+              FINALIZERS=$(echo "$OUTPUT" | jq -r '.metadata.finalizers | length' 2>/dev/null || echo 0)
+              case "$FINALIZERS" in ''|*[!0-9]*) FINALIZERS=0 ;; esac
+              if [ "$FINALIZERS" -gt 0 ] && [ "$AGE" -gt "$FINALIZER_STUCK_AFTER" ]; then
+                echo "#AGENT_CONTEXT: resource_name=$NETWORK_NAME resource_type=rosanetwork status=stuck_on_finalizer age_seconds=$AGE" | tee -a "$LOGFILE"
+                echo "ROSANetwork stuck on finalizer for ${AGE}s - early exit" | tee -a "$LOGFILE"
+                exit 1
+              fi
+            fi
+          fi
         fi
 
-        ITERATION_COUNT=$((ITERATION_COUNT + 1))
-
-        # Only check CloudFormation after 3 consecutive failures (avoid API overhead on every iteration)
-        # and only up to MAX_CF_RETRIES times total (prevents infinite recovery loops)
-        if [ "$ITERATION_COUNT" -ge 3 ] && [ "$CF_RETRY_COUNT" -lt "$MAX_CF_RETRIES" ]; then
+        # Gate the CloudFormation probe on elapsed time, not iteration count:
+        # the backoff makes early iterations ~1s apart, so a count-based gate
+        # would burn all MAX_CF_RETRIES within the first few seconds.
+        if [ "$((NOW - LAST_CF_CHECK))" -ge "$CF_CHECK_INTERVAL" ] && [ "$CF_RETRY_COUNT" -lt "$MAX_CF_RETRIES" ]; then
+          LAST_CF_CHECK=$NOW
           CF_STATUS=$(aws cloudformation describe-stacks \
             --stack-name "$STACK_NAME" --region "$REGION" \
             --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "GONE")
-          ITERATION_COUNT=0  # reset after every CF check so next check waits another 3 iterations
 
           if [ "$CF_STATUS" = "DELETE_FAILED" ]; then
             echo "#AGENT_CONTEXT: cf_status=DELETE_FAILED stack_name=$STACK_NAME resource_type=rosanetwork" | tee -a "$LOGFILE"
@@ -447,10 +553,19 @@
           fi
         fi
 
-        echo "FAILED - RETRYING: [localhost]: Wait for rosanetwork $NETWORK_NAME deletion to complete ($((RETRIES - i)) retries left)." | tee -a "$LOGFILE"
-        sleep 10
+        EXPONENT=$(((ATTEMPT - 1) / 20))
+        [ "$EXPONENT" -gt 5 ] && EXPONENT=5
+        SLEEP_TIME=$((1 << EXPONENT))
+        [ "$SLEEP_TIME" -gt 30 ] && SLEEP_TIME=30
+
+        REMAINING=$((DEADLINE - $(date +%s)))
+        [ "$REMAINING" -le 0 ] && break
+        [ "$SLEEP_TIME" -gt "$REMAINING" ] && SLEEP_TIME="$REMAINING"
+
+        echo "PROGRESS: attempt $ATTEMPT (${ELAPSED}s of ${TIMEOUT}s) - ROSANetwork still deleting, retrying in ${SLEEP_TIME}s..." | tee -a "$LOGFILE"
+        sleep "$SLEEP_TIME"
       done
-      echo "Timed out waiting for ROSANetwork deletion" | tee -a "$LOGFILE"
+      echo "Timed out waiting for ROSANetwork deletion after $(($(date +%s) - START_TIME))s" | tee -a "$LOGFILE"
       exit 1
   register: wait_rn
   failed_when: false
@@ -652,24 +767,75 @@
 
 - name: Wait for ROSARoleConfig deletion to complete
   ansible.builtin.shell: |
-    for i in $(seq 1 $RETRIES); do
-      OUTPUT=$(oc get rosaroleconfig "$ROLE_CONFIG_NAME" -n "$NAMESPACE" 2>&1)
+    START_TIME=$(date +%s)
+    DEADLINE=$((START_TIME + TIMEOUT))
+    STUCK_COUNTER=0
+    ATTEMPT=0
+    PARSE_TS='import sys,datetime;s=sys.stdin.read().strip().replace("Z","+00:00");print(int(datetime.datetime.fromisoformat(s).timestamp()))'
+
+    while [ "$(date +%s)" -lt "$DEADLINE" ]; do
+      ATTEMPT=$((ATTEMPT + 1))
+      NOW=$(date +%s)
+      ELAPSED=$((NOW - START_TIME))
+
+      OUTPUT=$(oc get rosaroleconfig "$ROLE_CONFIG_NAME" -n "$NAMESPACE" -o json 2>&1)
       RC=$?
+
       if [ $RC -ne 0 ]; then
         if echo "$OUTPUT" | grep -qi "not found\|NotFound\|no resources found"; then
-          echo "ROSARoleConfig deleted successfully" | tee -a "$LOGFILE"
+          echo "ROSARoleConfig deleted successfully (attempt $ATTEMPT, ${ELAPSED}s elapsed)" | tee -a "$LOGFILE"
           exit 0
         fi
         echo "WARNING: oc get failed unexpectedly (rc=$RC): $OUTPUT" | tee -a "$LOGFILE"
+      else
+        DELETION_TS=$(echo "$OUTPUT" | jq -r '.metadata.deletionTimestamp // empty' 2>/dev/null)
+        if [ -n "$DELETION_TS" ]; then
+          DELETION_EPOCH=$(printf '%s' "$DELETION_TS" | python3 -c "$PARSE_TS" 2>/dev/null || echo 0)
+          case "$DELETION_EPOCH" in ''|*[!0-9]*) DELETION_EPOCH=0 ;; esac
+
+          if [ "$DELETION_EPOCH" -gt 0 ]; then
+            AGE=$((NOW - DELETION_EPOCH))
+            if [ "$AGE" -gt "$STUCK_AFTER" ]; then
+              STUCK_COUNTER=$((STUCK_COUNTER + 1))
+              if [ "$STUCK_COUNTER" -ge 3 ]; then
+                echo "#AGENT_CONTEXT: resource_name=$ROLE_CONFIG_NAME resource_type=rosaroleconfig status=stuck_deleting age_seconds=$AGE" | tee -a "$LOGFILE"
+                echo "ROSARoleConfig stuck in deletion for ${AGE}s (3 consecutive checks) - early exit" | tee -a "$LOGFILE"
+                exit 1
+              fi
+            else
+              STUCK_COUNTER=0
+            fi
+
+            FINALIZERS=$(echo "$OUTPUT" | jq -r '.metadata.finalizers | length' 2>/dev/null || echo 0)
+            case "$FINALIZERS" in ''|*[!0-9]*) FINALIZERS=0 ;; esac
+            if [ "$FINALIZERS" -gt 0 ] && [ "$AGE" -gt "$FINALIZER_STUCK_AFTER" ]; then
+              echo "#AGENT_CONTEXT: resource_name=$ROLE_CONFIG_NAME resource_type=rosaroleconfig status=stuck_on_finalizer age_seconds=$AGE" | tee -a "$LOGFILE"
+              echo "ROSARoleConfig stuck on finalizer for ${AGE}s - early exit" | tee -a "$LOGFILE"
+              exit 1
+            fi
+          fi
+        fi
       fi
-      echo "FAILED - RETRYING: [localhost]: Wait for rosaroleconfig $ROLE_CONFIG_NAME deletion to complete ($((RETRIES - i)) retries left)." | tee -a "$LOGFILE"
-      sleep 10
+
+      EXPONENT=$(((ATTEMPT - 1) / 20))
+      [ "$EXPONENT" -gt 5 ] && EXPONENT=5
+      SLEEP_TIME=$((1 << EXPONENT))
+      [ "$SLEEP_TIME" -gt 30 ] && SLEEP_TIME=30
+
+      REMAINING=$((DEADLINE - $(date +%s)))
+      [ "$REMAINING" -le 0 ] && break
+      [ "$SLEEP_TIME" -gt "$REMAINING" ] && SLEEP_TIME="$REMAINING"
+
+      echo "PROGRESS: attempt $ATTEMPT (${ELAPSED}s of ${TIMEOUT}s) - ROSARoleConfig still deleting, retrying in ${SLEEP_TIME}s..." | tee -a "$LOGFILE"
+      sleep "$SLEEP_TIME"
     done
-    echo "Timed out waiting for ROSARoleConfig deletion" | tee -a "$LOGFILE"
+    echo "Timed out waiting for ROSARoleConfig deletion after $(($(date +%s) - START_TIME))s" | tee -a "$LOGFILE"
     exit 1
   environment:
     LOGFILE: "{{ agent_monitor_log }}"
-    RETRIES: "{{ (rosaroleconfig_timeout | default(deletion_timeout) | int / 10) | int }}"
+    TIMEOUT: "{{ [rosaroleconfig_timeout | default(deletion_timeout) | int, 1] | max }}"
+    STUCK_AFTER: "{{ rosaroleconfig_stuck_after | default(1200) | int }}"
+    FINALIZER_STUCK_AFTER: "{{ finalizer_stuck_after | default(300) | int }}"
     ROLE_CONFIG_NAME: "{{ discovered_rosa_role_config_name }}"
     NAMESPACE: "{{ rosa_hcp_namespace }}"
   register: wait_rrc
