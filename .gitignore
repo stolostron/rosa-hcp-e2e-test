@@ -35,8 +35,11 @@ ENV/
 # IDE
 .vscode/
 .idea/
-.claude/
 *.code-workspace
+
+# Claude Code: personal state stays local, shared skills are tracked
+.claude/*
+!.claude/skills/
 
 # OS
 .DS_Store

@@ -11,7 +11,7 @@
 | Requires Input | No |
 | CRD Resource | `ROSAControlPlane` |
 | K8s Field | `.spec.defaultMachinePoolSpec.autoscaling` |
-| Min Version | 4.19 |
+| Min Version | 4.18 |
 | Ansible Variable | `default_autoscaling` |
 
 ## Description

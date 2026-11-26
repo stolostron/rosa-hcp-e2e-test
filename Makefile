@@ -7,10 +7,36 @@ PULL_SECRET_FILE ?=
 
 OCP_VERSION ?= 4.22.6
 
-.PHONY: test scenarios scenario crc-smoke crc-full crc-stop
+# Feature used as the probe for `make verify-skills`. disk_size is the default
+# because its feature id, CLI alias (disk-size) and var_map variable
+# (root_volume_size) are three different strings, and it is a non-boolean on
+# ROSAMachinePool -- so every seam the skill warns about is load-bearing. A
+# feature whose id, alias and variable are all the same string (fips, no_cni)
+# would still pass with var_map deleted entirely.
+FEATURE ?= disk_size
+
+.PHONY: test scenarios scenario verify-skills verify-skills-all \
+	crc-smoke crc-full crc-stop
 
 test:
 	./run-test-suite.py $(DEFAULT_TEST_SUITE) -vvv
+
+# Check the add-feature-test skill still describes the code, by walking one shipped
+# feature through every layer it says must be touched: registry, version gate, both
+# 4.22/5.0 templates, crd_field_map, the CHECK guard, the verification task, the
+# boto3 declaration, the docs page and README, then the extra vars the CLI actually
+# resolves. Exits non-zero on the first disagreement -- which means either the doc
+# drifted or that feature is incomplete.
+#   make verify-skills
+#   make verify-skills FEATURE=audit_logging
+verify-skills:
+	./scripts/verify_skills_md.py $(FEATURE)
+
+# The same checks across every feature reachable from --feature, one line each.
+# tests/test_skills_md.py runs this in CI; this target is the readable version,
+# and unlike the test it does not skip the features listed in KNOWN_GAPS.
+verify-skills-all:
+	./scripts/verify_skills_md.py --all
 
 # List runnable scenarios and the OpenShift versions each supports
 scenarios:

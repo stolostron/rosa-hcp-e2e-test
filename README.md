@@ -329,6 +329,7 @@ The framework supports composable Day 1 feature testing via `--feature` CLI flag
 | `--feature autoscaling` | Default MachinePool autoscaling | ROSAControlPlane |
 | `--feature autoscaler` | Cluster autoscaler with expander | ROSAControlPlane |
 | `--feature log-forwarding` | Audit log forwarding to CloudWatch | ROSAControlPlane |
+| `--feature byon-vpc` | Pre-existing VPC and subnets instead of ROSANetwork | ROSAControlPlane |
 
 ### Feature Groups
 
@@ -372,6 +373,7 @@ Each feature has detailed documentation in [`docs/features/`](docs/features/):
 | Automated Verification | [automated-feature-verification.md](docs/features/automated-feature-verification.md) |
 | Availability Zones | [availability-zones.md](docs/features/availability-zones.md) |
 | Break-Glass Credentials | [break-glass-credentials.md](docs/features/break-glass-credentials.md) |
+| Bring Your Own Network | [byon.md](docs/features/byon.md) |
 | Channel Group | [channel-group.md](docs/features/channel-group.md) |
 | Cluster Autoscaler Expander | [cluster-autoscaler-expander.md](docs/features/cluster-autoscaler-expander.md) |
 | Default Autoscaling | [default-autoscaling.md](docs/features/default-autoscaling.md) |
@@ -627,15 +629,138 @@ playbook-level testcase carrying the raw error.
 5. Lint playbooks: `ansible-lint playbooks/`
 6. Submit a pull request to `stolostron/rosa-hcp-e2e-test`
 
-### Adding a New Feature
+### Adding a New Feature Test
 
-1. Add the feature definition to `templates/schemas/feature-registry.yml`
-2. Add a CLI alias under `cli_aliases`
-3. Add the feature ID to `cli_features` if it's a Day 1 creation feature
-4. Add version-specific template conditionals under `templates/versions/`
-5. Add a feature doc to `docs/features/`
-6. Add the feature to a feature group if applicable
-7. Run `./run-test-suite.py --list-features` to verify
+A feature flows through four layers — the **registry**, the **templates**, the
+**provisioning playbook** and the **suite-21 verification wiring** — and all four
+have to agree. Miss one and the usual result is not a red test: it is a test that
+passes against a cluster where the feature was never applied.
+
+The full procedure lives in [`SKILLS.md`](SKILLS.md), which is also packaged as a
+Claude Code skill so an agent can execute it end to end.
+
+#### With Claude Code (recommended)
+
+The skill is tracked in this repo, so cloning it is the whole setup — no install
+step. Start a session in the repo root and describe the task; nothing is loaded
+until you do:
+
+```bash
+claude
+```
+
+```
+> add a feature test for the disableWorkloadMonitoring field on ROSAControlPlane
+```
+
+Or invoke it by name, `/add-feature-test`.
+
+Either way the agent **reads before it asks**. It pulls the field shape from
+whatever source you named — an upstream PR, the live CRD on your hub, the webhook,
+the OCM model — drafts an intake form with a `[source]` tag on every derived line,
+and then shows you that form with the two or three decisions it genuinely cannot
+derive (CI-safe default value, which feature group, Day-2 scope). Confirming the
+draft is your only required input.
+
+The more specific your opening line, the fewer questions you get:
+
+```
+> add a feature test for kubernetes-sigs/cluster-api-provider-aws/pull/5432
+> add a feature test for disableWorkloadMonitoring on ROSAControlPlane
+> add a feature test for "some randome related text with details"
+```
+
+##### The shortest useful invocation
+
+Three facts cannot be derived from anything, so supply those and let the agent work
+out the rest:
+
+```
+> Add new feature test
+> feature_id: disable_workload_monitoring
+> CRD resource: ROSAControlPlane
+> CRD field path: disableWorkloadMonitoring
+```
+
+The form's labels are not required — *"add a feature test for
+disableWorkloadMonitoring on ROSAControlPlane, id disable_workload_monitoring"*
+does the same thing.
+
+This is **preferable to filling the intake form in yourself and pasting it**. Those
+three lines are the only facts the agent cannot establish on its own; everything
+else it derives and verifies rather than taking on trust, reading the live CRD on
+your hub for the type, default, validation pattern, description and the CEL
+immutability rules. Give it a complete form and it only spot-checks what you wrote;
+give it the three keys and it reads the API properly. A guessed field path is
+exactly what produces a test that silently asserts nothing.
+
+You will still be asked two to four questions, each with a recommendation attached,
+because they are judgments about this repo's test matrix rather than facts about
+the API:
+
+| It will ask | Because no source can answer it |
+|---|---|
+| CI-safe default value | Which value is safe in automation is operational judgment; a plausible-looking one can make clusters fail to provision for reasons unrelated to the test |
+| Feature group | Trades coverage against blast radius, and can raise a whole group's version floor |
+| `min_version` | The CRD says when the field entered CAPA, not which MCE/OCP build ships it |
+| Day-2 scope | Upstream may document mutations this repo has no suite for |
+
+Two caveats:
+
+1. The live-CRD lookup needs `oc` pointed at a hub that actually has the CRD.
+   Without one it falls back to fetching the schema from upstream by branch or tag —
+   still fine, just say which provider version you care about.
+2. If the field comes from an **unmerged** upstream PR, pass the PR link as well.
+   The CRD cannot tell you about cross-field webhook conflicts ("rejects
+   `fooOptions` when `barID` is set") — those are Go code only, and they are where
+   `mutual_exclusions` entries come from.
+
+##### Filling the intake form yourself
+
+If you would rather supply everything up front, the form is Part 2 of
+[`references/intake.md`](.claude/skills/add-feature-test/references/intake.md):
+
+```bash
+sed -n '229,289p' .claude/skills/add-feature-test/references/intake.md > /tmp/intake.md
+# fill it in, then:
+claude
+> add a feature test — I filled the intake form myself, it is at /tmp/intake.md
+```
+
+The agent then skips the source-reading step, spot-checks your CRD resource and
+field path against the live CRD, flags any disagreement rather than silently
+following either version, and asks only about the lines you left blank. Note the
+block in that file is a worked example filled in with `audit_logging` values, so
+you are overwriting values rather than filling blanks.
+
+#### By hand
+
+Read [`.claude/skills/add-feature-test/SKILL.md`](.claude/skills/add-feature-test/SKILL.md)
+and work through its ten steps; the references beside it hold copy-paste skeletons,
+the validation commands, and the gotchas that produce silently-passing tests. In
+outline:
+
+| Layer | Files |
+|---|---|
+| Registry | `templates/schemas/feature-registry.yml` (`var_map`, `cli_aliases`, `cli_features`, the feature entry) and `templates/schemas/version-compatibility.yml` |
+| Templates | `rosa-controlplane-only.yaml.j2` **and** `rosa-combined-automation.yaml.j2` under `templates/versions/4.22/features/`, then copied byte-for-byte to `5.0/` |
+| Verification | `crd_field_map` + a `CHECK:` block in `playbooks/verify_feature_flags.yml`, and `tasks/features/verify_<id>.yml` |
+| Docs and tests | `docs/features/<feature>.md`, both README tables above, and a `TestMyFeature` class in `tests/test_feature_manager.py` |
+
+#### Checking your work
+
+```bash
+./run-test-suite.py --list-features                          # registry parses, metadata is right
+./run-test-suite.py 20-rosa-hcp-provision \
+  --feature my-feature --validate-only                       # resolution, deps, version gate
+make verify-skills FEATURE=my_feature                        # every layer above agrees
+python3 -m pytest tests agents scripts -q                    # same paths CI runs
+```
+
+`make verify-skills` walks your feature through each layer the procedure requires
+and exits non-zero on the first disagreement. `tests/test_skills_md.py` runs the
+same checks for every feature in CI, so a half-wired feature fails a build rather
+than surfacing as a confusing WARN forty minutes into a provision.
 
 ## Support
 
