@@ -100,7 +100,10 @@
       {{ requested_features_list | intersect(aws_dependent_features)
          if (boto3_check.rc | default(1)) != 0 else [] }}
   vars:
-    aws_dependent_features: [audit_logging, etcd_kms, byon, private_network]
+    # fips belongs here because verify_fips.yml inspects worker AMIs with boto3 and
+    # guards every AMI assertion on `boto3_fips_check.rc == 0` -- without boto3 it
+    # would otherwise report a clean PASS having never looked at AWS.
+    aws_dependent_features: [audit_logging, etcd_kms, byon, private_network, fips]
 
 - name: Warn about features verified without AWS
   ansible.builtin.debug:

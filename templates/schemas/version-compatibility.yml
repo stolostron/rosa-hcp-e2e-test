@@ -55,6 +55,13 @@ feature_availability:
   cluster_autoscaler_expander:
     min_version: "4.19"
     max_version: null
+  # Gated at 4.18 rather than the 4.19 its docs page used to publish: the feature
+  # was never gated here at all, so 4.19 was never enforced, and default_autoscaling
+  # is a member of the day1-basic group -- a 4.19 floor would drop that whole
+  # scenario off 4.18. Tighten this if someone establishes a real 4.19 constraint.
+  default_autoscaling:
+    min_version: "4.18"
+    max_version: null
   etcd_kms:
     min_version: "4.19"
     max_version: null
