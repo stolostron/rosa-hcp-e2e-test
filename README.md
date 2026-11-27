@@ -330,6 +330,7 @@ The framework supports composable Day 1 feature testing via `--feature` CLI flag
 | `--feature autoscaler` | Cluster autoscaler with expander | ROSAControlPlane |
 | `--feature log-forwarding` | Audit log forwarding to CloudWatch | ROSAControlPlane |
 | `--feature byon-vpc` | Pre-existing VPC and subnets instead of ROSANetwork | ROSAControlPlane |
+| `--feature spot` | Run the machine pool on AWS Spot instances | ROSAMachinePool |
 
 ### Feature Groups
 
@@ -387,6 +388,7 @@ Each feature has detailed documentation in [`docs/features/`](docs/features/):
 | Parallel Upgrade | [parallel-upgrade.md](docs/features/parallel-upgrade.md) |
 | Private Network | [private-network.md](docs/features/private-network.md) |
 | Security Groups | [security-groups.md](docs/features/security-groups.md) |
+| Spot Market Options | [spot-market-options.md](docs/features/spot-market-options.md) |
 
 ## Version-Specific Templates
 

@@ -1654,3 +1654,96 @@ class TestVersionTemplateParity:
         )
         match, mismatch, errors = filecmp.cmpfiles(a, b, shared, shallow=False)
         assert not mismatch and not errors, f"5.0 diverged from 4.22: {mismatch + errors}"
+
+
+class TestSpotMarketOptions:
+    """Spot Market Options (upstream CAPA #6334) across all four layers.
+
+    The feature is a string on ROSAMachinePool whose CRD and OCM representations
+    disagree for the default value, so the seams that matter here are the var_map
+    name, the document the field lands in, and the quoting of a numeric bid.
+    """
+
+    VERSIONS = [
+        ("4.22", "rosa-controlplane-only.yaml.j2"),
+        ("4.22", "rosa-combined-automation.yaml.j2"),
+        ("5.0", "rosa-controlplane-only.yaml.j2"),
+        ("5.0", "rosa-combined-automation.yaml.j2"),
+    ]
+
+    @staticmethod
+    def _rmp(docs):
+        return next((d for d in docs if d.get("kind") == "ROSAMachinePool"), None)
+
+    @pytest.mark.parametrize("version,template_name", VERSIONS)
+    def test_renders_on_demand_sentinel(self, version, template_name):
+        """The registry's ci_default reaches the ROSAMachinePool document."""
+        docs = _render_template(template_name, version, {"spot_max_price": "on-demand"})
+        rmp = self._rmp(docs)
+        assert rmp is not None, f"{template_name}: no ROSAMachinePool document"
+        assert rmp["spec"]["spotMarketOptions"]["maxPrice"] == "on-demand"
+
+    @pytest.mark.parametrize("version,template_name", VERSIONS)
+    def test_numeric_bid_renders_as_string(self, version, template_name):
+        """A numeric bid must stay a string.
+
+        The CRD types maxPrice as a string with a pattern; an unquoted 0.5 would
+        render as a YAML float and the API server would reject the manifest.
+        """
+        docs = _render_template(template_name, version, {"spot_max_price": "0.5"})
+        rmp = self._rmp(docs)
+        assert rmp["spec"]["spotMarketOptions"]["maxPrice"] == "0.5"
+        assert isinstance(rmp["spec"]["spotMarketOptions"]["maxPrice"], str)
+
+    @pytest.mark.parametrize("version,template_name", VERSIONS)
+    def test_absent_when_not_requested(self, version, template_name):
+        """Not requested renders nothing at all, not an empty block."""
+        docs = _render_template(template_name, version)
+        rmp = self._rmp(docs)
+        assert rmp is not None
+        assert "spotMarketOptions" not in rmp["spec"]
+
+    @pytest.mark.parametrize("version,template_name", VERSIONS)
+    def test_empty_value_renders_nothing(self, version, template_name):
+        """An empty string is the not-requested marker, so it must render nothing."""
+        docs = _render_template(template_name, version, {"spot_max_price": ""})
+        rmp = self._rmp(docs)
+        assert "spotMarketOptions" not in rmp["spec"]
+
+    def test_feature_metadata(self, fm):
+        feat = fm.get_feature("spot_market_options")
+        assert feat is not None
+        assert feat["resource"] == "ROSAMachinePool"
+        assert feat["k8s_field"] == ".spec.spotMarketOptions"
+        assert feat["type"] == "string"
+        assert feat["mutable"] is False
+        assert feat["ci_default"] == "on-demand"
+
+    def test_var_map_matches_template_variable(self, fm):
+        """var_map must emit the name the Jinja reads, or the feature renders nothing."""
+        assert fm.resolve_to_extra_vars(["spot"])["spot_max_price"] == "on-demand"
+
+    def test_alias_resolves(self, fm):
+        assert fm.resolve_alias("spot") == "spot_market_options"
+
+    def test_version_gate(self, fm):
+        """Rejected below min_version, accepted at it.
+
+        4.22 is the floor because only the 4.22 and 5.0 templates render the field.
+        """
+        assert fm.validate_features(["spot"], "4.21")
+        assert not fm.validate_features(["spot"], "4.22")
+
+    def test_verification_task_exists_and_is_mapped(self):
+        """The CHECK include and crd_field_map entry are string references.
+
+        Both fail only at runtime, 40 minutes into a provision, so they are asserted
+        here instead.
+        """
+        root = Path(__file__).parent.parent
+        task = root / "tasks" / "features" / "verify_spot_market_options.yml"
+        assert task.exists(), f"missing {task}"
+        vff = (root / "playbooks" / "verify_feature_flags.yml").read_text()
+        assert "verify_spot_market_options.yml" in vff
+        assert "'spot_market_options' in requested_features_list" in vff
+        assert "spot_market_options: { crd: \"rosamachinepools" in vff

@@ -14,6 +14,7 @@ version: "1.0"
 # Feature variable mapping: feature_id -> playbook extra_var name
 # Used when resolving --feature flags into playbook arguments.
 var_map:
+  spot_market_options: spot_max_price
   private_network: private
   byon: byon_vpc
   availability_zones: availability_zone_count
@@ -38,6 +39,7 @@ var_map:
 # CLI aliases: user-friendly short names -> feature_id
 # These are the names users pass to --feature on the command line
 cli_aliases:
+  spot: spot_market_options
   private: private_network
   no-cni: no_cni
   external-oidc: external_oidc
@@ -90,6 +92,7 @@ cli_features:
   - audit_logging
   - fips
   - default_autoscaling
+  - spot_market_options
 
 # Dependency rules: feature_id -> list of prerequisites
 dependencies:
@@ -511,6 +514,31 @@ suites:
         default: 300
         ci_default: 500
         k8s_field: ".spec.volumeSize"
+        resource: ROSAMachinePool
+
+      - id: spot_market_options
+        name: Spot Market Options
+        description: >-
+          Run the machine pool on AWS Spot instances. Use -e spot_max_price=<USD/hr>
+          to cap the hourly bid, or "on-demand" to bid the on-demand price with no
+          separate cap. Cannot be combined with capacityReservationID, and cannot be
+          added to or removed from a machine pool after creation.
+        type: string
+        # The webhook forbids adding or removing spotMarketOptions after creation.
+        # A numeric maxPrice may be raised or lowered Day-2, but never set back to
+        # "on-demand" -- too partial for the registry's single boolean, so Day-1 only
+        # and the nuance is documented in docs/features/spot-market-options.md.
+        mutable: false
+        applies_to: [create]
+        default: ""
+        # Bids the on-demand price with no separate cap: the feature is exercised in
+        # CI without ever paying above on-demand.
+        ci_default: "on-demand"
+        placeholder: "on-demand"
+        # Mutually exclusive with .spec.capacityReservationID per the upstream
+        # webhook. Not a mutual_exclusions entry because capacityReservationID is
+        # not a registered feature here -- add one if it ever becomes one.
+        k8s_field: ".spec.spotMarketOptions"
         resource: ROSAMachinePool
 
       - id: node_taints

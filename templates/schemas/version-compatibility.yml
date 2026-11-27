@@ -55,6 +55,11 @@ feature_availability:
   cluster_autoscaler_expander:
     min_version: "4.19"
     max_version: null
+  # Gated at 4.22 because only the 4.22 and 5.0 templates render the field --
+  # a lower floor would let the CLI accept a version whose manifest omits it.
+  spot_market_options:
+    min_version: "4.22"
+    max_version: null
   # Gated at 4.18 rather than the 4.19 its docs page used to publish: the feature
   # was never gated here at all, so 4.19 was never enforced, and default_autoscaling
   # is a member of the day1-basic group -- a 4.19 floor would drop that whole

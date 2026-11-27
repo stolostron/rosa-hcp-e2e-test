@@ -318,3 +318,11 @@ spec:
     - {{ sg }}
 {% endfor %}
 {% endif %}
+{# Definedness, not truthiness: maxPrice is a string the CRD validates against a
+   pattern, and it is quoted so a numeric bid like 0.5 renders as a string rather
+   than a float the API server rejects. maxPrice is emitted explicitly rather than
+   relying on the CRD default, so verification compares against a value chosen here. #}
+{% if spot_max_price is defined and spot_max_price is not none and spot_max_price != '' %}
+  spotMarketOptions:
+    maxPrice: "{{ spot_max_price }}"
+{% endif %}
