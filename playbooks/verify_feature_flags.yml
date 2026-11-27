@@ -34,6 +34,7 @@
       audit_logging: { crd: "rosacontrolplanes.controlplane.cluster.x-k8s.io", field: "cloudWatchlogForwarder" }
       proxy_enabled: { crd: "rosacontrolplanes.controlplane.cluster.x-k8s.io", field: "proxy" }
       default_autoscaling: { crd: "rosacontrolplanes.controlplane.cluster.x-k8s.io", field: "defaultMachinePoolSpec" }
+      spot_market_options: { crd: "rosamachinepools.infrastructure.cluster.x-k8s.io", field: "spotMarketOptions" }
       domain_prefix: { crd: "rosacontrolplanes.controlplane.cluster.x-k8s.io", field: "domainPrefix" }
       channel_group: { crd: "rosacontrolplanes.controlplane.cluster.x-k8s.io", field: "channelGroup" }
       additional_tags: { crd: "rosacontrolplanes.controlplane.cluster.x-k8s.io", field: "additionalTags" }
@@ -123,6 +124,10 @@
     - name: "CHECK: Proxy Configuration"
       ansible.builtin.include_tasks: "{{ playbook_dir }}/../tasks/features/verify_proxy_enabled.yml"
       when: "'proxy_enabled' in requested_features_list"
+
+    - name: "CHECK: Spot Market Options"
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../tasks/features/verify_spot_market_options.yml"
+      when: "'spot_market_options' in requested_features_list"
 
     # ================================================================
     # SUMMARY & MACHINE-READABLE RESULTS
